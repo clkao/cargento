@@ -1,0 +1,939 @@
+import contextlib
+import http.client
+import importlib.util
+import io
+import json
+import sqlite3
+import tempfile
+import threading
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from unittest import mock
+
+
+SERVER_PATH = Path(__file__).resolve().parents[1] / "server.py"
+SPEC = importlib.util.spec_from_file_location("cargento_server", SERVER_PATH)
+dashboard = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(dashboard)
+
+
+class CargentoServerTest(unittest.TestCase):
+    def setUp(self):
+        with dashboard._lock:
+            dashboard._hook_notifs.clear()
+            dashboard._last_popup.clear()
+            dashboard._last_state.clear()
+        with dashboard._cache_lock:
+            dashboard._meta_cache.clear()
+            dashboard._cursor_title_cache.clear()
+        with dashboard._scan_lock:
+            dashboard._turn_scan.clear()
+        with dashboard._collect_memo_lock:
+            dashboard._collect_memo.clear()
+
+    def test_load_tasks_supports_current_and_legacy_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current = root / "12345678-abcd-ef00-1234-567890abcdef"
+            legacy = root / "session-abcdef12"
+            current.mkdir()
+            legacy.mkdir()
+            (current / "1.json").write_text(
+                json.dumps({"id": "1", "subject": "Current", "status": "pending"})
+            )
+            (legacy / "2.json").write_text(
+                json.dumps({"id": "2", "subject": "Legacy", "status": "completed"})
+            )
+
+            with mock.patch.object(dashboard, "TASKS_DIR", str(root)):
+                tasks = dashboard.load_tasks()
+
+        self.assertEqual({"12345678", "abcdef12"}, set(tasks))
+        self.assertEqual("Current", tasks["12345678"][0]["subject"])
+        self.assertEqual("Legacy", tasks["abcdef12"][0]["subject"])
+
+    def test_codex_meta_extracts_parent_thread_id(self):
+        record = {
+            "type": "session_meta",
+            "payload": {
+                "id": "child-thread",
+                "thread_source": "subagent",
+                "agent_nickname": "reviewer",
+                "source": {
+                    "subagent": {
+                        "thread_spawn": {"parent_thread_id": "parent-thread"}
+                    }
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rollout.jsonl"
+            path.write_text(json.dumps(record) + "\n")
+            meta = dashboard.codex_meta(str(path))
+
+        self.assertTrue(meta["subagent"])
+        self.assertEqual("child-thread", meta["session_id"])
+        self.assertEqual("parent-thread", meta["parent_session_id"])
+
+    def test_gemini_set_snapshot_updates_summary_and_turns(self):
+        messages = [
+            {
+                "type": "user",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "content": "first prompt",
+            },
+            {
+                "type": "gemini",
+                "timestamp": "2026-01-01T00:00:05Z",
+                "tokens": {"output": 42},
+            },
+            {
+                "type": "user",
+                "timestamp": "2026-01-01T00:00:10Z",
+                "content": "resumed prompt",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session-test.jsonl"
+            path.write_text(
+                json.dumps({"$set": {"messages": messages[:2]}})
+                + "\n"
+                + json.dumps({"$set": {"messages": messages}})
+                + "\n"
+            )
+
+            info = dashboard.analyze_gemini_transcript(str(path))
+            turns = dashboard.scan_turns(str(path), "gemini")
+
+        self.assertEqual("resumed prompt", info["last_prompt"])
+        self.assertEqual("resumed prompt", info["title"])
+        self.assertEqual([(dashboard.parse_ts("2026-01-01T00:00:05Z"), 42)],
+                         info["usage_events"])
+        self.assertEqual([5.0], turns["durations"])
+        self.assertEqual(
+            dashboard.parse_ts("2026-01-01T00:00:10Z"), turns["turn_start"]
+        )
+
+    def test_large_repeated_gemini_snapshot_does_not_churn_dedup_cache(self):
+        messages = [
+            {
+                "type": "user",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "content": "first",
+            },
+            {
+                "type": "gemini",
+                "timestamp": "2026-01-01T00:00:05Z",
+                "content": "answer",
+            },
+            {
+                "type": "user",
+                "timestamp": "2026-01-01T00:00:10Z",
+                "content": "second",
+            },
+            {
+                "type": "gemini",
+                "timestamp": "2026-01-01T00:00:15Z",
+                "content": "answer",
+            },
+        ]
+        snapshot = json.dumps({"$set": {"messages": messages}})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session-test.jsonl"
+            path.write_text(snapshot + "\n" + snapshot + "\n")
+            with mock.patch.object(dashboard, "GEMINI_SEEN_ENTRIES", 2):
+                turns = dashboard.scan_turns(str(path), "gemini")
+
+        self.assertEqual([5.0], turns["durations"])
+
+    def test_antigravity_sessions_are_discovered_and_collected(self):
+        now = dashboard.time.time()
+        session_id = "c38d2d70-a01e-46f8-9286-60493c4c0e7e"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "antigravity-cli"
+            conversations = root / "conversations"
+            logs = root / "log"
+            legacy = Path(tmp) / "legacy-gemini"
+            conversations.mkdir(parents=True)
+            logs.mkdir()
+            legacy.mkdir()
+            (conversations / f"{session_id}.db").write_bytes(b"SQLite fixture")
+            (logs / "cli-20260723_141844.log").write_text(
+                "I0723 14:18:44.913145 server.go:237] Creating CLI server "
+                "backend: product=antigravity "
+                "workspaceDirs=[/Users/test/repos/recce/bridge] "
+                f"appDataDir={root} cascadeManager=true\n"
+                "I0723 14:19:32.952541 server.go:917] Created conversation "
+                f"{session_id}\n"
+                'I0723 14:47:19.285802 input_loop.go:34] HandleUserInput '
+                'called with text: "show my assigned issues"\n'
+                "I0723 14:47:19.285967 conversation_manager.go:499] "
+                f"Forwarding user message to conversation {session_id} "
+                "(items=1, media=0)\n"
+            )
+
+            with mock.patch.object(
+                dashboard, "GEMINI_TMP", str(legacy)
+            ), mock.patch.object(
+                dashboard,
+                "ANTIGRAVITY_CONVERSATIONS_DIR",
+                str(conversations),
+                create=True,
+            ), mock.patch.object(
+                dashboard, "ANTIGRAVITY_LOG_DIR", str(logs), create=True
+            ), mock.patch.object(
+                dashboard,
+                "ANTIGRAVITY_LAST_CONVERSATIONS",
+                str(root / "cache" / "last_conversations.json"),
+                create=True,
+            ):
+                gemini = next(h for h in dashboard.HARNESSES if h[0] == "gemini")
+                discovered = gemini[2]()
+                sessions = dashboard.collect_gemini(now, 24, False)
+
+        self.assertTrue(discovered)
+        self.assertEqual(1, len(sessions))
+        self.assertEqual("gemini", sessions[0]["harness"])
+        self.assertEqual(session_id[:8], sessions[0]["session"])
+        self.assertEqual("bridge", sessions[0]["project"])
+        self.assertEqual("show my assigned issues", sessions[0]["title"])
+        self.assertEqual("working", sessions[0]["state"])
+
+    def test_antigravity_steps_supply_rate_action_and_turn_progress(self):
+        now = dashboard.time.time()
+        session_id = "c38d2d70-a01e-46f8-9286-60493c4c0e7e"
+
+        def varint(value):
+            encoded = bytearray()
+            while value > 0x7f:
+                encoded.append((value & 0x7f) | 0x80)
+                value >>= 7
+            encoded.append(value)
+            return bytes(encoded)
+
+        def int_field(number, value):
+            return varint(number << 3) + varint(value)
+
+        def bytes_field(number, value):
+            return (
+                varint((number << 3) | 2)
+                + varint(len(value))
+                + value
+            )
+
+        def step_metadata(epoch, output_tokens=None, summary=None, action=None):
+            timestamp = int_field(1, int(epoch))
+            metadata = bytes_field(1, timestamp)
+            if output_tokens is not None:
+                usage = int_field(3, output_tokens)
+                metadata += bytes_field(9, usage)
+            if summary:
+                metadata += bytes_field(30, summary.encode())
+            if action:
+                metadata += bytes_field(31, action.encode())
+            return metadata
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "antigravity-cli"
+            conversations = root / "conversations"
+            logs = root / "log"
+            legacy = Path(tmp) / "legacy-gemini"
+            conversations.mkdir(parents=True)
+            logs.mkdir()
+            legacy.mkdir()
+            database = conversations / f"{session_id}.db"
+            connection = sqlite3.connect(database)
+            connection.execute(
+                "CREATE TABLE steps ("
+                "idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER, "
+                "metadata BLOB)"
+            )
+            rows = [
+                (1, 14, 3, step_metadata(now - 180)),
+                (2, 15, 3, step_metadata(now - 160, output_tokens=200)),
+                (3, 15, 3, step_metadata(now - 130, output_tokens=300)),
+                (4, 14, 3, step_metadata(now - 60)),
+                (5, 15, 3, step_metadata(now - 50, output_tokens=600)),
+                (
+                    6,
+                    21,
+                    3,
+                    step_metadata(
+                        now - 40,
+                        summary="Run project report",
+                        action="Running project report",
+                    ),
+                ),
+                (7, 15, 3, step_metadata(now - 10, output_tokens=400)),
+            ]
+            connection.executemany(
+                "INSERT INTO steps (idx, step_type, status, metadata) "
+                "VALUES (?, ?, ?, ?)",
+                rows,
+            )
+            connection.commit()
+            connection.close()
+            (logs / "cli-20260723_141844.log").write_text(
+                "I0723 14:18:44.913145 server.go:237] Creating CLI server "
+                "backend: product=antigravity "
+                "workspaceDirs=[/Users/test/repos/recce/bridge] "
+                f"appDataDir={root} cascadeManager=true\n"
+                "I0723 14:19:32.952541 server.go:917] Created conversation "
+                f"{session_id}\n"
+                'I0723 14:47:19.285802 input_loop.go:34] HandleUserInput '
+                'called with text: "show my assigned issues"\n'
+                "I0723 14:47:19.285967 conversation_manager.go:499] "
+                f"Forwarding user message to conversation {session_id} "
+                "(items=1, media=0)\n"
+            )
+
+            with mock.patch.object(
+                dashboard, "GEMINI_TMP", str(legacy)
+            ), mock.patch.object(
+                dashboard,
+                "ANTIGRAVITY_CONVERSATIONS_DIR",
+                str(conversations),
+            ), mock.patch.object(
+                dashboard, "ANTIGRAVITY_LOG_DIR", str(logs)
+            ), mock.patch.object(
+                dashboard,
+                "ANTIGRAVITY_LAST_CONVERSATIONS",
+                str(root / "cache" / "last_conversations.json"),
+            ):
+                sessions = dashboard.collect_gemini(now, 24, False)
+
+        self.assertEqual(1, len(sessions))
+        self.assertEqual(150, sessions[0]["rate_per_min"])
+        self.assertEqual("Running project report", sessions[0]["state_detail"])
+        self.assertEqual("1m", sessions[0]["turn"]["elapsed_h"])
+
+    def test_notify_endpoint_accepts_valid_non_object_and_deep_json(self):
+        httpd = dashboard.ThreadingHTTPServer(
+            ("127.0.0.1", 0), dashboard.Handler
+        )
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        bodies = [
+            json.dumps(
+                {"session_id": "12345678", "message": "before\u0000after"}
+            ).encode(),
+            b"[1,2,3]",
+            b"null",
+            b'"text"',
+            (b"[" * 1200) + b"0" + (b"]" * 1200),
+        ]
+        try:
+            with mock.patch.object(dashboard, "notify_mac") as notify:
+                for body in bodies:
+                    conn = http.client.HTTPConnection(
+                        "127.0.0.1", httpd.server_port, timeout=2
+                    )
+                    conn.request(
+                        "POST",
+                        "/api/notify",
+                        body=body,
+                        headers={"Content-Type": "application/json"},
+                    )
+                    response = conn.getresponse()
+                    self.assertEqual(200, response.status)
+                    self.assertEqual(b'{"ok":true}', response.read())
+                    conn.close()
+            self.assertNotIn("\x00", notify.call_args.args[1])
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_cross_site_fetch_metadata_is_rejected(self):
+        httpd = dashboard.ThreadingHTTPServer(
+            ("127.0.0.1", 0), dashboard.Handler
+        )
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn = http.client.HTTPConnection(
+                "127.0.0.1", httpd.server_port, timeout=2
+            )
+            conn.request(
+                "GET", "/api/data", headers={"Sec-Fetch-Site": "cross-site"}
+            )
+            response = conn.getresponse()
+            self.assertEqual(403, response.status)
+            response.read()
+            conn.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_popup_caches_are_bounded_and_globally_rate_limited(self):
+        with mock.patch.object(
+            dashboard, "MAX_CACHE_ENTRIES", 2
+        ), mock.patch.object(
+            dashboard.time, "time", side_effect=[100.0, 101.0, 106.0]
+        ), mock.patch.object(
+            dashboard, "notify_mac"
+        ) as notify:
+            dashboard.maybe_popup("session1", "needs_input", "one")
+            dashboard.maybe_popup("session2", "needs_input", "two")
+            dashboard.maybe_popup("session3", "needs_input", "three")
+
+        self.assertEqual(2, notify.call_count)
+        self.assertLessEqual(len(dashboard._last_state), 2)
+        self.assertLessEqual(len(dashboard._last_popup), 2)
+
+    def test_metadata_cache_is_safe_under_concurrent_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "meta.jsonl"
+            path.write_text(json.dumps({"value": "ok"}) + "\n")
+
+            def read():
+                return dashboard.first_line_meta(
+                    str(path), lambda value: {"value": value.get("value")}
+                )
+
+            with ThreadPoolExecutor(max_workers=12) as pool:
+                results = list(pool.map(lambda _: read(), range(100)))
+
+        self.assertTrue(all(result == {"value": "ok"} for result in results))
+        self.assertEqual(1, len(dashboard._meta_cache))
+
+    def test_goose_tool_response_is_not_a_user_prompt(self):
+        self.assertFalse(
+            dashboard.goose_user_prompt(
+                [{"type": "toolResponse", "toolResult": {"status": "success"}}]
+            )
+        )
+        self.assertTrue(
+            dashboard.goose_user_prompt([{"type": "text", "text": "hello"}])
+        )
+
+    def test_new_transcript_event_clears_hook_notification(self):
+        with dashboard._lock:
+            dashboard._hook_notifs["12345678"] = {
+                "ts": 100.0,
+                "message": "permission",
+            }
+
+        self.assertIsNotNone(dashboard.current_hook("12345678", 99.0))
+        self.assertIsNone(dashboard.current_hook("12345678", 102.0))
+        self.assertNotIn("12345678", dashboard._hook_notifs)
+
+    def test_transcript_mtime_alone_does_not_clear_newer_hook(self):
+        now = dashboard.time.time()
+        event_time = dashboard.datetime.fromtimestamp(
+            now - 10, dashboard.timezone.utc
+        ).isoformat()
+        with tempfile.TemporaryDirectory() as tmp:
+            projects = Path(tmp) / "projects"
+            tasks = Path(tmp) / "tasks"
+            project = projects / "sample"
+            project.mkdir(parents=True)
+            tasks.mkdir()
+            transcript = project / "12345678-session.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "timestamp": event_time,
+                        "message": {"content": []},
+                    }
+                )
+                + "\n"
+            )
+            with dashboard._lock:
+                dashboard._hook_notifs["12345678"] = {
+                    "ts": now - 1,
+                    "message": "permission",
+                }
+
+            with mock.patch.object(
+                dashboard, "PROJECTS_DIR", str(projects)
+            ), mock.patch.object(dashboard, "TASKS_DIR", str(tasks)):
+                sessions = dashboard.collect_claude(now, 24, False)
+
+        self.assertEqual("needs_input", sessions[0]["state"])
+        self.assertIn("12345678", dashboard._hook_notifs)
+
+    def test_legacy_claude_agent_files_are_not_top_level_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            projects = Path(tmp) / "projects"
+            tasks = Path(tmp) / "tasks"
+            project = projects / "sample"
+            project.mkdir(parents=True)
+            tasks.mkdir()
+            (project / "agent-abcd.jsonl").write_text("{}\n")
+            (project / "12345678-session.jsonl").write_text("{}\n")
+
+            with mock.patch.object(
+                dashboard, "PROJECTS_DIR", str(projects)
+            ), mock.patch.object(dashboard, "TASKS_DIR", str(tasks)):
+                sessions = dashboard.collect_claude(
+                    dashboard.time.time(), 24, True
+                )
+
+        self.assertEqual(["12345678"], [session["session"] for session in sessions])
+
+    def test_codex_subagent_usage_is_added_after_own_start_boundary(self):
+        now = dashboard.time.time()
+
+        def timestamp(offset):
+            return dashboard.datetime.fromtimestamp(
+                now + offset, dashboard.timezone.utc
+            ).isoformat()
+
+        parent_id = "11111111-1111-1111-1111-111111111111"
+        child_id = "22222222-2222-2222-2222-222222222222"
+        parent_meta = {
+            "type": "session_meta",
+            "payload": {"id": parent_id, "cwd": "/tmp/project"},
+        }
+        child_meta = {
+            "type": "session_meta",
+            "payload": {
+                "id": child_id,
+                "thread_source": "subagent",
+                "agent_nickname": "worker",
+                "source": {
+                    "subagent": {
+                        "thread_spawn": {"parent_thread_id": parent_id}
+                    }
+                },
+            },
+        }
+
+        def token_record(offset, output_tokens):
+            return {
+                "type": "event_msg",
+                "timestamp": timestamp(offset),
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "last_token_usage": {"output_tokens": output_tokens}
+                    },
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            day = Path(tmp) / "2026" / "01" / "01"
+            day.mkdir(parents=True)
+            parent = day / "rollout-parent.jsonl"
+            child = day / "rollout-child.jsonl"
+            parent.write_text(
+                "\n".join(
+                    json.dumps(record)
+                    for record in [parent_meta, token_record(-10, 100)]
+                )
+                + "\n"
+            )
+            child.write_text(
+                "\n".join(
+                    json.dumps(record)
+                    for record in [
+                        child_meta,
+                        token_record(-30, 900),
+                        {
+                            "type": "event_msg",
+                            "timestamp": timestamp(-20),
+                            "payload": {
+                                "type": "task_started",
+                                "started_at": now - 20,
+                            },
+                        },
+                        token_record(-10, 900),
+                    ]
+                )
+                + "\n"
+            )
+
+            with mock.patch.object(
+                dashboard, "CODEX_SESSIONS_DIR", str(Path(tmp))
+            ):
+                sessions = dashboard.collect_codex(now, 24, False)
+
+        self.assertEqual(1, len(sessions))
+        self.assertEqual(100, sessions[0]["rate_per_min"])
+        self.assertEqual(["worker"], sessions[0]["subagents"])
+
+    def test_large_transcript_recovers_turn_start_before_bounded_tail(self):
+        prompt_time = "2026-01-01T00:00:00Z"
+        prompt = {
+            "type": "user",
+            "timestamp": prompt_time,
+            "message": {"content": "long request"},
+        }
+        events = [
+            {
+                "type": "assistant",
+                "timestamp": f"2026-01-01T00:00:{second:02d}Z",
+                "message": {"content": "x" * 40},
+            }
+            for second in range(1, 20)
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "large.jsonl"
+            path.write_text(
+                "\n".join(json.dumps(record) for record in [prompt] + events)
+                + "\n"
+            )
+            with mock.patch.object(dashboard, "TURN_SCAN_MAX_BYTES", 200):
+                turns = dashboard.scan_turns(str(path), "claude")
+
+        self.assertEqual(dashboard.parse_ts(prompt_time), turns["turn_start"])
+
+    def test_large_append_recovers_new_turn_start_from_skipped_delta(self):
+        first_time = "2026-01-01T00:00:00Z"
+        second_time = "2026-01-01T00:01:00Z"
+        first_prompt = {
+            "type": "user",
+            "timestamp": first_time,
+            "message": {"content": "first"},
+        }
+        second_prompt = {
+            "type": "user",
+            "timestamp": second_time,
+            "message": {"content": "second"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "growing.jsonl"
+            path.write_text(json.dumps(first_prompt) + "\n")
+            with mock.patch.object(dashboard, "TURN_SCAN_MAX_BYTES", 200):
+                dashboard.scan_turns(str(path), "claude")
+                with path.open("a") as output:
+                    output.write(json.dumps(second_prompt) + "\n")
+                    for second in range(1, 20):
+                        output.write(
+                            json.dumps(
+                                {
+                                    "type": "assistant",
+                                    "timestamp": (
+                                        f"2026-01-01T00:01:{second:02d}Z"
+                                    ),
+                                    "message": {"content": "x" * 40},
+                                }
+                            )
+                            + "\n"
+                        )
+                turns = dashboard.scan_turns(str(path), "claude")
+
+        self.assertEqual(dashboard.parse_ts(second_time), turns["turn_start"])
+
+    def test_collect_json_single_flights_concurrent_cold_requests(self):
+        calls = []
+        calls_lock = threading.Lock()
+
+        def fake_collect(window_hours, show_all):
+            with calls_lock:
+                calls.append((window_hours, show_all))
+            dashboard.time.sleep(0.02)
+            return {"window_hours": window_hours, "show_all": show_all}
+
+        with mock.patch.object(dashboard, "collect", fake_collect):
+            with ThreadPoolExecutor(max_workers=12) as pool:
+                bodies = list(
+                    pool.map(lambda _: dashboard.collect_json(24, False), range(24))
+                )
+            alternate = dashboard.collect_json(24, True)
+
+        self.assertEqual(1, calls.count((24, False)))
+        self.assertEqual(1, calls.count((24, True)))
+        self.assertEqual(1, len(set(bodies)))
+        self.assertNotEqual(bodies[0], alternate)
+        self.assertEqual(2, len(dashboard._collect_memo))
+
+    def test_collector_failure_is_exposed_in_harness_status(self):
+        def fail(*_args):
+            raise RuntimeError("broken store")
+
+        harnesses = [("test", "Test", lambda: True, fail)]
+        with mock.patch.object(
+            dashboard, "HARNESSES", harnesses
+        ), contextlib.redirect_stdout(io.StringIO()):
+            result = dashboard.collect(24, False)
+
+        self.assertTrue(result["harnesses"][0]["discovered"])
+        self.assertEqual(
+            "RuntimeError: broken store", result["harnesses"][0]["error"]
+        )
+
+    def test_page_marks_repeated_refresh_failures_as_stalled(self):
+        self.assertIn('id="live-status"', dashboard.PAGE)
+        self.assertIn("window.__refreshFailures < 2", dashboard.PAGE)
+        self.assertIn("stalled · last update", dashboard.PAGE)
+        self.assertIn("console.error", dashboard.PAGE)
+        self.assertIn("latestSettledRefresh", dashboard.PAGE)
+        self.assertIn("sequence < latestSettledRefresh", dashboard.PAGE)
+
+    def test_output_rate_rows_use_hoverable_harness_badges(self):
+        self.assertIn(
+            '<span class="rrow-badge">${badge(r.key, true)}</span>',
+            dashboard.PAGE,
+        )
+
+    def test_load_tasks_coerces_malformed_field_types(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "12345678-abcd-ef00-1234-567890abcdef"
+            root.mkdir(parents=True)
+            (root / "1.json").write_text(json.dumps(
+                {"id": "1", "subject": {"nested": True}, "activeForm": 42,
+                 "status": 7}
+            ))
+            (root / "2.json").write_text(json.dumps(["not", "a", "task"]))
+
+            with mock.patch.object(dashboard, "TASKS_DIR", str(tmp)):
+                tasks = dashboard.load_tasks()
+
+        rows = tasks["12345678"]
+        self.assertEqual(1, len(rows))  # the non-dict record is skipped
+        task = rows[0]
+        self.assertEqual("(untitled)", task["subject"])
+        self.assertEqual("", task["activeForm"])
+        self.assertEqual("pending", task["status"])
+        # The concatenation that previously raised TypeError must work.
+        self.assertEqual(
+            "(untitled)…", (task["activeForm"] or task["subject"]) + "…"
+        )
+
+    def test_read_tail_keeps_first_record_when_window_starts_on_boundary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "t.jsonl"
+            path.write_bytes(b"aaaa\nbbbb\ncccc\n")  # 15 bytes
+
+            # Window of 10 starts right after the newline at offset 4:
+            # "bbbb" is a complete record and must be kept.
+            with mock.patch.object(dashboard, "TAIL_BYTES", 10):
+                aligned = dashboard.read_tail(str(path))
+            # Window of 9 starts mid-"bbbb": the partial line must drop.
+            with mock.patch.object(dashboard, "TAIL_BYTES", 9):
+                misaligned = dashboard.read_tail(str(path))
+
+        self.assertEqual(["bbbb", "cccc", ""], aligned)
+        self.assertEqual(["cccc", ""], misaligned)
+
+    def test_opencode_show_all_returns_every_session(self):
+        now = dashboard.time.time()
+        stale = int((now - 48 * 3600) * 1000)  # outside the 24h window
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "opencode.db"
+            con = sqlite3.connect(db)
+            con.execute(
+                "CREATE TABLE session (id TEXT, parent_id TEXT, directory TEXT,"
+                " title TEXT, time_updated INTEGER, time_archived INTEGER)"
+            )
+            con.executemany(
+                "INSERT INTO session VALUES (?, NULL, '/w', ?, ?, NULL)",
+                [(f"ses_{i:04d}", f"Session {i}", stale - i) for i in range(250)],
+            )
+            con.commit()
+            con.close()
+
+            with mock.patch.object(dashboard, "OPENCODE_DATA", str(tmp)):
+                everything = dashboard.collect_opencode(now, 24, True)
+                windowed = dashboard.collect_opencode(now, 24, False)
+
+        self.assertEqual(250, len(everything))  # previously capped at 200
+        self.assertEqual(0, len(windowed))
+
+    def test_antigravity_activity_sees_uncheckpointed_wal_frames(self):
+        now = dashboard.time.time()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "live.db"
+            writer = sqlite3.connect(db)
+            writer.execute("PRAGMA journal_mode=WAL")
+            writer.execute(
+                "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER,"
+                " status INTEGER, metadata BLOB)"
+            )
+            writer.commit()
+
+            def step_metadata(epoch, output_tokens):
+                def varint(value):
+                    encoded = bytearray()
+                    while value > 0x7F:
+                        encoded.append((value & 0x7F) | 0x80)
+                        value >>= 7
+                    encoded.append(value)
+                    return bytes(encoded)
+
+                timestamp = varint(1 << 3) + varint(int(epoch))
+                metadata = varint((1 << 3) | 2) + varint(len(timestamp)) + timestamp
+                usage = varint(3 << 3) + varint(output_tokens)
+                metadata += varint((9 << 3) | 2) + varint(len(usage)) + usage
+                return metadata
+
+            writer.execute(
+                "INSERT INTO steps VALUES (1, 15, 3, ?)",
+                (step_metadata(now - 30, 500),),
+            )
+            writer.commit()  # committed to the WAL; not yet checkpointed
+            try:
+                activity = dashboard.antigravity_step_activity(str(db), now)
+            finally:
+                writer.close()
+
+        # An immutable=1-only reader misses these frames (rate stays 0).
+        self.assertEqual(50, activity["rate_per_min"])
+
+    def test_codex_meta_tolerates_malformed_payload_types(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            non_dict = Path(tmp) / "rollout-a.jsonl"
+            non_dict.write_text('{"payload":42}\n')
+            bad_fields = Path(tmp) / "rollout-b.jsonl"
+            bad_fields.write_text(json.dumps(
+                {"payload": {"id": "s1", "agent_nickname": 7, "agent_path": 42,
+                             "source": "not-a-dict"}}
+            ) + "\n")
+
+            meta_a = dashboard.codex_meta(str(non_dict))
+            meta_b = dashboard.codex_meta(str(bad_fields))
+
+        self.assertIsNone(meta_a["session_id"])
+        self.assertFalse(meta_a["subagent"])
+        self.assertEqual("s1", meta_b["session_id"])
+        self.assertIsNone(meta_b["agent_label"])
+        self.assertIsNone(meta_b["parent_session_id"])
+
+    def test_claude_subagents_tolerate_malformed_meta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sess = Path(tmp) / "abc.jsonl"
+            sess.write_text("{}\n")
+            sub = Path(tmp) / "abc" / "subagents"
+            sub.mkdir(parents=True)
+            (sub / "agent-1.jsonl").write_text("{}\n")
+            (sub / "agent-1.meta.json").write_text('{"name":42,"description":7}')
+            (sub / "agent-2.jsonl").write_text("{}\n")
+            (sub / "agent-2.meta.json").write_text("42")  # non-dict meta
+
+            agents = dashboard.load_claude_subagents(
+                str(sess), dashboard.time.time()
+            )
+
+        # Both agents survive with the fallback label instead of TypeError.
+        self.assertEqual(["subagent", "subagent"],
+                         [a["label"] for a in agents])
+
+    def test_copilot_sessions_are_discovered_and_analyzed(self):
+        now = dashboard.time.time()
+        iso = dashboard.datetime.fromtimestamp(
+            now - 5, dashboard.timezone.utc
+        ).isoformat()
+        with tempfile.TemporaryDirectory() as tmp:
+            events = Path(tmp) / "session-state" / "11112222-aaaa" / "events.jsonl"
+            events.parent.mkdir(parents=True)
+            events.write_text("\n".join([
+                json.dumps({"type": "session.start", "timestamp": iso,
+                            "data": {"context": {"cwd": "/w/myproj"}}}),
+                json.dumps({"type": "user.message", "timestamp": iso,
+                            "data": {"text": "fix the login bug"}}),
+                json.dumps({"type": "subagent.started", "timestamp": iso,
+                            "data": {"id": "a1", "name": "researcher"}}),
+            ]) + "\n")
+
+            with mock.patch.object(dashboard, "COPILOT_DIR", str(tmp)):
+                sessions = dashboard.collect_copilot(now, 24, False)
+
+        self.assertEqual(1, len(sessions))
+        s = sessions[0]
+        self.assertEqual("working", s["state"])
+        self.assertEqual("myproj", s["project"])
+        self.assertEqual("fix the login bug", s["last_prompt"])
+        self.assertEqual(["researcher"], s["subagents"])
+
+    def test_cursor_sessions_discovered_with_title(self):
+        now = dashboard.time.time()
+        with tempfile.TemporaryDirectory() as tmp:
+            chat = Path(tmp) / "ws1" / "33334444-bbbb"
+            chat.mkdir(parents=True)
+            con = sqlite3.connect(chat / "store.db")
+            con.execute("CREATE TABLE meta (value TEXT)")
+            hex_json = json.dumps({"name": "My Refactor Chat"}).encode().hex()
+            con.execute("INSERT INTO meta VALUES (?)", (hex_json,))
+            con.commit()
+            con.close()
+
+            with mock.patch.object(dashboard, "CURSOR_CHATS", str(tmp)):
+                sessions = dashboard.collect_cursor(now, 24, False)
+
+        self.assertEqual(1, len(sessions))
+        self.assertEqual("working", sessions[0]["state"])
+        self.assertEqual("My Refactor Chat", sessions[0]["title"])
+
+    def test_goose_sessions_from_shared_db(self):
+        now = dashboard.time.time()
+        stamp = dashboard.datetime.fromtimestamp(
+            now - 10, dashboard.timezone.utc
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "sessions.db"
+            con = sqlite3.connect(db)
+            con.execute(
+                "CREATE TABLE sessions (id TEXT, description TEXT,"
+                " working_dir TEXT, updated_at TEXT, session_type TEXT,"
+                " parent_session_id TEXT, archived_at TEXT)"
+            )
+            con.executemany("INSERT INTO sessions VALUES (?,?,?,?,?,?,?)", [
+                ("g1", "Fix flaky tests", "/w/gooseproj", stamp, None, None, None),
+                ("g2", "helper", "/w", stamp, "subagent", "g1", None),
+                ("g3", "infra", "/w", stamp, "terminal", None, None),
+                ("g4", "old", "/w", stamp, None, None, stamp),  # archived
+            ])
+            con.execute(
+                "CREATE TABLE messages (session_id TEXT, role TEXT,"
+                " created_timestamp INTEGER, content_json TEXT)"
+            )
+            con.execute(
+                "INSERT INTO messages VALUES ('g1', 'user', ?, ?)",
+                (int(now - 20), json.dumps([{"type": "text", "text": "add retries"}])),
+            )
+            con.execute(
+                "CREATE TABLE usage_ledger (session_id TEXT,"
+                " created_timestamp INTEGER, output_tokens INTEGER)"
+            )
+            con.execute(
+                "INSERT INTO usage_ledger VALUES ('g1', ?, 1000)", (int(now - 60),)
+            )
+            con.commit()
+            con.close()
+
+            with mock.patch.object(dashboard, "GOOSE_DB", str(db)):
+                sessions = dashboard.collect_goose(now, 24, False)
+
+        self.assertEqual(1, len(sessions))  # subagent/infra/archived filtered
+        s = sessions[0]
+        self.assertEqual("working", s["state"])
+        self.assertEqual("gooseproj", s["project"])
+        self.assertEqual("Fix flaky tests", s["title"])
+        self.assertEqual("add retries", s["last_prompt"])
+        self.assertEqual(["helper"], s["subagents"])
+        self.assertEqual(100, s["rate_per_min"])  # 1000 tokens / 10 min window
+
+    def test_droid_sessions_from_project_transcripts(self):
+        now = dashboard.time.time()
+        iso = dashboard.datetime.fromtimestamp(
+            now - 5, dashboard.timezone.utc
+        ).isoformat()
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = Path(tmp) / "proj-x" / "d1d2d3d4.jsonl"
+            fp.parent.mkdir(parents=True)
+            fp.write_text("\n".join([
+                json.dumps({"type": "session_start", "id": "d1d2d3d4",
+                            "sessionTitle": "Ship feature", "cwd": "/w/droidproj"}),
+                json.dumps({"type": "message", "timestamp": iso,
+                            "message": {"role": "user", "content":
+                                        [{"type": "text", "text": "ship it"}]}}),
+            ]) + "\n")
+
+            with mock.patch.object(dashboard, "FACTORY_PROJECTS", str(tmp)):
+                sessions = dashboard.collect_droid(now, 24, False)
+
+        self.assertEqual(1, len(sessions))
+        s = sessions[0]
+        self.assertEqual("working", s["state"])
+        self.assertEqual("droidproj", s["project"])
+        self.assertEqual("Ship feature", s["title"])
+        self.assertEqual("ship it", s["last_prompt"])
+
+
+if __name__ == "__main__":
+    unittest.main()
