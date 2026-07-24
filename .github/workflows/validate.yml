@@ -17,8 +17,11 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # actions/checkout@v7.0.1 — pinned to immutable SHA (this is the
+      # required check; mutable major tags don't belong here).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # actions/setup-python@v7.0.0 — pinned to immutable SHA.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: "3.12"
       - name: Install validation dependencies
@@ -27,5 +30,9 @@ jobs:
         run: python3 scripts/validate_plugins.py
       - name: Run validator unit tests
         run: python3 -m unittest scripts/tests/test_validate_plugins.py
+      - name: Run release bump-script unit tests
+        run: python3 -m unittest scripts/tests/test_bump_version.py
+      - name: Check version-field parity across all owned locations
+        run: python3 scripts/bump_version.py --current
       - name: Run dashboard server tests
         run: python3 -m unittest cargento/skills/cargento/tests/test_server.py
