@@ -58,9 +58,15 @@ FACTORY_PROJECTS = os.path.join(HOME, ".factory", "projects")
 
 RATE_WINDOW_SEC = 600  # usage rate is measured over the last 10 minutes
 WORKING_THRESHOLD_SEC = 90  # activity newer than this = WORKING
+# A transcript that writes nothing for this long mid-turn was waiting on a
+# human (permission prompt, open question) or asleep — not generating. The
+# turn clock re-anchors after such a gap so "elapsed" measures work, not
+# waiting. Kept well above the longest common tool run.
+TURN_GAP_RESET_SEC = 300
 TAIL_BYTES = 400_000  # only the transcript tail is parsed per refresh
 POPUP_COOLDOWN_SEC = 60  # per-session floor between macOS popups
-GLOBAL_POPUP_COOLDOWN_SEC = 5  # floor across caller-controlled session ids
+GLOBAL_POPUP_COOLDOWN_SEC = 15  # floor across caller-controlled session ids
+POPUP_REPEAT_SUPPRESS_SEC = 600  # identical message per session: one popup per window
 LONG_TURN_WARN_SEC = 900  # warn when a request runs (or is estimated) this long
 SQL_MSG_LIMIT = 400  # newest messages fetched per DB-backed session
 MAX_CACHE_ENTRIES = 8192  # bound process-lifetime caches over long uptime
@@ -72,8 +78,10 @@ HOME_PREFIX = HOME.replace("/", "-")
 INPUT_TOOLS = {"AskUserQuestion", "ExitPlanMode"}
 
 _lock = threading.Lock()
-_hook_notifs: dict[str, dict[str, Any]] = {}  # session prefix -> {"ts": epoch, "message": str}
+# session prefix -> {"ts": epoch, "message": str, "user_event"?: str | None}
+_hook_notifs: dict[str, dict[str, Any]] = {}
 _last_popup: dict[str, float] = {}  # session prefix -> epoch
+_last_popup_message: dict[str, tuple[str, float]] = {}  # prefix -> (message, epoch)
 _last_state: dict[str, str] = {}  # session prefix -> state string (popup on transition)
 _cache_lock = threading.Lock()
 
@@ -294,15 +302,135 @@ def droid_meta(path: str) -> dict[str, Any]:
 # Transcript analyzers (tail pass -> title, prompt, usage, activity)
 
 
+_claude_title_cache: dict[str, tuple[int, int, str | None]] = {}
+_claude_user_event_cache: dict[str, tuple[int, int, str | None]] = {}
+
+
+def claude_session_title(path: str) -> str | None:
+    """Newest generated Claude title, falling back to the first user prompt.
+
+    ``ai-title`` records can be older than the bounded activity tail, so find
+    the newest one by searching the mmap backward. The cache is invalidated
+    whenever the transcript's size or mtime changes because Claude repeats
+    title records as a session grows.
+    """
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    cache_key = (stat.st_mtime_ns, stat.st_size)
+    with _cache_lock:
+        cached = _claude_title_cache.get(path)
+    if cached is not None and cached[:2] == cache_key:
+        return cached[2]
+
+    title = None
+    try:
+        with open(path, "rb") as source:
+            if stat.st_size:
+                with mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                    pos = len(data)
+                    while pos:
+                        match = data.rfind(b'"aiTitle"', 0, pos)
+                        if match < 0:
+                            break
+                        line_start = data.rfind(b"\n", 0, match) + 1
+                        line_end = data.find(b"\n", match)
+                        if line_end < 0:
+                            line_end = len(data)
+                        try:
+                            record = json.loads(data[line_start:line_end])
+                        except json.JSONDecodeError:
+                            record = {}
+                        value = record.get("aiTitle")
+                        if record.get("type") == "ai-title" and isinstance(value, str) and value:
+                            title = value
+                            break
+                        pos = match
+    except (OSError, ValueError):
+        pass
+
+    if title is None:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as source:
+                for line in source:
+                    if not line.startswith("{"):
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    signal = _turn_signal(record, "claude")
+                    if not signal or signal[0] != "prompt":
+                        continue
+                    prompt = extract_text((record.get("message") or {}).get("content")).strip()
+                    title = prompt.split("\n")[0][:80] or None
+                    break
+        except OSError:
+            pass
+
+    with _cache_lock:
+        bounded_put(_claude_title_cache, path, (*cache_key, title))
+    return title
+
+
+def claude_last_user_event(path: str) -> str | None:
+    """Identity of the newest user record, independent of record timestamps."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    cache_key = (stat.st_mtime_ns, stat.st_size)
+    with _cache_lock:
+        cached = _claude_user_event_cache.get(path)
+    if cached is not None and cached[:2] == cache_key:
+        return cached[2]
+
+    marker = None
+    try:
+        with open(path, "rb") as source:
+            if stat.st_size:
+                with mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                    line_end = len(data)
+                    while line_end:
+                        if data[line_end - 1 : line_end] == b"\n":
+                            line_end -= 1
+                        line_start = data.rfind(b"\n", 0, line_end) + 1
+                        raw = data[line_start:line_end]
+                        line_end = line_start
+                        if not raw.startswith(b"{"):
+                            continue
+                        try:
+                            record = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        if record.get("type") != "user":
+                            continue
+                        uuid = record.get("uuid")
+                        marker = (
+                            uuid
+                            if isinstance(uuid, str) and uuid
+                            else hashlib.blake2b(raw, digest_size=16).hexdigest()
+                        )
+                        break
+    except (OSError, ValueError):
+        pass
+
+    with _cache_lock:
+        bounded_put(_claude_user_event_cache, path, (*cache_key, marker))
+    return marker
+
+
 def analyze_transcript(path: str) -> dict[str, Any]:
     """Claude Code transcript tail."""
     info: dict[str, Any] = {
-        "title": None,
+        "title": claude_session_title(path),
         "last_prompt": None,
         "usage_events": [],  # (epoch, output_tokens)
         "pending_input_tool": None,  # {"name", "ts"} awaiting the human
         "last_tool": None,
         "last_event_ts": 0,
+        "last_user_event": claude_last_user_event(path),
     }
     pending: dict[Any, Any] = {}  # tool_use id -> {"name", "ts"} for INPUT_TOOLS only
     for line in read_tail(path):
@@ -316,9 +444,7 @@ def analyze_transcript(path: str) -> dict[str, Any]:
         ep = parse_ts(d.get("timestamp") or "")
         if ep:
             info["last_event_ts"] = max(info["last_event_ts"], ep)
-        if t == "ai-title":
-            info["title"] = d.get("aiTitle")
-        elif t == "last-prompt":
+        if t == "last-prompt":
             info["last_prompt"] = d.get("lastPrompt")
         elif t == "assistant":
             msg = d.get("message") or {}
@@ -337,6 +463,20 @@ def analyze_transcript(path: str) -> dict[str, Any]:
     if pending:
         info["pending_input_tool"] = max(pending.values(), key=lambda p: p["ts"] or 0)
     return info
+
+
+def claude_hook_user_event(path: str, prefix: str) -> tuple[bool, str | None]:
+    """Return a safe transcript baseline for a Notification-hook payload."""
+    try:
+        real_path = os.path.realpath(path)
+        projects_root = os.path.realpath(PROJECTS_DIR)
+        inside_projects = os.path.commonpath((projects_root, real_path)) == projects_root
+    except (OSError, ValueError):
+        return (False, None)
+    basename = os.path.basename(real_path)
+    if not inside_projects or not basename.startswith(prefix) or not basename.endswith(".jsonl"):
+        return (False, None)
+    return (True, claude_last_user_event(real_path))
 
 
 def analyze_codex_transcript(path: str) -> dict[str, Any]:
@@ -613,6 +753,12 @@ def _turn_signal(d: dict[str, Any], harness: str) -> tuple[str, Any] | None:
         isinstance(c, dict) and c.get("type") == "tool_result" for c in content
     ):
         return None
+    # Local command output/caveat records are user-typed but are not prompts —
+    # nothing generates in response to them, so they must not start a turn.
+    if isinstance(content, str) and content.lstrip().startswith(
+        ("<local-command-stdout>", "<local-command-caveat>")
+    ):
+        return None
     return ("prompt", None)
 
 
@@ -621,6 +767,15 @@ def _apply_turn_record(st: dict[str, Any], record: Any, harness: str) -> None:
     ep = parse_ts(record.get("timestamp") or "")
     if not ep:
         return
+    # A quiet stretch longer than TURN_GAP_RESET_SEC inside a turn means the
+    # agent was not generating (permission wait, AskUserQuestion, sleep).
+    # Bank the active segment and restart the clock at the post-gap event so
+    # "elapsed" reflects work, not waiting.
+    if st["turn_start"] and st["prev_ts"] and ep - st["prev_ts"] > TURN_GAP_RESET_SEC:
+        if st["prev_ts"] > st["turn_start"]:
+            st["durations"].append(st["prev_ts"] - st["turn_start"])
+        st["turn_start"] = ep
+        st["last_start"] = ep
     sig = _turn_signal(record, harness)
     if sig:
         kind, override = sig
@@ -659,6 +814,7 @@ def _latest_turn_context(path: str, end_pos: int, harness: str) -> dict[str, Any
                     return context
                 pos = line_end
                 active_decided = False
+                later_ts: float | None = None
                 while pos > 0:
                     line_start = data.rfind(b"\n", 0, pos) + 1
                     raw = data[line_start:pos]
@@ -676,6 +832,16 @@ def _latest_turn_context(path: str, end_pos: int, harness: str) -> dict[str, Any
                         ep = parse_ts(record.get("timestamp") or "")
                         if not ep:
                             continue
+                        # Walking backward: `later_ts` is the timestamp of the
+                        # record that chronologically FOLLOWS this one. A quiet
+                        # gap re-anchors the turn at the post-gap record, same
+                        # rule as the forward scanner.
+                        if later_ts is not None and later_ts - ep > TURN_GAP_RESET_SEC:
+                            if not active_decided:
+                                context["turn_start"] = later_ts
+                            context["last_start"] = later_ts
+                            return context
+                        later_ts = ep
                         if context["prev_ts"] is None:
                             context["prev_ts"] = ep
                         sig = _turn_signal(record, harness)
@@ -904,11 +1070,25 @@ def notify_mac(title: Any, message: Any) -> None:
         print(f"[notify] osascript failed: {type(exc).__name__}: {exc}")
 
 
-def current_hook(prefix: str, last_event: float) -> dict[str, Any] | None:
-    """Return an uncleared hook notification for a session."""
+def current_hook(
+    prefix: str, last_user_event: str | None, last_event_ts: float
+) -> dict[str, Any] | None:
+    """Return an uncleared hook notification for a session.
+
+    Hooks with a user-event marker clear when the newest user record changes
+    (clock-independent). Hooks without one (payloads lacking transcript_path:
+    the documented curl simulation, older Claude Code versions) fall back to
+    the parsed-timestamp rule so they cannot stick forever.
+    """
     with _lock:
         hook = _hook_notifs.get(prefix)
-        if hook and last_event > hook["ts"]:
+        if not hook:
+            return None
+        if "user_event" in hook:
+            if last_user_event != hook["user_event"]:
+                _hook_notifs.pop(prefix, None)
+                return None
+        elif last_event_ts > hook["ts"]:
             _hook_notifs.pop(prefix, None)
             return None
         return hook
@@ -999,18 +1179,113 @@ def working_detail(info: dict[str, Any] | None, subagents: list[Any]) -> str:
 # Harness collectors — each returns a list of session dicts
 
 
+# Subagent-transcript classification cache. Whether a top-level transcript
+# belongs to a subagent is immutable for a given file, but young files may
+# not have written their identifying records yet — so negative results are
+# only cached once the file is big enough to be conclusive.
+_agent_class_cache: dict[str, tuple[bool, str, str]] = {}
+_AGENT_SCAN_LINES = 50
+_AGENT_CACHE_NEGATIVE_MIN_BYTES = 16384
+_AGENT_SCAN_BYTES = _AGENT_CACHE_NEGATIVE_MIN_BYTES
+
+
+def claude_agent_identity(path: str) -> tuple[bool, str, str]:
+    """Classify a top-level transcript: (is_subagent, agent_name, parent_prefix).
+
+    Harness >= 2.x writes subagent transcripts as ordinary <uuid>.jsonl files
+    in the project directory; their records carry ``agentName`` and
+    ``teamName`` = "session-<parent 8-char prefix>". Older harnesses used
+    <session>/subagents/agent-*.jsonl, still handled by
+    load_claude_subagents().
+    """
+    with _cache_lock:
+        cached = _agent_class_cache.get(path)
+    if cached is not None:
+        return cached
+    is_agent, name, parent = False, "", ""
+    size = 0
+    lines_seen = 0
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            data = f.read(_AGENT_SCAN_BYTES)
+        lines = data.split(b"\n")
+        if size > len(data) and data and not data.endswith(b"\n"):
+            lines.pop()  # the byte prefix ended inside a JSON record
+        for line in lines[:_AGENT_SCAN_LINES]:
+            if not line:
+                continue
+            lines_seen += 1
+            if is_agent and parent:
+                break
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            agent_name = rec.get("agentName")
+            if not is_agent and isinstance(agent_name, str) and agent_name:
+                is_agent, name = True, agent_name
+            team = rec.get("teamName")
+            if not parent and isinstance(team, str) and team.startswith("session-"):
+                parent = team[len("session-") :][:8]
+    except OSError:
+        return (False, "", "")
+    result = (is_agent, name, parent)
+    # A positive is conclusive; a negative is only trusted once the file has
+    # enough content that the identifying records would have appeared.
+    if is_agent or lines_seen >= _AGENT_SCAN_LINES or size >= _AGENT_CACHE_NEGATIVE_MIN_BYTES:
+        with _cache_lock:
+            bounded_put(_agent_class_cache, path, result)
+    return result
+
+
+def claude_prefix_is_agent(prefix: str) -> bool:
+    """True when the newest transcript for this 8-char prefix belongs to a
+    subagent. Used to suppress popups for agent sessions."""
+    newest, newest_mtime = None, 0.0
+    for fp in glob.glob(os.path.join(PROJECTS_DIR, "*", f"{prefix}*.jsonl")):
+        try:
+            mtime = os.path.getmtime(fp)
+        except OSError:
+            continue
+        if mtime > newest_mtime:
+            newest, newest_mtime = fp, mtime
+    if not newest:
+        return False
+    return claude_agent_identity(newest)[0]
+
+
 def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict[str, Any]]:
     tasks_by_session = load_tasks()
     transcripts: dict[str, str] = {}  # prefix -> newest transcript path
+    agent_children: dict[str, list[dict[str, Any]]] = {}  # parent prefix -> children
     for fp in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
         base = os.path.basename(fp)
         if "-agent-" in base or base.startswith("agent-"):
-            continue  # subagent transcripts aren't top-level sessions
+            continue  # legacy subagent transcripts aren't top-level sessions
+        try:
+            mtime = os.path.getmtime(fp)
+        except OSError:
+            continue  # transcript rotated/deleted between glob and stat
+        if show_all or now - mtime <= window_hours * 3600:
+            is_agent, agent_name, parent_prefix = claude_agent_identity(fp)
+            if is_agent:
+                # Fold into the parent session; never a standalone session.
+                # Without a parent prefix there is nothing to attach to.
+                if parent_prefix and now - mtime <= window_hours * 3600:
+                    agent_children.setdefault(parent_prefix, []).append(
+                        {
+                            "path": fp,
+                            "mtime": mtime,
+                            "label": (agent_name or "subagent")[:70],
+                        }
+                    )
+                continue
         prefix = base[:8]
         try:
-            if prefix not in transcripts or os.path.getmtime(fp) > os.path.getmtime(
-                transcripts[prefix]
-            ):
+            if prefix not in transcripts or mtime > os.path.getmtime(transcripts[prefix]):
                 transcripts[prefix] = fp
         except OSError:
             continue  # transcript rotated/deleted between glob and stat
@@ -1028,8 +1303,20 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
             transcript_mtime = 0
         latest_task_mtime = max((t["updated"] for t in tasks), default=0)
         subagents = load_claude_subagents(transcript, now)
-        latest_agent_mtime = max((a["mtime"] for a in subagents), default=0)
-        last_activity = max(latest_task_mtime, transcript_mtime, latest_agent_mtime)
+        children = agent_children.get(prefix, [])
+        subagents += [
+            {"label": c["label"], "mtime": c["mtime"]}
+            for c in children
+            if now - c["mtime"] <= WORKING_THRESHOLD_SEC  # fresh = running
+        ]
+        latest_agent_mtime = max(
+            (a["mtime"] for a in subagents),
+            default=0,
+        )
+        latest_child_mtime = max((c["mtime"] for c in children), default=0)
+        last_activity = max(
+            latest_task_mtime, transcript_mtime, latest_agent_mtime, latest_child_mtime
+        )
         active = (now - last_activity) <= window_hours * 3600
         if not (active or show_all):
             continue
@@ -1046,14 +1333,16 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
         # no parseable timestamp (partial line, untimestamped record)
         parsed_last_event = info["last_event_ts"] if info else 0
         last_event = max(parsed_last_event, transcript_mtime)
-        hook = current_hook(prefix, parsed_last_event)
+        hook = current_hook(prefix, (info or {}).get("last_user_event"), parsed_last_event)
         if info and info["pending_input_tool"]:
             p = info["pending_input_tool"]
             state = "needs_input"
             state_detail = f"open question ({p['name']}), waiting {fmt_duration(now - p['ts']) if p['ts'] else '?'}"
-        elif hook:
-            state = "needs_input"
-            state_detail = hook["message"] or "waiting for your input"
+        # Fresh activity beats a hook: Claude Code emits "waiting for your
+        # input" notifications for sessions that keep running via background
+        # tasks and will resume on their own. A hook only surfaces as
+        # needs-input once the session actually goes quiet; permission-prompt
+        # popups are unaffected (they fire on the POST itself).
         elif subagents or now - last_event <= WORKING_THRESHOLD_SEC:
             state = "working"
             in_prog = next((t for t in tasks if t["status"] == "in_progress"), None)
@@ -1061,6 +1350,9 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
                 state_detail = (in_prog["activeForm"] or in_prog["subject"]) + "…"
             else:
                 state_detail = working_detail(info, subagents)
+        elif hook:
+            state = "needs_input"
+            state_detail = hook["message"] or "waiting for your input"
         if active:
             maybe_popup(
                 prefix, state, f"[{project}] {state_detail}" if state == "needs_input" else None
@@ -1096,7 +1388,14 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
                 "state_detail": state_detail,
                 "active": active,
                 "last_activity": last_activity,
-                "rate_per_min": rate_from(info, now),
+                # Subagent output now lives in the children's own transcripts;
+                # fold it in so the session's rate reflects all its work.
+                "rate_per_min": rate_from(info, now)
+                + sum(
+                    rate_from(analyze_transcript(c["path"]), now)
+                    for c in children
+                    if now - c["mtime"] <= RATE_WINDOW_SEC
+                ),
                 "total": total,
                 "done": done,
                 "open": open_count,
@@ -2794,17 +3093,36 @@ class Handler(BaseHTTPRequestHandler):
             else "Claude is waiting for your input",
             500,
         )
+        # Subagent sessions also emit Notification-hook events (permission
+        # prompts inside agents). They are not user-facing sessions — a popup
+        # about them is noise the human cannot act on from the dashboard.
+        if prefix and claude_prefix_is_agent(prefix):
+            self._send(b'{"ok":true,"suppressed":"subagent"}', "application/json")
+            return
         now = time.time()
+        hook = {"ts": now, "message": message}
+        transcript_path = payload.get("transcript_path")
+        if prefix and isinstance(transcript_path, str):
+            found, user_event = claude_hook_user_event(transcript_path, prefix)
+            if found:
+                hook["user_event"] = user_event
         with _lock:
             if prefix:
-                bounded_put(_hook_notifs, prefix, {"ts": now, "message": message})
+                bounded_put(_hook_notifs, prefix, hook)
             popup_key = prefix or "_anonymous"
             session_ready = now - _last_popup.get(popup_key, 0) >= POPUP_COOLDOWN_SEC
             global_ready = now - _last_popup.get("_global", 0) >= GLOBAL_POPUP_COOLDOWN_SEC
-            fire = session_ready and global_ready
+            # Claude re-emits the same idle/permission notification for as
+            # long as the session stays blocked; repeating the popup adds no
+            # information. One popup per distinct message per session within
+            # POPUP_REPEAT_SUPPRESS_SEC.
+            prev_msg, prev_ts = _last_popup_message.get(popup_key, ("", 0.0))
+            repeat = message == prev_msg and now - prev_ts < POPUP_REPEAT_SUPPRESS_SEC
+            fire = session_ready and global_ready and not repeat
             if fire:
                 bounded_put(_last_popup, popup_key, now)
                 bounded_put(_last_popup, "_global", now)
+                bounded_put(_last_popup_message, popup_key, (message, now))
         if fire:
             notify_mac("Claude is waiting on you", message)
         self._send(b'{"ok":true}', "application/json")
