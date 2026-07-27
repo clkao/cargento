@@ -18,13 +18,16 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import glob
 import hashlib
 import json
-import mmap
+import ntpath
 import os
+import posixpath
 import re
-import sqlite3
+import socket
+import stat as stat_module
 import subprocess
 import sys
 import threading
@@ -32,30 +35,187 @@ import time
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any, ClassVar
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
+
+try:
+    import sqlite3
+except ImportError as exc:  # pragma: no cover — depends on the interpreter build
+    # ``sqlite3`` is an optional stdlib module: minimal and musl-based builds
+    # (Alpine images, hand-rolled interpreters) ship without the extension. A
+    # bare ``import`` here would take the whole dashboard down, including the
+    # five harnesses that need no database at all.
+    SQLITE_IMPORT_ERROR: str | None = str(exc)
+else:
+    SQLITE_IMPORT_ERROR = None
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Mapping
 
 HOME = os.path.expanduser("~")
 DATA_HOME = os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share")
 
-# Per-harness data roots
-TASKS_DIR = os.path.join(HOME, ".claude", "tasks")
-PROJECTS_DIR = os.path.join(HOME, ".claude", "projects")
-CODEX_SESSIONS_DIR = os.path.join(HOME, ".codex", "sessions")
-GEMINI_TMP = os.path.join(HOME, ".gemini", "tmp")
-ANTIGRAVITY_CLI_DIR = os.path.join(HOME, ".gemini", "antigravity-cli")
+# Documented per-harness relocation variables. When one of these is set it is
+# authoritative: only paths derived from it are searched, so a user who
+# relocated a store never silently reads a stale default instead. Variables
+# whose semantics are not documented upstream are deliberately absent rather
+# than guessed at — a wrong override would break a working setup, while a
+# missing one only costs an entry in --diagnose.
+STORE_ENV_VARS = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "COPILOT_HOME")
+
+
+def resolve_store_roots(
+    *, platform_name: str, environ: Mapping[str, str], home: str
+) -> dict[str, list[str]]:
+    """Candidate locations for every harness store, best candidate first.
+
+    Pure: everything it depends on is an argument, so each platform's layout is
+    exercisable from any runner (and mypy sees every branch, rather than
+    treating the other platforms' as unreachable).
+
+    Candidates are cheap — one that does not exist simply never matches — so
+    the lists include plausible-but-unconfirmed locations alongside documented
+    ones. What must never happen is silently searching *only* a wrong path,
+    which is why --diagnose reports every candidate it considered.
+    """
+    windows = platform_name == "win32"
+    # Join with the *target* platform's rules, not the host's, so a Windows
+    # layout resolved on a Linux runner is byte-identical to the real thing.
+    join = ntpath.join if windows else posixpath.join
+
+    def under_home(*parts: str) -> str:
+        return join(home, *parts)
+
+    def env_dir(name: str) -> str | None:
+        value = environ.get(name)
+        if not isinstance(value, str) or not value.strip():
+            return None
+        # Returned byte-for-byte, not stripped: trailing whitespace is legal in
+        # a POSIX path, and XDG_DATA_HOME was already honoured before this
+        # resolver existed. Stripping it would silently move an existing
+        # OpenCode or Goose store out from under a macOS or Linux user.
+        return value
+
+    xdg_data = env_dir("XDG_DATA_HOME") or under_home(".local", "share")
+    # Windows app-data roots; None elsewhere so those entries drop out.
+    local_app_data = env_dir("LOCALAPPDATA") if windows else None
+    roaming_app_data = env_dir("APPDATA") if windows else None
+
+    claude_home = env_dir("CLAUDE_CONFIG_DIR") or under_home(".claude")
+    codex_home = env_dir("CODEX_HOME") or under_home(".codex")
+    # GEMINI_CLI_HOME names a parent: the CLI creates ".gemini" inside it.
+    gemini_root = env_dir("GEMINI_CLI_HOME")
+    gemini_home = join(gemini_root, ".gemini") if gemini_root else under_home(".gemini")
+    copilot_home = env_dir("COPILOT_HOME") or under_home(".copilot")
+    antigravity_home = join(gemini_home, "antigravity-cli")
+
+    def ordered(*candidates: str | None) -> list[str]:
+        """Drop ``None`` and duplicates, keep order.
+
+        Candidates coincide on some setups — XDG_DATA_HOME already pointing at
+        ~/.local/share, a Windows profile without LOCALAPPDATA — and a repeated
+        root would scan the same store twice. ``normcase`` folds case and
+        separators on Windows, where paths are case-insensitive; on POSIX it is
+        the identity.
+        """
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            key = ntpath.normcase(candidate) if windows else candidate
+            if key not in seen:
+                seen.add(key)
+                deduped.append(candidate)
+        return deduped
+
+    def app_data(root: str | None, *parts: str) -> str | None:
+        return join(root, *parts) if root else None
+
+    return {
+        "claude.projects": ordered(join(claude_home, "projects")),
+        "claude.tasks": ordered(join(claude_home, "tasks")),
+        "codex.sessions": ordered(join(codex_home, "sessions")),
+        "gemini.tmp": ordered(join(gemini_home, "tmp")),
+        "antigravity.root": ordered(antigravity_home),
+        "copilot.root": ordered(copilot_home),
+        # OpenCode: the XDG location is confirmed and must stay first — it is
+        # what works on Linux and macOS today, and the first candidate becomes
+        # the primary constant. Windows builds have been reported both under
+        # %LOCALAPPDATA% and at a literal ~/.local/share; both follow.
+        "opencode.data": ordered(
+            join(xdg_data, "opencode"),
+            app_data(local_app_data, "opencode", "data"),
+            app_data(local_app_data, "opencode"),
+            under_home(".local", "share", "opencode") if windows else None,
+        ),
+        "cursor.chats": ordered(under_home(".cursor", "chats")),
+        # Goose: the Windows build uses an org-scoped app-data directory.
+        "goose.db": ordered(
+            join(xdg_data, "goose", "sessions", "sessions.db"),
+            app_data(roaming_app_data, "Block", "goose", "data", "sessions", "sessions.db"),
+            app_data(local_app_data, "Block", "goose", "data", "sessions", "sessions.db"),
+        ),
+        "droid.projects": ordered(under_home(".factory", "projects")),
+    }
+
+
+STORE_ROOTS: dict[str, list[str]] = resolve_store_roots(
+    platform_name=sys.platform, environ=os.environ, home=HOME
+)
+
+
+def store_roots(key: str, primary: str) -> list[str]:
+    """Every candidate root for ``key``, ``primary`` first.
+
+    ``primary`` is the module constant below rather than a lookup, because that
+    constant is the override seam: tests patch it to point a collector at a
+    fixture. When it no longer matches the resolved default it is treated as an
+    explicit instruction and searched *alone* — otherwise a fixture could pick
+    up a real store elsewhere on the machine and a test would pass or fail on
+    whatever the developer happened to have running.
+    """
+    candidates = STORE_ROOTS.get(key) or []
+    if not candidates or primary != candidates[0]:
+        return [primary]
+    return candidates
+
+
+def glob_stores(key: str, primary: str, *pattern: str) -> list[str]:
+    """``glob_under`` across every candidate root for a store.
+
+    Collectors already key sessions by id and keep the newest file per key, so
+    scanning more than one root merges naturally instead of double-counting.
+    """
+    return [path for root in store_roots(key, primary) for path in glob_under(root, *pattern)]
+
+
+def any_store_dir(key: str, primary: str, *parts: str) -> bool:
+    """Whether any candidate root for a store contains ``parts`` as a directory."""
+    return any(os.path.isdir(os.path.join(root, *parts)) for root in store_roots(key, primary))
+
+
+def existing_stores(key: str, primary: str) -> list[str]:
+    """Candidate paths for a store that actually exist as files."""
+    return [path for path in store_roots(key, primary) if os.path.isfile(path)]
+
+
+# Per-harness data roots. Each is the best candidate for its store and stays a
+# module-level constant: it is the documented override seam (see store_roots).
+TASKS_DIR = STORE_ROOTS["claude.tasks"][0]
+PROJECTS_DIR = STORE_ROOTS["claude.projects"][0]
+CODEX_SESSIONS_DIR = STORE_ROOTS["codex.sessions"][0]
+GEMINI_TMP = STORE_ROOTS["gemini.tmp"][0]
+ANTIGRAVITY_CLI_DIR = STORE_ROOTS["antigravity.root"][0]
 ANTIGRAVITY_CONVERSATIONS_DIR = os.path.join(ANTIGRAVITY_CLI_DIR, "conversations")
 ANTIGRAVITY_LOG_DIR = os.path.join(ANTIGRAVITY_CLI_DIR, "log")
 ANTIGRAVITY_LAST_CONVERSATIONS = os.path.join(
     ANTIGRAVITY_CLI_DIR, "cache", "last_conversations.json"
 )
-COPILOT_DIR = os.path.join(HOME, ".copilot")
-OPENCODE_DATA = os.path.join(DATA_HOME, "opencode")
-CURSOR_CHATS = os.path.join(HOME, ".cursor", "chats")
-GOOSE_DB = os.path.join(DATA_HOME, "goose", "sessions", "sessions.db")
-FACTORY_PROJECTS = os.path.join(HOME, ".factory", "projects")
+COPILOT_DIR = STORE_ROOTS["copilot.root"][0]
+OPENCODE_DATA = STORE_ROOTS["opencode.data"][0]
+CURSOR_CHATS = STORE_ROOTS["cursor.chats"][0]
+GOOSE_DB = STORE_ROOTS["goose.db"][0]
+FACTORY_PROJECTS = STORE_ROOTS["droid.projects"][0]
 
 RATE_WINDOW_SEC = 600  # usage rate is measured over the last 10 minutes
 WORKING_THRESHOLD_SEC = 90  # activity newer than this = WORKING
@@ -69,11 +229,33 @@ POPUP_COOLDOWN_SEC = 60  # per-session floor between macOS popups
 GLOBAL_POPUP_COOLDOWN_SEC = 15  # floor across caller-controlled session ids
 POPUP_REPEAT_SUPPRESS_SEC = 600  # identical message per session: one popup per window
 LONG_TURN_WARN_SEC = 900  # warn when a request runs (or is estimated) this long
+# How far ahead of the collection clock a store timestamp may read before it is
+# treated as skew rather than activity. Generous enough to absorb sampling noise
+# and coarse filesystem write times; far below any real clock drift.
+FUTURE_SKEW_TOLERANCE_SEC = 120
 SQL_MSG_LIMIT = 400  # newest messages fetched per DB-backed session
 MAX_CACHE_ENTRIES = 8192  # bound process-lifetime caches over long uptime
 GEMINI_SEEN_ENTRIES = 2048  # bound per-transcript snapshot deduplication
 
-HOME_PREFIX = HOME.replace("/", "-")
+
+def encoded_home_prefix(home: str) -> str:
+    """Reproduce how Claude encodes ``home`` into a ``projects/`` directory name.
+
+    Claude turns a working directory into a directory name by replacing path
+    separators with ``-``; stripping that prefix is what leaves a readable
+    project label. Replacing only ``/`` worked on POSIX and did nothing on a
+    Windows home, so every Claude row there showed the whole encoded path
+    instead of the project.
+
+    Backslash and the drive colon are folded too. The exact Windows encoding is
+    not documented, so this is deliberately non-destructive: if it turns out to
+    differ, the prefix simply does not match and project_label() shows the full
+    name — exactly what it does today.
+    """
+    return re.sub(r"[/\\:]", "-", home)
+
+
+HOME_PREFIX = encoded_home_prefix(HOME)
 
 # Tools that mean Claude is blocked on the human, not just running long.
 INPUT_TOOLS = {"AskUserQuestion", "ExitPlanMode"}
@@ -105,6 +287,21 @@ _hook_notifs: dict[str, dict[str, Any]] = {}
 _last_popup: dict[str, float] = {}  # session prefix -> epoch
 _last_popup_message: dict[str, tuple[str, float]] = {}  # prefix -> (message, epoch)
 _last_state: dict[str, str] = {}  # session prefix -> state string (popup on transition)
+# Bumped only by SessionEnd — the one event meaning "this session is gone".
+# Notification handling and collection both sample it before their slow
+# transcript lookups and refuse to act if it moved, so a SessionEnd arriving
+# mid-lookup is not undone by the notification it supersedes.
+#
+# Deliberately NOT bumped by clearing notifications (agent_completed,
+# idle_prompt): those end one alert, not the session. Bumping there dropped an
+# actionable permission prompt that happened to overlap a clearing one — losing
+# a real "Claude is blocked" signal, which is worse than the stale state this
+# guard exists to prevent.
+#
+# Bounded like the other caches. Evicting a session's entry degrades it to the
+# pre-guard behaviour for that session — a stale row that clears on the next
+# refresh — never to anything worse, so the bound is safe to keep.
+_hook_generation: dict[str, int] = {}
 _cache_lock = threading.Lock()
 
 
@@ -150,8 +347,10 @@ def notification_disposition(notification_type: Any, message: str) -> tuple[bool
     return (not idle_nudge, True)
 
 
-def project_label(dirname: str) -> str:
-    dirname = dirname.removeprefix(HOME_PREFIX)
+def project_label(dirname: str, home_prefix: str | None = None) -> str:
+    """Shorten an encoded project directory name to just the project part."""
+    prefix = HOME_PREFIX if home_prefix is None else home_prefix
+    dirname = dirname.removeprefix(prefix)
     return dirname.lstrip("-") or "(home)"
 
 
@@ -214,6 +413,86 @@ def read_tail(path: str) -> list[str]:
     return lines
 
 
+REVERSE_CHUNK_BYTES = 262_144  # bytes per read when walking a transcript backward
+
+
+def reverse_lines(
+    path: str,
+    end_pos: int | None = None,
+    *,
+    max_bytes: int | None = None,
+    contains: bytes | None = None,
+) -> Iterator[bytes]:
+    """Yield complete lines from ``path`` newest-first, reading fixed chunks.
+
+    Deliberately not ``mmap``, which is faster but unsafe on a file a running
+    agent owns. If the writer truncates or rotates a transcript while a region
+    of it is mapped, POSIX delivers SIGBUS on the next access — uncatchable,
+    it kills the process — and Windows instead refuses the writer's truncate,
+    so the reader breaks the agent. A chunked read has neither failure mode:
+    the worst case is a short read, which ends the scan.
+
+    ``end_pos`` scans only what precedes that offset, exclusively — but a line
+    that *ends* exactly at ``end_pos`` is still yielded. That boundary is not
+    arbitrary: ``scan_turns`` resumes its forward pass at the same offset, and
+    a forward read starting on a newline never sees the record that newline
+    terminates. Dropping it here would lose that record entirely, which is what
+    the previous mmap implementation did.
+
+    ``max_bytes`` bounds how far back to walk. When the walk stops early the
+    oldest line is dropped, since it is probably a fragment rather than a whole
+    record.
+
+    ``contains`` skips whole chunks that cannot hold a match, avoiding the
+    per-line split for them. The line scan, not the I/O, is what costs: on a
+    38 MB transcript whose only match is at the very start (the worst case)
+    this takes the backward walk from 44 ms to 20 ms, against 16 ms for the
+    mmap version it replaces. It is a coarse filter — callers must still test
+    each line they receive.
+
+    Empty lines are yielded as-is — callers already skip anything that is not a
+    JSON object.
+    """
+    try:
+        with open(path, "rb") as source:
+            size = os.fstat(source.fileno()).st_size
+            stop = size if end_pos is None else min(end_pos, size)
+            floor = 0 if max_bytes is None else max(0, stop - max_bytes)
+            pos = stop
+            # Fragments of a line whose start lies further back, newest first.
+            # Kept as a list and joined once: concatenating bytes per chunk made
+            # a single very long record quadratic (a 64 MB one-line transcript
+            # took 0.9 s), and large tool results do produce such records.
+            carry: list[bytes] = []
+            while pos > floor:
+                read_size = min(REVERSE_CHUNK_BYTES, pos - floor)
+                pos -= read_size
+                source.seek(pos)
+                chunk = source.read(read_size)
+                if len(chunk) < read_size:
+                    return  # truncated underneath us — stop rather than misparse
+                last_newline = chunk.rfind(b"\n")
+                if last_newline < 0:
+                    carry.append(chunk)  # no line boundary in this window yet
+                    continue
+                carry.append(chunk[last_newline + 1 :])
+                completed = b"".join(reversed(carry))
+                # Everything before the final newline splits cleanly; its first
+                # element is the next line's tail and becomes the new carry.
+                parts = chunk[:last_newline].split(b"\n")
+                carry = [parts[0]]
+                if contains is None or contains in chunk or contains in completed:
+                    yield completed
+                    yield from reversed(parts[1:])
+            # Emit the first line even when empty (a file starting with a
+            # newline has one), but only if the walk actually reached the start
+            # of the file — otherwise it is a fragment, not a record.
+            if floor == 0 and stop > 0:
+                yield b"".join(reversed(carry))
+    except OSError:
+        return
+
+
 def extract_text(v: Any, depth: int = 0) -> str:
     """Best-effort text from harness message payloads whose exact shape
     varies (string, list of parts, nested dicts)."""
@@ -233,8 +512,265 @@ def extract_text(v: Any, depth: int = 0) -> str:
     return ""
 
 
+def as_dict(value: Any) -> dict[str, Any]:
+    """``value`` if it is a dict, else an empty dict.
+
+    Every harness payload is untyped JSON read off disk, and the idiom
+    ``record.get("x") or {}`` is not safe: any truthy non-dict (a string, a
+    number, a list) passes the ``or`` and the following ``.get()`` raises,
+    taking the whole collector down for that refresh. Same for iteration —
+    see ``as_list``.
+    """
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value: Any) -> list[Any]:
+    """``value`` if it is a list, else an empty list."""
+    return value if isinstance(value, list) else []
+
+
+def message_dict(record: Any) -> dict[str, Any]:
+    """The ``message`` object of a transcript record, or an empty dict."""
+    return as_dict(as_dict(record).get("message"))
+
+
 def alnum(s: Any) -> str:
     return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+
+def normalize_host(value: str) -> str:
+    """Reduce a ``Host`` header to a bare, lowercased hostname.
+
+    Naive ``rsplit(":", 1)`` mishandles two legitimate forms: a bracketed IPv6
+    authority (``[::1]`` with no port becomes ``[:``) and any host whose case
+    differs from the allowlist, even though DNS names are case-insensitive and
+    ``LOCALHOST`` is as valid as ``localhost``. Both were rejected as non-local.
+    """
+    host = (value or "").strip()
+    if host.startswith("["):
+        end = host.find("]")
+        if end < 0:
+            return ""
+        # Only a port may follow the bracketed literal. Without this check
+        # "[::1]evil.example" reduced to "::1" and passed as loopback.
+        rest = host[end + 1 :]
+        if rest and not (rest.startswith(":") and rest[1:].isdigit()):
+            return ""
+        return host[1:end].lower()
+    if host.count(":") > 1:
+        return host.lower()  # bare IPv6 with no port
+    if ":" not in host:
+        return host.lower()
+    name, _, port = host.rpartition(":")
+    # Same rule as the bracketed branch: only a numeric port may follow, so
+    # "localhost:evil.example" does not reduce to "localhost".
+    return name.lower() if port.isdigit() else ""
+
+
+def reuse_address_allowed(os_name: str) -> bool:
+    """Whether the listening socket should set ``SO_REUSEADDR``.
+
+    On POSIX the option only bypasses ``TIME_WAIT``, which is what lets the
+    dashboard restart immediately after a kill — worth keeping. On Windows the
+    same option means something else entirely: a second process may bind a port
+    that is *already bound*, with undefined delivery between the two sockets. A
+    stray second Cargento would silently steal half the requests, and any local
+    process could hijack the port of a server handing out local session data.
+    """
+    return os_name != "nt"
+
+
+def bind_error_message(exc: OSError, port: int) -> str:
+    """Explain a failed bind instead of dumping a raw traceback."""
+    winerror = getattr(exc, "winerror", None)
+    if exc.errno == errno.EADDRINUSE or winerror == 10048:  # WSAEADDRINUSE
+        return (
+            f"Cargento: port {port} is already in use. If that is a dashboard "
+            f"already running, use it: curl -s http://127.0.0.1:{port}/api/data. "
+            f"Otherwise pick another port with --port."
+        )
+    if exc.errno == errno.EACCES or winerror == 10013:  # WSAEACCES
+        # On Windows this is also what an in-use port reports once
+        # SO_EXCLUSIVEADDRUSE is set, so name both causes.
+        return (
+            f"Cargento: not permitted to bind port {port} — it may already be "
+            f"held by another process, reserved by the system, or blocked by "
+            f"local policy. Try another port with --port."
+        )
+    return f"Cargento: cannot bind 127.0.0.1:{port} — {type(exc).__name__}: {exc}"
+
+
+class LoopbackHTTPServer(ThreadingHTTPServer):
+    """Loopback listener that refuses to share its port on Windows."""
+
+    allow_reuse_address = reuse_address_allowed(os.name)
+
+    def server_bind(self) -> None:
+        # Windows-only socket option. Clearing SO_REUSEADDR above stops *us*
+        # from hijacking someone else's port; this is what stops anyone else
+        # hijacking ours. Absent on POSIX, where getattr returns None.
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusive is not None:
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+            except OSError as exc:
+                # Bind anyway, but say so: without this option the port can be
+                # hijacked, and silently dropping the guarantee is worse than
+                # a noisy one-line warning at startup.
+                diag(f"Cargento: could not claim the port exclusively ({exc}); continuing")
+        super().server_bind()
+
+
+def dedupe_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse sessions found in more than one candidate store.
+
+    Scanning every candidate root means a session left behind by a migration
+    can be discovered twice. Most collectors key by session id internally and
+    merge naturally, but the database-backed ones append per store — so the
+    same id produced two rows and counted its tokens twice in the summary.
+    The freshest copy wins.
+    """
+    best: dict[tuple[str, str], dict[str, Any]] = {}
+    for session in sessions:
+        key = (str(session["harness"]), str(session["sid"]))
+        current = best.get(key)
+        if current is None or session["last_activity"] > current["last_activity"]:
+            best[key] = session
+    return list(best.values())
+
+
+_store_errors: dict[str, str] = {}
+
+
+def record_store_error(path: str, exc: BaseException) -> None:
+    """Remember why a store could not be read, for ``--diagnose``.
+
+    Collectors swallow these so one broken store cannot take the dashboard
+    down. Without recording them, a corrupt or locked database is reported as
+    a healthy store holding no sessions — precisely the confusion --diagnose
+    exists to remove.
+    """
+    with _cache_lock:
+        bounded_put(_store_errors, path, f"{type(exc).__name__}: {exc}")
+
+
+def sqlite_available() -> bool:
+    """Whether the optional ``sqlite3`` extension module was importable."""
+    return SQLITE_IMPORT_ERROR is None
+
+
+def diag(message: str) -> None:
+    """Write a diagnostic line without ever raising.
+
+    Diagnostics carry harness-derived text (tool names, session titles, error
+    strings) and the skill is normally started with stdout redirected to a log,
+    where the stream uses the locale encoding rather than the console's Unicode
+    path — so text outside that encoding raises UnicodeEncodeError. This is
+    called from inside the collectors' own exception handler, where a second
+    exception would escape it and take down the refresh it was reporting on.
+    """
+    try:
+        print(message)
+    except (OSError, ValueError):
+        # Retry ASCII-safe; if even that fails (stdout closed or detached) a
+        # diagnostic must still never be fatal.
+        with contextlib.suppress(OSError, ValueError):
+            print(message.encode("ascii", "backslashreplace").decode("ascii"))
+
+
+def age(now: float, timestamp: float) -> float | None:
+    """Seconds since ``timestamp``; ``None`` when the timestamp is implausible.
+
+    A timestamp far in the future is not activity. It arrives from a store
+    restored from backup, a file copied across the WSL boundary with its original
+    mtime, or a guest whose clock drifted while the host was suspended. Read as
+    an ordinary age, ``now - timestamp`` goes negative and satisfies *every*
+    ``<= threshold`` comparison built on it — so the session reads Working, and
+    keeps reading Working, for as long as the skew lasts. A clock a day ahead
+    buys a day of phantom activity and phantom output tokens.
+
+    Note that merely clamping the result at zero does not help: zero reads as
+    "just now", which is still fresh. An implausible timestamp has to be
+    rejected outright so no activity is invented from it. Overshoots within
+    ``FUTURE_SKEW_TOLERANCE_SEC`` are clamped instead of rejected, because at
+    that scale they are sampling noise — ``stat()`` and the collection clock are
+    read microseconds apart, and coarse filesystems (FAT's two-second write
+    time, some network mounts) round upward.
+    """
+    if timestamp - now > FUTURE_SKEW_TOLERANCE_SEC:
+        return None
+    return max(0.0, now - timestamp)
+
+
+def is_fresh(now: float, timestamp: float, window_sec: float) -> bool:
+    """Whether ``timestamp`` is a plausible time within ``window_sec`` of now."""
+    seconds = age(now, timestamp)
+    return seconds is not None and seconds <= window_sec
+
+
+def newest_plausible(now: float, timestamps: Iterable[float]) -> float:
+    """Newest timestamp that is not implausibly ahead of ``now``; 0 if none.
+
+    Every activity decision goes through this rather than ``max()``. ``max()``
+    picks the *implausible* value — a future timestamp is by definition the
+    largest — so rejecting it afterwards throws away the good evidence too, and
+    a transcript being written right now but holding one clock-skewed record
+    reads Idle. That is the opposite of what rejecting future timestamps is
+    for. It also matters for display (a skewed value renders as "–") and for
+    de-duplication, where it would beat a perfectly good copy of the session.
+
+    Callers then test the result with ``is_fresh()``: freshness is monotonic in
+    the timestamp, so checking the newest plausible source is equivalent to
+    checking them all, at half the work on every five-second refresh.
+    """
+    return max((t for t in timestamps if age(now, t) is not None), default=0.0)
+
+
+def glob_under(root: str, *pattern: str) -> list[str]:
+    """Glob ``pattern`` beneath a literal directory ``root``.
+
+    ``root`` is a real path, not a pattern. Interpolating it into a glob makes
+    any metacharacter in it (``[``, ``*``, ``?``) match nothing at all, so a
+    home directory such as ``/Users/A [Contractor]`` silently hides every
+    session — the failure is total and looks identical to "no sessions".
+
+    Results are sorted because ``glob()`` order is unspecified: several callers
+    keep the newest file per session, and an unsorted list makes an equal-mtime
+    tie resolve differently from one platform (or one call) to the next.
+    """
+    return sorted(glob.glob(os.path.join(glob.escape(root), *pattern)))
+
+
+def sqlite_ro_uri(path: str, *, immutable: bool = False, windows: bool | None = None) -> str:
+    """Return a read-only SQLite URI for a filesystem path.
+
+    Interpolating a path straight into ``file:{path}?mode=ro`` is wrong on every
+    platform: SQLite percent-decodes the path portion, so a store path
+    containing ``%`` becomes unopenable, and ``?``/``#`` terminate the path
+    early. On Windows a ``C:\\dir`` path is not a valid URI path at all —
+    SQLite documents that backslashes must become forward slashes and that a
+    drive letter is only recognized in the form ``/X:/``.
+
+    ``windows`` selects the path flavor and defaults to the running platform;
+    tests pass it explicitly so both branches are exercised everywhere.
+    """
+    if windows is None:
+        windows = os.name == "nt"
+    absolute = (ntpath if windows else posixpath).abspath(path)
+    if windows:
+        absolute = absolute.replace("\\", "/")
+        if not absolute.startswith("/"):
+            absolute = "/" + absolute  # C:/dir -> /C:/dir, SQLite's drive form
+    # "/" stays a separator and ":" must survive for the drive form; everything
+    # else SQLite would reinterpret (%, ?, #) gets escaped.
+    quoted = quote(absolute, safe="/:")
+    if quoted.startswith("//") and not quoted.startswith("///"):
+        # "//server/share" (UNC) or a POSIX "//dir" would parse as a URI
+        # authority, which SQLite rejects unless it is empty or "localhost".
+        # Two more slashes make the authority explicitly empty.
+        quoted = "//" + quoted
+    query = "?mode=ro&immutable=1" if immutable else "?mode=ro"
+    return f"file:{quoted}{query}"
 
 
 # ---------------------------------------------------------------------------
@@ -274,18 +810,17 @@ def codex_meta(path: str) -> dict[str, Any]:
         p = d.get("payload")
         if not isinstance(p, dict):
             p = {}
-        source = p.get("source") or {}
-        subagent = source.get("subagent") if isinstance(source, dict) else {}
-        spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else {}
+        spawn = as_dict(as_dict(as_dict(p.get("source")).get("subagent")).get("thread_spawn"))
         nickname = p.get("agent_nickname")
         agent_path = p.get("agent_path")
         label = (
             nickname
             if isinstance(nickname, str) and nickname
+            # basename(), not rsplit("/"): on Windows the recorded path is
+            # backslash-separated, and a hardcoded "/" would keep the whole
+            # path as the agent's label.
             else (
-                agent_path.rsplit("/", 1)[-1]
-                if isinstance(agent_path, str) and agent_path
-                else None
+                os.path.basename(agent_path) if isinstance(agent_path, str) and agent_path else None
             )
         )
         return {
@@ -321,8 +856,8 @@ def copilot_meta(path: str) -> dict[str, Any]:
     data.context.cwd."""
 
     def parse(d: dict[str, Any]) -> dict[str, Any]:
-        data = d.get("data") or {}
-        ctx = data.get("context") or {}
+        data = as_dict(d.get("data"))
+        ctx = as_dict(data.get("context"))
         return (
             {"cwd": ctx.get("cwd") or data.get("cwd")} if d.get("type") == "session.start" else {}
         )
@@ -356,10 +891,10 @@ _claude_user_event_cache: dict[str, tuple[int, int, str | None]] = {}
 def claude_session_title(path: str) -> str | None:
     """Newest generated Claude title, falling back to the first user prompt.
 
-    ``ai-title`` records can be older than the bounded activity tail, so find
-    the newest one by searching the mmap backward. The cache is invalidated
-    whenever the transcript's size or mtime changes because Claude repeats
-    title records as a session grows.
+    ``ai-title`` records can be older than the bounded activity tail, so walk
+    the file backward to find the newest one. The cache is invalidated whenever
+    the transcript's size or mtime changes because Claude repeats title records
+    as a session grows.
     """
     try:
         stat = os.stat(path)
@@ -372,30 +907,21 @@ def claude_session_title(path: str) -> str | None:
         return cached[2]
 
     title = None
-    try:
-        with open(path, "rb") as source:
-            if stat.st_size:
-                with mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
-                    pos = len(data)
-                    while pos:
-                        match = data.rfind(b'"aiTitle"', 0, pos)
-                        if match < 0:
-                            break
-                        line_start = data.rfind(b"\n", 0, match) + 1
-                        line_end = data.find(b"\n", match)
-                        if line_end < 0:
-                            line_end = len(data)
-                        try:
-                            record = json.loads(data[line_start:line_end])
-                        except json.JSONDecodeError:
-                            record = {}
-                        value = record.get("aiTitle")
-                        if record.get("type") == "ai-title" and isinstance(value, str) and value:
-                            title = value
-                            break
-                        pos = match
-    except (OSError, ValueError):
-        pass
+    # The chunk filter does the heavy lifting; the per-line test below only
+    # re-checks the few lines inside a chunk that had a hit.
+    for raw in reverse_lines(path, contains=b'"aiTitle"'):
+        if b'"aiTitle"' not in raw:
+            continue
+        try:
+            record = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        value = record.get("aiTitle")
+        if record.get("type") == "ai-title" and isinstance(value, str) and value:
+            title = value
+            break
 
     if title is None:
         try:
@@ -405,12 +931,14 @@ def claude_session_title(path: str) -> str | None:
                         continue
                     try:
                         record = json.loads(line)
-                    except json.JSONDecodeError:
+                    except ValueError:
+                        continue
+                    if not isinstance(record, dict):
                         continue
                     signal = _turn_signal(record, "claude")
                     if not signal or signal[0] != "prompt":
                         continue
-                    prompt = extract_text((record.get("message") or {}).get("content")).strip()
+                    prompt = extract_text(message_dict(record).get("content")).strip()
                     title = prompt.split("\n")[0][:80] or None
                     break
         except OSError:
@@ -434,34 +962,23 @@ def claude_last_user_event(path: str) -> str | None:
         return cached[2]
 
     marker = None
-    try:
-        with open(path, "rb") as source:
-            if stat.st_size:
-                with mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
-                    line_end = len(data)
-                    while line_end:
-                        if data[line_end - 1 : line_end] == b"\n":
-                            line_end -= 1
-                        line_start = data.rfind(b"\n", 0, line_end) + 1
-                        raw = data[line_start:line_end]
-                        line_end = line_start
-                        if not raw.startswith(b"{"):
-                            continue
-                        try:
-                            record = json.loads(raw)
-                        except json.JSONDecodeError:
-                            continue
-                        if record.get("type") != "user":
-                            continue
-                        uuid = record.get("uuid")
-                        marker = (
-                            uuid
-                            if isinstance(uuid, str) and uuid
-                            else hashlib.blake2b(raw, digest_size=16).hexdigest()
-                        )
-                        break
-    except (OSError, ValueError):
-        pass
+    # Superset filter: a user record must contain the literal "user".
+    for raw in reverse_lines(path, contains=b'"user"'):
+        if not raw.startswith(b"{") or b'"user"' not in raw:
+            continue
+        try:
+            record = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(record, dict) or record.get("type") != "user":
+            continue
+        uuid = record.get("uuid")
+        marker = (
+            uuid
+            if isinstance(uuid, str) and uuid
+            else hashlib.blake2b(raw, digest_size=16).hexdigest()
+        )
+        break
 
     with _cache_lock:
         bounded_put(_claude_user_event_cache, path, (*cache_key, marker))
@@ -494,17 +1011,17 @@ def analyze_transcript(path: str) -> dict[str, Any]:
         if t == "last-prompt":
             info["last_prompt"] = d.get("lastPrompt")
         elif t == "assistant":
-            msg = d.get("message") or {}
-            usage = msg.get("usage") or {}
+            msg = message_dict(d)
+            usage = as_dict(msg.get("usage"))
             if ep and usage.get("output_tokens"):
                 info["usage_events"].append((ep, usage["output_tokens"]))
-            for c in msg.get("content") or []:
+            for c in as_list(msg.get("content")):
                 if isinstance(c, dict) and c.get("type") == "tool_use":
                     info["last_tool"] = c.get("name")
                     if c.get("name") in INPUT_TOOLS:
                         pending[c.get("id")] = {"name": c.get("name"), "ts": ep}
         elif t == "user":
-            for c in (d.get("message") or {}).get("content") or []:
+            for c in as_list(message_dict(d).get("content")):
                 if isinstance(c, dict) and c.get("type") == "tool_result":
                     pending.pop(c.get("tool_use_id"), None)
     if pending:
@@ -547,15 +1064,16 @@ def analyze_codex_transcript(path: str) -> dict[str, Any]:
         if ep:
             info["last_event_ts"] = max(info["last_event_ts"], ep)
         t = d.get("type")
-        p = d.get("payload") or {}
+        p = as_dict(d.get("payload"))
         if t == "event_msg":
             pt = p.get("type")
             if pt == "user_message":
-                msg = (p.get("message") or "").strip()
+                msg = p.get("message")
+                msg = msg.strip() if isinstance(msg, str) else ""
                 info["last_prompt"] = msg
                 info["title"] = msg.split("\n")[0][:80] or None
             elif pt == "token_count":
-                out = (((p.get("info") or {}).get("last_token_usage")) or {}).get("output_tokens")
+                out = as_dict(as_dict(p.get("info")).get("last_token_usage")).get("output_tokens")
                 if ep and out:
                     info["usage_events"].append((ep, out))
         elif t == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
@@ -636,7 +1154,7 @@ def analyze_gemini_transcript(path: str) -> dict[str, Any]:
                 toks = message.get("tokens") or {}
                 if ep and isinstance(toks, dict) and toks.get("output"):
                     info["usage_events"].append((ep, toks["output"]))
-                for tc in message.get("toolCalls") or []:
+                for tc in as_list(message.get("toolCalls")):
                     if isinstance(tc, dict) and tc.get("name"):
                         info["last_tool"] = tc.get("name")
     return info
@@ -666,11 +1184,9 @@ def analyze_copilot_events(path: str) -> dict[str, Any]:
         if ep:
             info["last_event_ts"] = max(info["last_event_ts"], ep)
         t = d.get("type")
-        data = d.get("data") or {}
-        if not isinstance(data, dict):
-            continue
+        data = as_dict(d.get("data"))
         if t == "session.start":
-            ctx = data.get("context") or {}
+            ctx = as_dict(data.get("context"))
             info["cwd"] = ctx.get("cwd") or data.get("cwd") or info["cwd"]
         elif t == "user.message":
             txt = extract_text(data).strip()
@@ -722,7 +1238,7 @@ def analyze_droid_transcript(path: str) -> dict[str, Any]:
             info["last_event_ts"] = max(info["last_event_ts"], ep)
         if d.get("type") != "message":
             continue
-        msg = d.get("message") or {}
+        msg = message_dict(d)
         content = msg.get("content")
         blocks = content if isinstance(content, list) else []
         if msg.get("role") == "user":
@@ -758,7 +1274,7 @@ def _turn_signal(d: dict[str, Any], harness: str) -> tuple[str, Any] | None:
     if harness == "codex":
         if t != "event_msg":
             return None
-        p = d.get("payload") or {}
+        p = as_dict(d.get("payload"))
         pt = p.get("type")
         if pt == "task_started":
             return ("start", p.get("started_at"))
@@ -783,7 +1299,7 @@ def _turn_signal(d: dict[str, Any], harness: str) -> tuple[str, Any] | None:
     if harness == "droid":
         if t != "message":
             return None
-        msg = d.get("message") or {}
+        msg = message_dict(d)
         if msg.get("role") != "user":
             return None
         content = msg.get("content")
@@ -795,7 +1311,7 @@ def _turn_signal(d: dict[str, Any], harness: str) -> tuple[str, Any] | None:
     # claude
     if t != "user" or d.get("isMeta"):
         return None
-    content = (d.get("message") or {}).get("content")
+    content = message_dict(d).get("content")
     if isinstance(content, list) and any(
         isinstance(c, dict) and c.get("type") == "tool_result" for c in content
     ):
@@ -851,60 +1367,45 @@ def _latest_turn_context(path: str, end_pos: int, harness: str) -> dict[str, Any
     context: dict[str, Any] = {"turn_start": None, "last_start": None, "prev_ts": None}
     if end_pos <= 0:
         return context
-    try:
-        with open(path, "rb") as source:
-            if os.fstat(source.fileno()).st_size == 0:
+    active_decided = False
+    later_ts: float | None = None
+    for raw in reverse_lines(path, end_pos):
+        if not raw.startswith(b"{"):
+            continue
+        try:
+            decoded = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(decoded, dict):
+            continue
+        records = reversed(gemini_records(decoded)) if harness == "gemini" else (decoded,)
+        for record in records:
+            ep = parse_ts(record.get("timestamp") or "")
+            if not ep:
+                continue
+            # Walking backward: `later_ts` is the timestamp of the record that
+            # chronologically FOLLOWS this one. A quiet gap re-anchors the turn
+            # at the post-gap record, same rule as the forward scanner.
+            if later_ts is not None and later_ts - ep > TURN_GAP_RESET_SEC:
+                if not active_decided:
+                    context["turn_start"] = later_ts
+                context["last_start"] = later_ts
                 return context
-            with mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
-                line_end = data.rfind(b"\n", 0, end_pos)
-                if line_end < 0:
-                    return context
-                pos = line_end
-                active_decided = False
-                later_ts: float | None = None
-                while pos > 0:
-                    line_start = data.rfind(b"\n", 0, pos) + 1
-                    raw = data[line_start:pos]
-                    pos = line_start - 1
-                    if not raw.startswith(b"{"):
-                        continue
-                    try:
-                        decoded = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    records = (
-                        reversed(gemini_records(decoded)) if harness == "gemini" else (decoded,)
-                    )
-                    for record in records:
-                        ep = parse_ts(record.get("timestamp") or "")
-                        if not ep:
-                            continue
-                        # Walking backward: `later_ts` is the timestamp of the
-                        # record that chronologically FOLLOWS this one. A quiet
-                        # gap re-anchors the turn at the post-gap record, same
-                        # rule as the forward scanner.
-                        if later_ts is not None and later_ts - ep > TURN_GAP_RESET_SEC:
-                            if not active_decided:
-                                context["turn_start"] = later_ts
-                            context["last_start"] = later_ts
-                            return context
-                        later_ts = ep
-                        if context["prev_ts"] is None:
-                            context["prev_ts"] = ep
-                        sig = _turn_signal(record, harness)
-                        if not sig:
-                            continue
-                        kind, override = sig
-                        if not active_decided:
-                            active_decided = True
-                            if kind != "end":
-                                context["turn_start"] = norm_epoch(override) or ep
-                        if kind != "end":
-                            context["last_start"] = norm_epoch(override) or ep
-                            return context
+            later_ts = ep
+            if context["prev_ts"] is None:
+                context["prev_ts"] = ep
+            sig = _turn_signal(record, harness)
+            if not sig:
+                continue
+            kind, override = sig
+            if not active_decided:
+                active_decided = True
+                if kind != "end":
+                    context["turn_start"] = norm_epoch(override) or ep
+            if kind != "end":
+                context["last_start"] = norm_epoch(override) or ep
                 return context
-    except (OSError, ValueError):
-        return context
+    return context
 
 
 def scan_turns(path: str, harness: str) -> dict[str, Any] | None:
@@ -992,7 +1493,9 @@ def turn_progress(scan: dict[str, Any] | None, state: str, now: float) -> dict[s
     past turns that lasted at least as long as the current one has so far."""
     if state != "working" or not scan or not scan.get("turn_start"):
         return None
-    elapsed = max(0, now - scan["turn_start"])
+    elapsed = age(now, scan["turn_start"])
+    if elapsed is None:
+        return None  # turn start is implausibly ahead of the clock; no ETA
     history = scan.get("durations") or []
     cands = sorted(d for d in history if d >= elapsed)
     if cands:
@@ -1018,14 +1521,19 @@ def turn_progress(scan: dict[str, Any] | None, state: str, now: float) -> dict[s
 def load_tasks() -> dict[str, list[dict[str, Any]]]:
     """session prefix -> list of task dicts."""
     by_session: dict[str, list[dict[str, Any]]] = {}
-    for fp in glob.glob(os.path.join(TASKS_DIR, "*", "*.json")):
+    for fp in glob_stores("claude.tasks", TASKS_DIR, "*", "*.json"):
         if os.path.basename(fp).startswith("."):
             continue
         try:
-            with open(fp) as f:
+            # Explicit UTF-8: the locale default is cp1252 on Windows, which
+            # silently mojibakes non-ASCII task subjects and raises
+            # UnicodeDecodeError on the bytes that code page leaves undefined.
+            # That is a ValueError but not a JSONDecodeError, so it escaped the
+            # handler below and errored the whole Claude collector for a pass.
+            with open(fp, encoding="utf-8") as f:
                 task = json.load(f)
             st = os.stat(fp)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError):
             continue
         if not isinstance(task, dict):
             continue
@@ -1062,18 +1570,18 @@ def load_claude_subagents(transcript: str | None, now: float) -> list[dict[str, 
         os.path.dirname(transcript), os.path.basename(transcript)[: -len(".jsonl")]
     )
     agents: list[dict[str, Any]] = []
-    for fp in glob.glob(os.path.join(sess_dir, "subagents", "agent-*.jsonl")):
+    for fp in glob_under(sess_dir, "subagents", "agent-*.jsonl"):
         try:
             mtime = os.path.getmtime(fp)
         except OSError:
             continue
-        if now - mtime > WORKING_THRESHOLD_SEC:
+        if not is_fresh(now, mtime, WORKING_THRESHOLD_SEC):
             continue
         label = None
         try:
-            with open(fp[: -len(".jsonl")] + ".meta.json") as f:
+            with open(fp[: -len(".jsonl")] + ".meta.json", encoding="utf-8") as f:
                 meta = json.load(f)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError):  # ValueError covers UnicodeDecodeError
             meta = None
         # Meta values are untyped JSON — a non-string name must not
         # TypeError the whole Claude collector.
@@ -1092,8 +1600,24 @@ def load_claude_subagents(transcript: str | None, now: float) -> list[dict[str, 
 # Notifications
 
 
+def native_notifier(platform_name: str) -> str:
+    """Name of the OS-level notification backend for a platform, "" if none.
+
+    Pure in ``platform_name`` so both branches run on every CI runner and mypy
+    checks them all, rather than treating the non-host branch as unreachable
+    (design decision D-4).
+
+    The page reads this through ``/api/data`` to decide whether to raise its
+    own browser notification. Exactly one layer notifies for a given
+    transition: the server when it has a backend here, the browser when it does
+    not. Linux and Windows have no backend yet — that is Phase 6 — so today the
+    browser covers them and macOS behavior is unchanged.
+    """
+    return "osascript" if platform_name == "darwin" else ""
+
+
 def notify_mac(title: Any, message: Any) -> None:
-    if sys.platform != "darwin":
+    if not native_notifier(sys.platform):
         return
 
     def esc(s: str) -> str:
@@ -1112,9 +1636,15 @@ def notify_mac(title: Any, message: Any) -> None:
         )
         if result.returncode:
             detail = (result.stderr or result.stdout or "unknown error").strip()
-            print(f"[notify] osascript failed: {detail[:300]}")
+            diag(f"[notify] osascript failed: {detail[:300]}")
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        print(f"[notify] osascript failed: {type(exc).__name__}: {exc}")
+        diag(f"[notify] osascript failed: {type(exc).__name__}: {exc}")
+
+
+def hook_generation(prefix: str) -> int:
+    """Current generation for a session's hook state (see ``_hook_generation``)."""
+    with _lock:
+        return _hook_generation.get(prefix, 0)
 
 
 def current_hook(
@@ -1141,10 +1671,20 @@ def current_hook(
         return hook
 
 
-def maybe_popup(prefix: str, state: str, detail: str | None) -> None:
-    """Popup when a session transitions into a needs-input state."""
+def maybe_popup(
+    prefix: str, state: str, detail: str | None, *, expect_generation: int | None = None
+) -> None:
+    """Popup when a session transitions into a needs-input state.
+
+    ``expect_generation`` is re-checked under the same lock that guards
+    ``_last_state``. Checking it in the caller leaves a window in which a
+    SessionEnd commits first, and this would then re-create the state it just
+    cleared and fire a popup for a session that has already exited.
+    """
     now = time.time()
     with _lock:
+        if expect_generation is not None and _hook_generation.get(prefix, 0) != expect_generation:
+            return
         prev = _last_state.get(prefix)
         bounded_put(_last_state, prefix, state)
         if state != "needs_input" or prev == "needs_input":
@@ -1194,7 +1734,9 @@ def base_session(harness: str, sid: Any, project: str) -> dict[str, Any]:
 def rate_from(info: dict[str, Any] | None, now: float) -> int:
     if not info:
         return 0
-    recent: float = sum(tok for ep, tok in info["usage_events"] if now - ep <= RATE_WINDOW_SEC)
+    recent: float = sum(
+        tok for ep, tok in info["usage_events"] if is_fresh(now, ep, RATE_WINDOW_SEC)
+    )
     return round(recent / (RATE_WINDOW_SEC / 60))
 
 
@@ -1208,7 +1750,7 @@ def codex_subagent_rate(path: str, now: float) -> int:
     recent: float = sum(
         tokens
         for epoch, tokens in info["usage_events"]
-        if epoch >= start and now - epoch <= RATE_WINDOW_SEC
+        if epoch >= start and is_fresh(now, epoch, RATE_WINDOW_SEC)
     )
     return round(recent / (RATE_WINDOW_SEC / 60))
 
@@ -1292,7 +1834,7 @@ def claude_prefix_is_agent(prefix: str) -> bool:
     """True when the newest transcript for this 8-char prefix belongs to a
     subagent. Used to suppress popups for agent sessions."""
     newest, newest_mtime = None, 0.0
-    for fp in glob.glob(os.path.join(PROJECTS_DIR, "*", f"{prefix}*.jsonl")):
+    for fp in glob_stores("claude.projects", PROJECTS_DIR, "*", glob.escape(prefix) + "*.jsonl"):
         try:
             mtime = os.path.getmtime(fp)
         except OSError:
@@ -1308,7 +1850,7 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
     tasks_by_session = load_tasks()
     transcripts: dict[str, str] = {}  # prefix -> newest transcript path
     agent_children: dict[str, list[dict[str, Any]]] = {}  # parent prefix -> children
-    for fp in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+    for fp in glob_stores("claude.projects", PROJECTS_DIR, "*", "*.jsonl"):
         base = os.path.basename(fp)
         if "-agent-" in base or base.startswith("agent-"):
             continue  # legacy subagent transcripts aren't top-level sessions
@@ -1316,12 +1858,12 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
             mtime = os.path.getmtime(fp)
         except OSError:
             continue  # transcript rotated/deleted between glob and stat
-        if show_all or now - mtime <= window_hours * 3600:
+        if show_all or is_fresh(now, mtime, window_hours * 3600):
             is_agent, agent_name, parent_prefix = claude_agent_identity(fp)
             if is_agent:
                 # Fold into the parent session; never a standalone session.
                 # Without a parent prefix there is nothing to attach to.
-                if parent_prefix and now - mtime <= window_hours * 3600:
+                if parent_prefix and is_fresh(now, mtime, window_hours * 3600):
                     agent_children.setdefault(parent_prefix, []).append(
                         {
                             "path": fp,
@@ -1354,17 +1896,21 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
         subagents += [
             {"label": c["label"], "mtime": c["mtime"]}
             for c in children
-            if now - c["mtime"] <= WORKING_THRESHOLD_SEC  # fresh = running
+            if is_fresh(now, c["mtime"], WORKING_THRESHOLD_SEC)  # fresh = running
         ]
         latest_agent_mtime = max(
             (a["mtime"] for a in subagents),
             default=0,
         )
         latest_child_mtime = max((c["mtime"] for c in children), default=0)
-        last_activity = max(
-            latest_task_mtime, transcript_mtime, latest_agent_mtime, latest_child_mtime
+        activity_sources = (
+            latest_task_mtime,
+            transcript_mtime,
+            latest_agent_mtime,
+            latest_child_mtime,
         )
-        active = (now - last_activity) <= window_hours * 3600
+        last_activity = newest_plausible(now, activity_sources)
+        active = is_fresh(now, last_activity, window_hours * 3600)
         if not (active or show_all):
             continue
 
@@ -1373,6 +1919,9 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
             if transcript
             else "unknown"
         )
+        # Sampled before analyze_transcript: that scan is the slow part, and a
+        # SessionEnd landing during it must invalidate everything derived here.
+        seen_generation = hook_generation(prefix)
         info = analyze_transcript(transcript) if (transcript and active) else None
 
         state, state_detail = "idle", "awaiting your message"
@@ -1380,7 +1929,7 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
         # mtime floor: match the other collectors when the newest write has
         # no parseable timestamp (partial line, untimestamped record)
         parsed_last_event = info["last_event_ts"] if info else 0
-        last_event = max(parsed_last_event, transcript_mtime)
+        last_event_sources = (parsed_last_event, transcript_mtime)
         hook = (
             current_hook(prefix, (info or {}).get("last_user_event"), parsed_last_event)
             if active
@@ -1390,13 +1939,15 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
             p = info["pending_input_tool"]
             state = "needs_input"
             blocked_since = p["ts"] or last_activity
-            state_detail = f"open question ({p['name']}), waiting {fmt_duration(now - p['ts']) if p['ts'] else '?'}"
+            state_detail = f"open question ({p['name']}), waiting {fmt_duration(age(now, p['ts'])) if p['ts'] else '?'}"
         # Fresh activity beats a hook: Claude Code emits "waiting for your
         # input" notifications for sessions that keep running via background
         # tasks and will resume on their own. A hook only surfaces as
         # needs-input once the session actually goes quiet; permission-prompt
         # popups are unaffected (they fire on the POST itself).
-        elif subagents or now - last_event <= WORKING_THRESHOLD_SEC:
+        elif subagents or is_fresh(
+            now, newest_plausible(now, last_event_sources), WORKING_THRESHOLD_SEC
+        ):
             state = "working"
             in_prog = next((t for t in tasks if t["status"] == "in_progress"), None)
             if in_prog:
@@ -1407,9 +1958,18 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
             state = "needs_input"
             blocked_since = hook["ts"]
             state_detail = hook["message"] or "waiting for your input"
+        if state == "needs_input" and hook_generation(prefix) != seen_generation:
+            # The session exited while this snapshot was being built. Applies to
+            # the transcript-detected case too: an unanswered AskUserQuestion in
+            # a session the user has quit is moot, not blocking.
+            state, blocked_since = "idle", None
+            state_detail = "awaiting your message"
         if active:
             maybe_popup(
-                prefix, state, f"[{project}] {state_detail}" if state == "needs_input" else None
+                prefix,
+                state,
+                f"[{project}] {state_detail}" if state == "needs_input" else None,
+                expect_generation=seen_generation,
             )
 
         total = len(tasks)
@@ -1428,10 +1988,10 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
             elapsed = (
                 (t["updated"] - t["created"])
                 if t["status"] == "completed"
-                else (now - t["created"])
+                else age(now, t["created"])
             )
             t["elapsed_h"] = fmt_duration(elapsed)
-            t["updated_ago"] = fmt_duration(now - t["updated"]) + " ago"
+            t["updated_ago"] = fmt_duration(age(now, t["updated"])) + " ago"
 
         s = base_session("claude", prefix, project)
         s.update(
@@ -1449,7 +2009,7 @@ def collect_claude(now: float, window_hours: float, show_all: bool) -> list[dict
                 + sum(
                     rate_from(analyze_transcript(c["path"]), now)
                     for c in children
-                    if now - c["mtime"] <= RATE_WINDOW_SEC
+                    if is_fresh(now, c["mtime"], RATE_WINDOW_SEC)
                 ),
                 "total": total,
                 "done": done,
@@ -1476,7 +2036,7 @@ def collect_codex(now: float, window_hours: float, show_all: bool) -> list[dict[
     sessions: dict[str, tuple[float, str]] = {}  # session_id -> (mtime, path)
     # parent session_id -> {"agents": [(label, mtime)], "rate": int}
     agent_data: dict[str, dict[str, Any]] = {}
-    for fp in glob.glob(os.path.join(CODEX_SESSIONS_DIR, "*", "*", "*", "rollout-*.jsonl")):
+    for fp in glob_stores("codex.sessions", CODEX_SESSIONS_DIR, "*", "*", "*", "rollout-*.jsonl"):
         try:
             mtime = os.path.getmtime(fp)
         except OSError:
@@ -1486,9 +2046,9 @@ def collect_codex(now: float, window_hours: float, show_all: bool) -> list[dict[
         if meta.get("subagent"):
             parent_sid = meta.get("parent_session_id") or sid
             data = agent_data.setdefault(parent_sid, {"agents": [], "rate": 0})
-            if now - mtime <= RATE_WINDOW_SEC:
+            if is_fresh(now, mtime, RATE_WINDOW_SEC):
                 data["rate"] += codex_subagent_rate(fp, now)
-            if now - mtime <= WORKING_THRESHOLD_SEC:
+            if is_fresh(now, mtime, WORKING_THRESHOLD_SEC):
                 data["agents"].append(((meta.get("agent_label") or "subagent")[:70], mtime))
             continue
         if sid not in sessions or mtime > sessions[sid][0]:
@@ -1498,15 +2058,16 @@ def collect_codex(now: float, window_hours: float, show_all: bool) -> list[dict[
     for sid, (mtime, fp) in sessions.items():
         data = agent_data.get(sid) or {"agents": [], "rate": 0}
         agents = sorted(data["agents"], key=lambda a: -a[1])
-        last_activity = max(mtime, max((m for _, m in agents), default=0))
-        active = (now - last_activity) <= window_hours * 3600
+        activity_sources = (mtime, *(m for _, m in agents))
+        last_activity = newest_plausible(now, activity_sources)
+        active = is_fresh(now, last_activity, window_hours * 3600)
         if not (active or show_all):
             continue
         info = analyze_codex_transcript(fp) if active else None
-        last_event = max(info["last_event_ts"] if info else 0, last_activity)
+        last_event_sources = (info["last_event_ts"] if info else 0, *activity_sources)
         subagents = [label for label, _ in agents]
         state, state_detail = "idle", "awaiting your message"
-        if now - last_event <= WORKING_THRESHOLD_SEC:
+        if is_fresh(now, newest_plausible(now, last_event_sources), WORKING_THRESHOLD_SEC):
             state = "working"
             state_detail = working_detail(info, subagents)
 
@@ -1568,12 +2129,12 @@ def antigravity_session_metadata(
     except (OSError, ValueError, TypeError, RecursionError):
         pass
 
-    logs = glob.glob(os.path.join(ANTIGRAVITY_LOG_DIR, "cli-*.log"))
+    logs = glob_under(ANTIGRAVITY_LOG_DIR, "cli-*.log")
     if not show_all:
         recent_logs: list[str] = []
         for path in logs:
             try:
-                if now - os.path.getmtime(path) <= window_hours * 3600:
+                if is_fresh(now, os.path.getmtime(path), window_hours * 3600):
                     recent_logs.append(path)
             except OSError:
                 continue
@@ -1738,17 +2299,21 @@ def antigravity_step_activity(path: str, now: float) -> dict[str, Any]:
         "turns": None,
         "last_tool_action": "",
     }
+    if not sqlite_available():
+        return result
     query = "SELECT step_type, metadata FROM steps ORDER BY idx DESC LIMIT ?"
     rows = None
-    for uri in (f"file:{path}?mode=ro", f"file:{path}?mode=ro&immutable=1"):
+    for uri in (sqlite_ro_uri(path), sqlite_ro_uri(path, immutable=True)):
         try:
             con = sqlite3.connect(uri, uri=True, timeout=0.2)
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
+            record_store_error(path, exc)
             continue
         try:
             rows = con.execute(query, (SQL_MSG_LIMIT,)).fetchall()
             break
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
+            record_store_error(path, exc)
             continue
         finally:
             con.close()
@@ -1775,7 +2340,7 @@ def antigravity_step_activity(path: str, now: float) -> dict[str, Any]:
         if action and epoch >= last_prompt:
             latest_action = (epoch, action)
 
-    recent = sum(tokens for epoch, tokens in usage_events if now - epoch <= RATE_WINDOW_SEC)
+    recent = sum(tokens for epoch, tokens in usage_events if is_fresh(now, epoch, RATE_WINDOW_SEC))
     result["rate_per_min"] = round(recent / (RATE_WINDOW_SEC / 60))
     result["turns"] = turns_from_events(events) if events else None
     result["last_tool_action"] = latest_action[1]
@@ -1785,12 +2350,12 @@ def antigravity_step_activity(path: str, now: float) -> dict[str, Any]:
 def collect_antigravity(now: float, window_hours: float, show_all: bool) -> list[dict[str, Any]]:
     metadata = antigravity_session_metadata(now, window_hours, show_all)
     out: list[dict[str, Any]] = []
-    for db in glob.glob(os.path.join(ANTIGRAVITY_CONVERSATIONS_DIR, "*.db")):
+    for db in glob_under(ANTIGRAVITY_CONVERSATIONS_DIR, "*.db"):
         sid = os.path.basename(db)[: -len(".db")]
         mtime = antigravity_store_mtime(db)
         if not mtime:
             continue
-        active = (now - mtime) <= window_hours * 3600
+        active = is_fresh(now, mtime, window_hours * 3600)
         if not (active or show_all):
             continue
         activity: dict[str, Any] = (
@@ -1799,7 +2364,7 @@ def collect_antigravity(now: float, window_hours: float, show_all: bool) -> list
             else {"rate_per_min": 0, "turns": None, "last_tool_action": ""}
         )
         state, state_detail = "idle", "awaiting your message"
-        if now - mtime <= WORKING_THRESHOLD_SEC:
+        if is_fresh(now, mtime, WORKING_THRESHOLD_SEC):
             state = "working"
             state_detail = activity["last_tool_action"] or "generating response…"
 
@@ -1832,12 +2397,12 @@ def collect_gemini(now: float, window_hours: float, show_all: bool) -> list[dict
     # appended from its per-conversation SQLite stores below.
     # sanitized parent session id -> [(label, mtime)]
     agents_by_parent: dict[str, list[tuple[str, float]]] = {}
-    for fp in glob.glob(os.path.join(GEMINI_TMP, "*", "chats", "*", "*.jsonl")):
+    for fp in glob_stores("gemini.tmp", GEMINI_TMP, "*", "chats", "*", "*.jsonl"):
         try:
             mtime = os.path.getmtime(fp)
         except OSError:
             continue
-        if now - mtime > WORKING_THRESHOLD_SEC:
+        if not is_fresh(now, mtime, WORKING_THRESHOLD_SEC):
             continue
         parent = alnum(os.path.basename(os.path.dirname(fp)))
         label = "subagent " + os.path.basename(fp)[:8]
@@ -1846,7 +2411,7 @@ def collect_gemini(now: float, window_hours: float, show_all: bool) -> list[dict
     sessions: dict[
         str, tuple[float, str]
     ] = {}  # session id (or filename fallback) -> (mtime, path)
-    for fp in glob.glob(os.path.join(GEMINI_TMP, "*", "chats", "session-*.jsonl")):
+    for fp in glob_stores("gemini.tmp", GEMINI_TMP, "*", "chats", "session-*.jsonl"):
         try:
             mtime = os.path.getmtime(fp)
         except OSError:
@@ -1861,15 +2426,16 @@ def collect_gemini(now: float, window_hours: float, show_all: bool) -> list[dict
     out: list[dict[str, Any]] = []
     for sid, (mtime, fp) in sessions.items():
         agents = sorted(agents_by_parent.get(alnum(sid), []), key=lambda a: -a[1])
-        last_activity = max(mtime, max((m for _, m in agents), default=0))
-        active = (now - last_activity) <= window_hours * 3600
+        activity_sources = (mtime, *(m for _, m in agents))
+        last_activity = newest_plausible(now, activity_sources)
+        active = is_fresh(now, last_activity, window_hours * 3600)
         if not (active or show_all):
             continue
         info = analyze_gemini_transcript(fp) if active else None
-        last_event = max(info["last_event_ts"] if info else 0, last_activity)
+        last_event_sources = (info["last_event_ts"] if info else 0, *activity_sources)
         subagents = [label for label, _ in agents]
         state, state_detail = "idle", "awaiting your message"
-        if now - last_event <= WORKING_THRESHOLD_SEC:
+        if is_fresh(now, newest_plausible(now, last_event_sources), WORKING_THRESHOLD_SEC):
             state = "working"
             state_detail = working_detail(info, subagents)
 
@@ -1904,7 +2470,7 @@ def collect_copilot(now: float, window_hours: float, show_all: bool) -> list[dic
     # layout — unverified legacy format; a mismatch just means those old
     # sessions stay invisible.
     for base in ("session-state", "history-session-state"):
-        for fp in glob.glob(os.path.join(COPILOT_DIR, base, "*", "events.jsonl")):
+        for fp in glob_stores("copilot.root", COPILOT_DIR, base, "*", "events.jsonl"):
             sid = os.path.basename(os.path.dirname(fp))
             try:
                 mtime = os.path.getmtime(fp)
@@ -1915,14 +2481,14 @@ def collect_copilot(now: float, window_hours: float, show_all: bool) -> list[dic
 
     out: list[dict[str, Any]] = []
     for sid, (mtime, fp) in files.items():
-        active = (now - mtime) <= window_hours * 3600
+        active = is_fresh(now, mtime, window_hours * 3600)
         if not (active or show_all):
             continue
         info = analyze_copilot_events(fp) if active else None
-        last_event = max(info["last_event_ts"] if info else 0, mtime)
+        last_event_sources = (info["last_event_ts"] if info else 0, mtime)
         state, state_detail = "idle", "awaiting your message"
         subagents: list[str] = []
-        if now - last_event <= WORKING_THRESHOLD_SEC:
+        if is_fresh(now, newest_plausible(now, last_event_sources), WORKING_THRESHOLD_SEC):
             state = "working"
             subagents = list((info or {}).get("pending_agents", {}).values())
             state_detail = working_detail(info, subagents)
@@ -1946,18 +2512,27 @@ def collect_copilot(now: float, window_hours: float, show_all: bool) -> list[dic
 
 
 def _sql_ro(path: str) -> sqlite3.Connection:
-    """Read-only SQLite connection that never blocks a live agent's writes."""
-    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=0.2)
+    """Read-only SQLite connection that never blocks a live agent's writes.
+
+    Deliberately no ``immutable=1`` fallback: these are databases a live agent
+    is still writing, and SQLite documents that opening a changing database as
+    immutable can return incorrect results or SQLITE_CORRUPT. A failure here is
+    reported, not silently downgraded.
+    """
+    con = sqlite3.connect(sqlite_ro_uri(path), uri=True, timeout=0.2)
     con.row_factory = sqlite3.Row
     return con
 
 
 def collect_opencode(now: float, window_hours: float, show_all: bool) -> list[dict[str, Any]]:
+    if not sqlite_available():
+        return []
     out: list[dict[str, Any]] = []
-    for db in glob.glob(os.path.join(OPENCODE_DATA, "opencode*.db")):
+    for db in glob_stores("opencode.data", OPENCODE_DATA, "opencode*.db"):
         try:
             con = _sql_ro(db)
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
+            record_store_error(db, exc)
             continue
         # ?all=1 promises every session ever; LIMIT -1 is SQLite's "no limit".
         limit = -1 if show_all else 200
@@ -1975,7 +2550,8 @@ def collect_opencode(now: float, window_hours: float, show_all: bool) -> list[di
                     "ORDER BY time_updated DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
+            record_store_error(db, exc)
             con.close()
             continue
         try:
@@ -1988,7 +2564,7 @@ def collect_opencode(now: float, window_hours: float, show_all: bool) -> list[di
                     continue  # archival bumps time_updated; don't ghost as working
                 upd = norm_epoch(r["time_updated"])
                 if r["parent_id"]:
-                    if now - upd <= WORKING_THRESHOLD_SEC:
+                    if is_fresh(now, upd, WORKING_THRESHOLD_SEC):
                         children.setdefault(r["parent_id"], []).append(
                             ((r["title"] or "subagent")[:70], upd)
                         )
@@ -1996,13 +2572,14 @@ def collect_opencode(now: float, window_hours: float, show_all: bool) -> list[di
                     tops.append((r, upd))
             for r, upd in tops:
                 agents = sorted(children.get(r["id"], []), key=lambda a: -a[1])
-                last_activity = max(upd, max((m for _, m in agents), default=0))
-                active = (now - last_activity) <= window_hours * 3600
+                activity_sources = (upd, *(m for _, m in agents))
+                last_activity = newest_plausible(now, activity_sources)
+                active = is_fresh(now, last_activity, window_hours * 3600)
                 if not (active or show_all):
                     continue
                 subagents = [label for label, _ in agents]
                 state, state_detail = "idle", "awaiting your message"
-                if now - last_activity <= WORKING_THRESHOLD_SEC:
+                if is_fresh(now, last_activity, WORKING_THRESHOLD_SEC):
                     state = "working"
                     state_detail = working_detail(None, subagents)
 
@@ -2067,13 +2644,16 @@ def _cursor_title(db: str, mtime: float) -> str | None:
         return hit[1]
     title = None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=0.2)
-    except sqlite3.Error:
+        con = sqlite3.connect(sqlite_ro_uri(db), uri=True, timeout=0.2)
+    except sqlite3.Error as exc:
+        record_store_error(db, exc)
         return None
+    failed = False
     try:
         rows = con.execute("SELECT value FROM meta LIMIT 5").fetchall()
-    except sqlite3.Error:
-        rows = []
+    except sqlite3.Error as exc:
+        record_store_error(db, exc)
+        rows, failed = [], True
     finally:
         con.close()
     for (raw,) in rows:
@@ -2095,6 +2675,8 @@ def _cursor_title(db: str, mtime: float) -> str | None:
                     break
         if title:
             break
+    if failed:
+        return None  # transient: do not cache a title the query never returned
     with _cache_lock:
         hit = _cursor_title_cache.get(db)
         if hit and hit[0] == mtime:
@@ -2104,10 +2686,12 @@ def _cursor_title(db: str, mtime: float) -> str | None:
 
 
 def collect_cursor(now: float, window_hours: float, show_all: bool) -> list[dict[str, Any]]:
+    if not sqlite_available():
+        return []
     # One store.db per chat; content is opaque-ish (hex JSON blobs), so
     # Cursor rows are discovery + state + title only — no turn ETA.
     out: list[dict[str, Any]] = []
-    for db in glob.glob(os.path.join(CURSOR_CHATS, "*", "*", "store.db")):
+    for db in glob_stores("cursor.chats", CURSOR_CHATS, "*", "*", "store.db"):
         sid = os.path.basename(os.path.dirname(db))
         try:
             mtime = os.path.getmtime(db)
@@ -2116,11 +2700,11 @@ def collect_cursor(now: float, window_hours: float, show_all: bool) -> list[dict
                 mtime = max(mtime, os.path.getmtime(wal))
         except OSError:
             continue
-        active = (now - mtime) <= window_hours * 3600
+        active = is_fresh(now, mtime, window_hours * 3600)
         if not (active or show_all):
             continue
         state, state_detail = "idle", "awaiting your message"
-        if now - mtime <= WORKING_THRESHOLD_SEC:
+        if is_fresh(now, mtime, WORKING_THRESHOLD_SEC):
             state, state_detail = "working", "generating…"
         s = base_session("cursor", sid, "cursor")
         s.update(
@@ -2150,12 +2734,26 @@ def goose_user_prompt(content: Any) -> bool:
 
 
 def collect_goose(now: float, window_hours: float, show_all: bool) -> list[dict[str, Any]]:
+    if not sqlite_available():
+        return []
+    # Goose keeps its store in a different place per platform, so scan every
+    # candidate that exists rather than betting on one.
+    out: list[dict[str, Any]] = []
+    for db in existing_stores("goose.db", GOOSE_DB):
+        out.extend(collect_goose_db(db, now, window_hours, show_all))
+    return out
+
+
+def collect_goose_db(
+    goose_db: str, now: float, window_hours: float, show_all: bool
+) -> list[dict[str, Any]]:
     # Single shared sessions.db (v1.10.0+): per-session activity comes from
     # the updated_at column, NOT file mtime (the DB is shared by all
     # sessions). Legacy per-session .jsonl files are not supported.
     try:
-        con = _sql_ro(GOOSE_DB)
-    except sqlite3.Error:
+        con = _sql_ro(goose_db)
+    except sqlite3.Error as exc:
+        record_store_error(goose_db, exc)
         return []
     try:
         try:
@@ -2178,7 +2776,7 @@ def collect_goose(now: float, window_hours: float, show_all: bool) -> list[dict[
             upd = parse_utc_sql(r["updated_at"])
             stype = alnum(r["session_type"])
             if stype == "subagent":
-                if r["parent_session_id"] and now - upd <= WORKING_THRESHOLD_SEC:
+                if r["parent_session_id"] and is_fresh(now, upd, WORKING_THRESHOLD_SEC):
                     children.setdefault(r["parent_session_id"], []).append(
                         ((r["description"] or "subagent")[:70], upd)
                     )
@@ -2190,13 +2788,14 @@ def collect_goose(now: float, window_hours: float, show_all: bool) -> list[dict[
         out: list[dict[str, Any]] = []
         for r, upd in tops:
             agents = sorted(children.get(r["id"], []), key=lambda a: -a[1])
-            last_activity = max(upd, max((m for _, m in agents), default=0))
-            active = (now - last_activity) <= window_hours * 3600
+            activity_sources = (upd, *(m for _, m in agents))
+            last_activity = newest_plausible(now, activity_sources)
+            active = is_fresh(now, last_activity, window_hours * 3600)
             if not (active or show_all):
                 continue
             subagents = [label for label, _ in agents]
             state, state_detail = "idle", "awaiting your message"
-            if now - last_activity <= WORKING_THRESHOLD_SEC:
+            if is_fresh(now, last_activity, WORKING_THRESHOLD_SEC):
                 state = "working"
                 state_detail = working_detail(None, subagents)
 
@@ -2234,7 +2833,7 @@ def collect_goose(now: float, window_hours: float, show_all: bool) -> list[dict[
                     recent = sum(
                         (x["output_tokens"] or 0)
                         for x in led
-                        if now - norm_epoch(x["created_timestamp"]) <= RATE_WINDOW_SEC
+                        if is_fresh(now, norm_epoch(x["created_timestamp"]), RATE_WINDOW_SEC)
                     )
                     rate = round(recent / (RATE_WINDOW_SEC / 60))
                 except sqlite3.Error:
@@ -2256,7 +2855,8 @@ def collect_goose(now: float, window_hours: float, show_all: bool) -> list[dict[
                 }
             )
             out.append(s)
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
+        record_store_error(goose_db, exc)
         return []
     else:
         return out
@@ -2266,20 +2866,20 @@ def collect_goose(now: float, window_hours: float, show_all: bool) -> list[dict[
 
 def collect_droid(now: float, window_hours: float, show_all: bool) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for fp in glob.glob(os.path.join(FACTORY_PROJECTS, "*", "*.jsonl")):
+    for fp in glob_stores("droid.projects", FACTORY_PROJECTS, "*", "*.jsonl"):
         try:
             mtime = os.path.getmtime(fp)
         except OSError:
             continue
-        active = (now - mtime) <= window_hours * 3600
+        active = is_fresh(now, mtime, window_hours * 3600)
         if not (active or show_all):
             continue
         meta = droid_meta(fp)
         sid = str(meta.get("session_id") or os.path.basename(fp)[: -len(".jsonl")])
         info = analyze_droid_transcript(fp) if active else None
-        last_event = max(info["last_event_ts"] if info else 0, mtime)
+        last_event_sources = (info["last_event_ts"] if info else 0, mtime)
         state, state_detail = "idle", "awaiting your message"
-        if now - last_event <= WORKING_THRESHOLD_SEC:
+        if is_fresh(now, newest_plausible(now, last_event_sources), WORKING_THRESHOLD_SEC):
             state = "working"
             state_detail = working_detail(info, [])
 
@@ -2309,16 +2909,19 @@ def collect_droid(now: float, window_hours: float, show_all: bool) -> list[dict[
 HARNESSES: list[
     tuple[str, str, Callable[[], bool], Callable[[float, float, bool], list[dict[str, Any]]]]
 ] = [
-    ("claude", "Claude", lambda: os.path.isdir(PROJECTS_DIR), collect_claude),
-    ("codex", "Codex", lambda: os.path.isdir(CODEX_SESSIONS_DIR), collect_codex),
+    ("claude", "Claude", lambda: any_store_dir("claude.projects", PROJECTS_DIR), collect_claude),
+    ("codex", "Codex", lambda: any_store_dir("codex.sessions", CODEX_SESSIONS_DIR), collect_codex),
     # Predicate matches both supported Gemini stores: legacy Gemini CLI
     # JSONL and current Antigravity CLI per-conversation SQLite databases.
     (
         "gemini",
         "Gemini",
         lambda: bool(
-            glob.glob(os.path.join(GEMINI_TMP, "*", "chats", "session-*.jsonl"))
-            or glob.glob(os.path.join(ANTIGRAVITY_CONVERSATIONS_DIR, "*.db"))
+            glob_stores("gemini.tmp", GEMINI_TMP, "*", "chats", "session-*.jsonl")
+            # Antigravity discovery needs no sqlite3: identity and working/idle
+            # come from store mtime and the CLI logs. Only the token rate and
+            # turn ETA read the database, and those degrade to zero without it.
+            or glob_under(ANTIGRAVITY_CONVERSATIONS_DIR, "*.db")
         ),
         collect_gemini,
     ),
@@ -2326,28 +2929,38 @@ HARNESSES: list[
         "copilot",
         "Copilot",
         lambda: (
-            os.path.isdir(os.path.join(COPILOT_DIR, "session-state"))
-            or os.path.isdir(os.path.join(COPILOT_DIR, "history-session-state"))
+            any_store_dir("copilot.root", COPILOT_DIR, "session-state")
+            or any_store_dir("copilot.root", COPILOT_DIR, "history-session-state")
         ),
         collect_copilot,
     ),
     (
         "opencode",
         "OpenCode",
-        lambda: bool(glob.glob(os.path.join(OPENCODE_DATA, "opencode*.db"))),
+        lambda: (
+            sqlite_available() and bool(glob_stores("opencode.data", OPENCODE_DATA, "opencode*.db"))
+        ),
         collect_opencode,
     ),
     (
         "cursor",
         "Cursor",
-        lambda: bool(glob.glob(os.path.join(CURSOR_CHATS, "*", "*", "store.db"))),
+        lambda: (
+            sqlite_available()
+            and bool(glob_stores("cursor.chats", CURSOR_CHATS, "*", "*", "store.db"))
+        ),
         collect_cursor,
     ),
-    ("goose", "Goose", lambda: os.path.isfile(GOOSE_DB), collect_goose),
+    (
+        "goose",
+        "Goose",
+        lambda: sqlite_available() and bool(existing_stores("goose.db", GOOSE_DB)),
+        collect_goose,
+    ),
     (
         "droid",
         "Droid",
-        lambda: bool(glob.glob(os.path.join(FACTORY_PROJECTS, "*", "*.jsonl"))),
+        lambda: bool(glob_stores("droid.projects", FACTORY_PROJECTS, "*", "*.jsonl")),
         collect_droid,
     ),
 ]
@@ -2375,8 +2988,9 @@ def collect(window_hours: float, show_all: bool) -> dict[str, Any]:
             out_sessions.extend(collector(now, window_hours, show_all))
         except Exception as e:  # noqa: BLE001 — one broken harness must not take down the rest
             harness["error"] = f"{type(e).__name__}: {e}"
-            print(f"[{key}] collector error: {harness['error']}")
+            diag(f"[{key}] collector error: {harness['error']}")
 
+    out_sessions = dedupe_sessions(out_sessions)
     state_rank = {"needs_input": 0, "working": 1, "idle": 2}
     # Session id as tiebreaker (not last_activity) so rows don't reshuffle
     # on every refresh while sessions are generating.
@@ -2388,6 +3002,9 @@ def collect(window_hours: float, show_all: bool) -> dict[str, Any]:
         "generated": now,
         "window_hours": window_hours,
         "show_all": show_all,
+        # Which layer owns needs-input popups. Empty means the page should
+        # raise its own; a backend name means the server already did.
+        "native_notify": native_notifier(sys.platform),
         "harnesses": harnesses,
         "summary": {
             "needs_input": sum(1 for x in active_sessions if x["state"] == "needs_input"),
@@ -2435,6 +3052,10 @@ PAGE = r"""<!doctype html>
   .sub{font-family:var(--mono);font-size:12px;color:var(--ink3);margin-top:10px;display:flex;align-items:center;gap:8px}
   .live{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:pulse 1.6s infinite}
   .live.stalled{background:var(--alert);animation:none}
+  .notify-btn{font-family:var(--mono);font-size:11px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px 10px;margin-left:4px;cursor:pointer;transition:background .15s}
+  .notify-btn:hover{background:var(--line)}
+  .notify-btn:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
+  .notify-note{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-left:4px;cursor:help;border-bottom:1px dotted var(--line)}
   .hstrip{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:440px}
   .hstrip-k{font-family:var(--mono);font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-right:3px}
 
@@ -2939,8 +3560,69 @@ function idleRow(d, sess){
 
 function toggleIdle(){ idleExpanded = !idleExpanded; if(lastData) render(lastData); }
 
+/* Desktop notifications.
+   Exactly one layer notifies for a given transition. The server fires an
+   OS-level popup where it has a backend and reports that as `native_notify`;
+   the page raises its own only when the server cannot. Without that split,
+   macOS would pop twice for every blocked session. */
+let notifyState = new Map();  /* harness:sid -> last state seen */
+let notifyPrimed = false;     /* first payload only records: nothing is "new" yet */
+
+function notifySupported(){ return typeof Notification !== "undefined"; }
+
+function notifyPermission(){
+  return notifySupported() ? (Notification.permission || "default") : "unsupported";
+}
+
+function browserNotifyOwns(d){ return !(d && d.native_notify) && notifySupported(); }
+
+function requestNotifyPermission(){
+  if(!notifySupported() || !Notification.requestPermission) return;
+  /* Re-render so the control reflects the new permission. Both the callback
+     and promise forms are handled; Safari still uses the callback. */
+  const done = () => { if(lastData) render(lastData); };
+  let result;
+  try{ result = Notification.requestPermission(done); }catch(e){ return; }
+  if(result && typeof result.then === "function") result.then(done, done);
+}
+
+function syncNotifications(d){
+  const seen = new Map();
+  const fire = browserNotifyOwns(d) && notifyPermission() === "granted";
+  for(const s of d.sessions){
+    const key = s.harness + ":" + s.sid;
+    seen.set(key, s.state);
+    if(!fire || !notifyPrimed) continue;
+    /* Same rule the server uses: notify on the transition into needs_input,
+       not for every refresh a session spends blocked. */
+    if(!s.active || s.state !== "needs_input") continue;
+    if(notifyState.get(key) === "needs_input") continue;
+    try{
+      new Notification("Claude is waiting on you",
+        {body: "[" + s.project + "] " + (s.state_detail || "needs your input"),
+         tag: key});  /* tag replaces a stale popup instead of stacking */
+    }catch(e){ /* permission revoked mid-session, or a headless browser */ }
+  }
+  notifyState = seen;  /* sessions that disappeared stop being tracked */
+  notifyPrimed = true;
+}
+
+function notifyControl(d){
+  if(!browserNotifyOwns(d)) return "";
+  const p = notifyPermission();
+  if(p === "granted" || p === "unsupported") return "";
+  if(p === "denied"){
+    return ` · <span class="notify-note" title="Re-enable notifications for this ` +
+      `site in your browser's settings to be alerted when a session needs you.">` +
+      `notifications blocked</span>`;
+  }
+  return ` · <button type="button" class="notify-btn" onclick="requestNotifyPermission()">` +
+    `Enable notifications</button>`;
+}
+
 function render(d){
   lastData = d;
+  syncNotifications(d);
   const sparkFocused = !!(document.activeElement && document.activeElement.id === "spark-main");
   // Capture pointer position before render so we can restore it afterward, even if
   // pointermove fires during the render operation.
@@ -3011,7 +3693,7 @@ function render(d){
     `<div class="top"><div><div class="brand">Cargento</div>` +
     `<div class="sub"><span class="live" id="live-dot"></span>` +
     `<span id="live-status">live · updated ${new Date(d.generated*1000).toLocaleTimeString()} · auto-refresh 5s</span>` +
-    (d.show_all ? " · showing all" : "") + `</div></div>` +
+    (d.show_all ? " · showing all" : "") + notifyControl(d) + `</div></div>` +
     `<div class="hstrip">${harnessStrip(d.harnesses)}</div></div>` + body;
   renderInProgress = false;
 
@@ -3085,16 +3767,54 @@ class Handler(BaseHTTPRequestHandler):
     # Loopback-origin requests only: the Host check defeats DNS rebinding,
     # the Origin check defeats cross-site fetch()es from web pages (both
     # reach 127.0.0.1-bound servers through the victim's browser).
-    LOCAL_HOSTS: ClassVar[set[str]] = {"127.0.0.1", "localhost", "::1", "[::1]"}
+    LOCAL_HOSTS: ClassVar[set[str]] = {"127.0.0.1", "localhost", "::1"}
 
-    def _local_ok(self) -> bool:
-        host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
-        if host not in self.LOCAL_HOSTS:
+    def _local_ok(self, *, allow_cross_site_navigation: bool = False) -> bool:
+        if normalize_host(self.headers.get("Host") or "") not in self.LOCAL_HOSTS:
             return False
-        if (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
+        if (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site" and not (
+            allow_cross_site_navigation and self._is_document_navigation()
+        ):
             return False
         origin = self.headers.get("Origin")
-        return not origin or (urlparse(origin).hostname or "") in self.LOCAL_HOSTS
+        if not origin:
+            return True  # same-origin GETs send none
+        # Compare the whole origin, not just the host. Every port on this
+        # machine is the *same site*, so Sec-Fetch-Site reports "same-site" for
+        # a page served from another local port — and a hostname-only check
+        # then trusted it. Any unrelated local dev server could POST here
+        # (text/plain is CORS-safelisted, so no preflight would stop it).
+        parsed = urlparse(origin)
+        if parsed.scheme != "http" or (parsed.hostname or "") not in self.LOCAL_HOSTS:
+            return False
+        listening_port = getattr(self.server, "server_port", None)
+        try:
+            # Browsers omit the port when it is the scheme default, so
+            # "http://localhost" is a legitimate same-origin value on port 80.
+            origin_port = parsed.port if parsed.port is not None else 80
+        except ValueError:
+            return False  # unparseable port in the Origin header
+        return origin_port == listening_port
+
+    def _is_document_navigation(self) -> bool:
+        """Whether this is the browser navigating a tab to us, top level.
+
+        Chrome labels *any* navigation whose initiator was another origin
+        ``Sec-Fetch-Site: cross-site`` — including one the user started by
+        clicking a link to the dashboard. Rejecting those returned 403 for a
+        perfectly ordinary way to open the page.
+
+        Serving them is safe: the initiating page cannot read a cross-origin
+        document, so there is nothing to exfiltrate, and the Host check above
+        still blocks DNS rebinding. Everything else cross-site — ``fetch``,
+        XHR, an iframe, a subresource — *can* be read by its initiator and
+        stays blocked, which is what ``Sec-Fetch-Dest: document`` distinguishes
+        (an iframe reports ``iframe``). GET only: a cross-site form submission
+        is also a "navigation", so POST never takes this path.
+        """
+        return (self.headers.get("Sec-Fetch-Mode") or "").lower() == "navigate" and (
+            self.headers.get("Sec-Fetch-Dest") or ""
+        ).lower() == "document"
 
     def _send(self, body: bytes, ctype: str, code: int = 200) -> None:
         self.send_response(code)
@@ -3105,7 +3825,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
-        if not self._local_ok():
+        if not self._local_ok(allow_cross_site_navigation=True):
             self.send_error(403)
             return
         url = urlparse(self.path)
@@ -3147,6 +3867,7 @@ class Handler(BaseHTTPRequestHandler):
                 with _lock:
                     _hook_notifs.pop(prefix, None)
                     _last_state.pop(prefix, None)
+                    bounded_put(_hook_generation, prefix, _hook_generation.get(prefix, 0) + 1)
             self._send(b'{"ok":true,"cleared":"session_end"}', "application/json")
             return
         raw_message = payload.get("message")
@@ -3158,6 +3879,10 @@ class Handler(BaseHTTPRequestHandler):
         )
         kind = normalized_notification_type(payload.get("notification_type"))
         needs_input, popup = notification_disposition(kind, message)
+        # Sampled before the transcript lookups below, which are slow enough
+        # for a SessionEnd to land in between and be silently undone.
+        with _lock:
+            generation = _hook_generation.get(prefix, 0)
         # Subagent sessions also emit Notification-hook events (permission
         # prompts inside agents). They are not user-facing sessions — a popup
         # about them is noise the human cannot act on from the dashboard.
@@ -3172,6 +3897,10 @@ class Handler(BaseHTTPRequestHandler):
             if found:
                 hook["user_event"] = user_event
         with _lock:
+            if prefix and _hook_generation.get(prefix, 0) != generation:
+                # The session ended while this notification was being processed.
+                self._send(b'{"ok":true,"superseded":true}', "application/json")
+                return
             if prefix:
                 clears_input = kind in CLEARING_NOTIFICATION_TYPES or (not kind and not needs_input)
                 if clears_input:
@@ -3201,9 +3930,162 @@ class Handler(BaseHTTPRequestHandler):
         pass  # keep stdout quiet
 
 
+def store_primaries() -> dict[str, str]:
+    """Current primary root per store, read from the module constants so a
+    patched constant is reflected here too."""
+    return {
+        "claude.projects": PROJECTS_DIR,
+        "claude.tasks": TASKS_DIR,
+        "codex.sessions": CODEX_SESSIONS_DIR,
+        "gemini.tmp": GEMINI_TMP,
+        "antigravity.root": ANTIGRAVITY_CLI_DIR,
+        "copilot.root": COPILOT_DIR,
+        "opencode.data": OPENCODE_DATA,
+        "cursor.chats": CURSOR_CHATS,
+        "goose.db": GOOSE_DB,
+        "droid.projects": FACTORY_PROJECTS,
+    }
+
+
+def candidate_report(path: str) -> dict[str, Any]:
+    """What a single candidate store path actually is on disk."""
+    entry: dict[str, Any] = {"path": path, "kind": "missing", "readable": False, "entries": None}
+    # stat(), not isdir()/isfile(): those swallow OSError and return False, so
+    # a candidate under an unreadable parent reported "missing" — the exact
+    # confusion between "absent" and "inaccessible" this exists to remove.
+    try:
+        stat_result = os.stat(path)
+    except FileNotFoundError:
+        # stat() follows symlinks, so a dangling one lands here. Say so rather
+        # than calling it absent — the target is what the user needs to fix.
+        if os.path.islink(path):
+            entry["kind"] = "broken symlink"
+        return entry
+    except OSError as exc:
+        entry["kind"] = "inaccessible"
+        entry["error"] = f"{type(exc).__name__}: {exc}"
+        return entry
+    if stat_module.S_ISDIR(stat_result.st_mode):
+        entry["kind"] = "directory"
+        try:
+            with os.scandir(path) as scan:
+                entry["entries"] = sum(1 for _ in scan)  # streamed, not materialised
+            entry["readable"] = True
+        except OSError as exc:
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+    elif stat_module.S_ISREG(stat_result.st_mode):
+        entry["kind"] = "file"
+        entry["readable"] = os.access(path, os.R_OK)
+    else:
+        # A FIFO or socket at a store path is never a usable store; reporting
+        # it as a readable file would send someone looking in the wrong place.
+        entry["kind"] = "special file"
+    return entry
+
+
+def diagnose(window_hours: float) -> dict[str, Any]:
+    """Everything needed to explain a harness that is not showing up.
+
+    Collectors swallow their errors so one broken store cannot take down the
+    dashboard, which means a wrong path looks exactly like an idle machine.
+    This is the counterweight: it names every location searched and what was
+    found there. Local only — nothing is transmitted anywhere.
+    """
+    with _cache_lock:
+        _store_errors.clear()  # this run's failures only
+    data = collect(window_hours, show_all=True)
+    with _cache_lock:
+        store_errors = dict(_store_errors)
+    sessions_by_harness: dict[str, int] = {}
+    for session in data["sessions"]:
+        key = str(session["harness"])
+        sessions_by_harness[key] = sessions_by_harness.get(key, 0) + 1
+    return {
+        "platform": sys.platform,
+        "python": sys.version.split()[0],
+        "executable": sys.executable,
+        "home": HOME,
+        "sqlite": {
+            "available": sqlite_available(),
+            "error": SQLITE_IMPORT_ERROR,
+            "version": sqlite3.sqlite_version if sqlite_available() else None,
+        },
+        "env": {name: os.environ[name] for name in STORE_ENV_VARS if os.environ.get(name)},
+        # Failures the collectors swallowed. Without these a corrupt database
+        # reads as a healthy store with no sessions.
+        "store_errors": store_errors,
+        "stores": {
+            key: {
+                "primary": primary,
+                "candidates": [candidate_report(root) for root in store_roots(key, primary)],
+            }
+            for key, primary in store_primaries().items()
+        },
+        "harnesses": [
+            {**harness, "sessions": sessions_by_harness.get(str(harness["key"]), 0)}
+            for harness in data["harnesses"]
+        ],
+    }
+
+
+def render_diagnosis(report: dict[str, Any]) -> str:
+    """ASCII-only rendering — this output gets pasted into bug reports from
+    consoles whose encoding we do not control."""
+    sqlite_info = report["sqlite"]
+    lines = [
+        "Cargento diagnostics",
+        f"  platform   {report['platform']} (python {report['python']})",
+        f"  python at  {report['executable']}",
+        f"  home       {report['home']}",
+        f"  sqlite3    {sqlite_info['version'] or 'UNAVAILABLE: ' + str(sqlite_info['error'])}",
+    ]
+    env = report["env"]
+    lines.append(
+        "  overrides  " + (", ".join(f"{k}={v}" for k, v in env.items()) if env else "none")
+    )
+
+    lines.append("")
+    lines.append("Harnesses")
+    for harness in report["harnesses"]:
+        mark = "ok  " if harness["discovered"] else "  --"
+        detail = f"{harness['sessions']} session(s)" if harness["discovered"] else "not discovered"
+        lines.append(f"  [{mark}] {harness['label']!s:<10} {detail}")
+        if harness["error"]:
+            lines.append(f"           error: {harness['error']}")
+
+    if report["store_errors"]:
+        lines.append("")
+        lines.append("Stores that failed to open or query")
+        for path, message in report["store_errors"].items():
+            lines.append(f"  [  --] {path}")
+            lines.append(f"           {message}")
+
+    lines.append("")
+    lines.append("Stores searched (in order)")
+    for key, store in report["stores"].items():
+        lines.append(f"  {key}")
+        for candidate in store["candidates"]:
+            mark = "ok  " if candidate["kind"] != "missing" else "  --"
+            detail = candidate["kind"]
+            if candidate["entries"] is not None:
+                detail += f", {candidate['entries']} entries"
+            if not candidate["readable"] and candidate["kind"] != "missing":
+                detail += ", NOT READABLE"
+            if candidate.get("error"):
+                detail += f", {candidate['error']}"
+            lines.append(f"    [{mark}] {candidate['path']}  ({detail})")
+    return "\n".join(lines)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--port", type=int, default=4553)
+    ap.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="report where each harness's data is searched for, and exit",
+    )
+    ap.add_argument("--json", action="store_true", help="machine-readable --diagnose output")
     ap.add_argument(
         "--window-hours",
         type=float,
@@ -3212,9 +4094,27 @@ def main() -> None:
     )
     args = ap.parse_args()
     Handler.window_hours = args.window_hours
+    if args.diagnose:
+        report = diagnose(args.window_hours)
+        diag(json.dumps(report, indent=2) if args.json else render_diagnosis(report))
+        return
+    if not sqlite_available():
+        diag(
+            f"Cargento: sqlite3 unavailable ({SQLITE_IMPORT_ERROR}) — OpenCode, "
+            "Cursor and Goose sessions cannot be read; Antigravity still appears "
+            "but without its token rate or turn ETA. Install the sqlite3 "
+            "extension for this interpreter to enable them."
+        )
     # Bind to loopback only — this exposes local session data.
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"Cargento: http://localhost:{args.port}/")
+    try:
+        server = LoopbackHTTPServer(("127.0.0.1", args.port), Handler)
+    except OSError as exc:
+        diag(bind_error_message(exc, args.port))
+        raise SystemExit(1) from exc
+    # 127.0.0.1, not localhost: on some systems "localhost" resolves to ::1
+    # first, and this listener is IPv4-only, so the literal address is the one
+    # that always connects.
+    diag(f"Cargento: http://127.0.0.1:{args.port}/")
     server.serve_forever()
 
 

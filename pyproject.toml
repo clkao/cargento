@@ -42,7 +42,7 @@ max-args = 8
 "cargento/skills/cargento/server.py" = ["E501", "C901", "PLR0911", "PLR0912", "PLR0915"]
 "scripts/validate_plugins.py" = ["C901", "PLR0912", "PLR0915"]
 # Tests: assert usage, subprocess invocations of node, and long fixture lines.
-"**/tests/*.py" = ["S101", "S603", "S108", "E501", "SLF001", "INP001"]
+"**/tests/*.py" = ["S101", "S603", "S108", "S311", "E501", "SLF001", "INP001"]
 
 [tool.mypy]
 # Python 3.11 is the supported runtime floor (documented in SKILL.md and
@@ -56,6 +56,7 @@ warn_unreachable = true
 # darwin-only code "unreachable" only on Linux runners.
 platform = "darwin"
 files = [
+  "cargento/skills/cargento/notify_hook.py",
   "cargento/skills/cargento/server.py",
   "cargento/skills/cargento/tests",
   "scripts",
@@ -82,7 +83,14 @@ source = [
 omit = ["*/tests/*"]
 show_missing = false
 precision = 1
-# Measured baseline at gate introduction: 71.0% (branch coverage). This
+# Measured baseline at gate introduction: 71.0% (branch coverage), raised to
+# 74.0% on the Ubuntu gate runner by the cross-platform regression tests. This
 # number only ratchets UP — never lower it in a PR. Use the
 # `coverage-exception` PR label for a deliberate, visible bypass.
-fail_under = 70
+#
+# Held a point below the measured figure for margin. Note the gate runs on
+# Linux, where the darwin-only notify_mac() body is unreachable and therefore
+# uncovered — the same suite measures ~1pp higher on macOS. Reworking the
+# platform branches into pure functions (so every branch is exercisable on any
+# runner) is tracked in docs/cross-platform-plan.md as design decision D-4.
+fail_under = 73

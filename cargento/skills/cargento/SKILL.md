@@ -6,7 +6,9 @@ license: Apache-2.0
 
 # Cargento
 
-Cargento is an agnostic agent cartography and visualization tool: a local web dashboard mapping live coding-agent activity across **eight harnesses** on this machine — Claude Code, Codex, Gemini CLI / Antigravity CLI, GitHub Copilot CLI, OpenCode, Cursor CLI, Goose, Factory Droid — each row badged with its harness. A "Discovered harnesses" strip at the top shows all supported harnesses; ones with local session data are green/enabled, others gray/disabled. A harness's sessions only appear if its data is discovered. Transcript-backed sessions appear even if they never called TaskCreate; Claude task files may also surface a task-only session when its transcript is unavailable. Per session: a live state badge, what it's doing right now, running subagents (named pills), a current-turn elapsed/ETA estimate with progress bar, a ⚠️ warning (with tooltip) when a request runs or is estimated ≥15 min, one row per tracked task, and the recent token output rate. Fires macOS popup notifications when a Claude session is blocked waiting on the human.
+Cargento is an agnostic agent cartography and visualization tool: a local web dashboard mapping live coding-agent activity across **eight harnesses** on this machine — Claude Code, Codex, Gemini CLI / Antigravity CLI, GitHub Copilot CLI, OpenCode, Cursor CLI, Goose, Factory Droid — each row badged with its harness. A "Discovered harnesses" strip at the top shows all supported harnesses; ones with local session data are green/enabled, others gray/disabled. A harness's sessions only appear if its data is discovered. Transcript-backed sessions appear even if they never called TaskCreate; Claude task files may also surface a task-only session when its transcript is unavailable. Per session: a live state badge, what it's doing right now, running subagents (named pills), a current-turn elapsed/ETA estimate with progress bar, a ⚠️ warning (with tooltip) when a request runs or is estimated ≥15 min, one row per tracked task, and the recent token output rate. Fires desktop notifications when a Claude session is blocked waiting on the human.
+
+Store locations are resolved per platform, and the documented relocation variables are honored: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GEMINI_CLI_HOME` (the CLI creates `.gemini` inside it), and `COPILOT_HOME`. When one is set it is authoritative — no fallback to the default location. Run `--diagnose` to see every path searched.
 
 Data sources (read-only, no external calls; all parsing is defensive — a broken harness store is skipped, never fatal):
 - `~/.claude/projects/*/<session>.jsonl` — Claude transcript tails: session discovery, titles, token usage, pending AskUserQuestion detection
@@ -31,57 +33,88 @@ Data sources (read-only, no external calls; all parsing is defensive — a broke
 
 ## Start
 
-Resolve `server.py` relative to this `SKILL.md` in the installed plugin, then run:
+Stdlib-only, Python 3.11+, no dependencies. Resolve `server.py` relative to this `SKILL.md` in the installed plugin, then start it in the background. Prefer your harness's own background-execution option; otherwise use the form for the shell you are in:
 
 ```bash
-python3 <resolved-skill-directory>/server.py --port 4553
+# macOS, Linux, WSL, Git Bash
+python3 "<skill-dir>/server.py" --port 4553 &
+```
+```powershell
+# Windows PowerShell — `&` is the call operator here, not backgrounding.
+# The inner double quotes are deliberate: -ArgumentList joins the array with
+# spaces without quoting it, so a skill directory containing a space would
+# otherwise reach python as two arguments.
+Start-Process -PassThru -WindowStyle Hidden python -ArgumentList '"<skill-dir>\server.py"','--port','4553'
+```
+```bat
+:: Windows cmd
+start "" /b python "<skill-dir>\server.py" --port 4553
 ```
 
-Stdlib-only, Python 3.11+, no dependencies. Run it in the background using your harness's background-execution option (or append `&` to the command), confirm it responds (`curl -s http://localhost:4553/api/data | head -c 200`), then open the UI:
+`python3` is not a reliable spelling on native Windows — use `python` (or `py -3`) there. Whichever interpreter you start the server with, reuse it for the commands below.
+
+Confirm it responds, then open the UI:
 
 ```bash
-open http://localhost:4553/    # Linux: xdg-open
+curl -s http://127.0.0.1:4553/api/data | head -c 200
+python3 -m webbrowser -t http://127.0.0.1:4553/
 ```
 
-Tell the user the URL, that the page auto-refreshes every 5 seconds, and that popups require the server to be running. Popup notifications are macOS-only (`osascript`); on Linux the dashboard works but popups silently no-op, and completed-task ages/estimates degrade (no file birthtime).
+Use `127.0.0.1`, not `localhost`: the server listens on IPv4 only, and on some systems `localhost` resolves to `::1` first.
+
+Tell the user the URL, that the page auto-refreshes every 5 seconds, and that popups require the server to be running. Completed-task ages/estimates degrade where the filesystem exposes no birthtime (Linux, and Windows before Python 3.12).
+
+If the port is busy the server exits with an explanation rather than a traceback. Check whether a dashboard is already there (`curl -s http://127.0.0.1:4553/api/data`) before killing anything.
 
 ## Notifications
 
-Two paths manage needs-input state. Actionable and idle notifications fire `osascript display notification` (60s per-session cooldown plus a 15s global floor):
+Two paths manage needs-input state, and two layers can deliver the popup. **Exactly one of them fires for any given transition**, so nobody is notified twice:
+
+- **macOS** — the server fires `osascript display notification` (60s per-session cooldown plus a 15s global floor). This works with no browser tab open, which is what the lifecycle-hook path below needs.
+- **Linux and Windows** — the server has no native backend yet, so the dashboard page raises a browser notification instead. `/api/data` reports which layer is active as `native_notify`. Browser notifications need permission: an "Enable notifications" button appears in the header when it has not been granted, and the header says so if the browser has blocked them. They only fire while a dashboard tab is open — so on these platforms the hook path below still delivers no popup when no tab is open.
+
+Both layers notify on the *transition* into needs-input, not on every refresh a session spends blocked.
+
+**Known gap:** idle nudges (`idle_prompt`) pop without marking the session blocked. The server delivers those on macOS, but the page only notifies on a needs-input transition — so on Linux and Windows an idle nudge produces no popup today. Closing it needs a one-shot event channel in `/api/data`; it is tracked for Phase 6 alongside the native backends rather than bolted on here.
 
 1. **Transcript detection** — an open AskUserQuestion flips the session to Needs input on the next poll (the UI polling `/api/data` drives this; keep a dashboard tab open).
 2. **Lifecycle hooks** — `Notification` and `SessionEnd` hooks in user settings (`~/.claude/settings.json`) POSTing their payloads to `http://127.0.0.1:4553/api/notify`. Notifications cover permission prompts and idle waits, even with no browser tab open. The structured `notification_type` decides whether a notification is actionable. Idle nudges (`idle_prompt`, message "Claude is waiting for your input") pop once but never mark the session blocked; authentication/completion notifications do neither; permission prompts and MCP elicitation dialogs create Needs-input state. `SessionEnd` clears a standing hook when Claude exits cleanly. These hooks are NOT installed by the plugin — if the user wants path 2, offer to add them to their `~/.claude/settings.json`:
 
+Use the bundled `notify_hook.py` (next to `server.py`) rather than a `curl` one-liner. The one-liner is POSIX-only end to end — single-quoting, `/dev/null`, `|| true`, and `--data-binary @-` all fail in `cmd.exe`, and Windows PowerShell 5.1 aliases `curl` to `Invoke-WebRequest` and has no `||`. One interpreter invocation behaves the same in every shell, exits 0 even when the dashboard is not running, and refuses to POST anywhere but loopback.
+
 ```json
 "hooks": {
   "Notification": [
-    {"matcher": "", "hooks": [{"type": "command", "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4553/api/notify >/dev/null 2>&1 || true", "async": true}]}
+    {"matcher": "", "hooks": [{"type": "command", "command": "python3 \"<skill-dir>/notify_hook.py\"", "async": true}]}
   ],
   "SessionEnd": [
-    {"matcher": "", "hooks": [{"type": "command", "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:4553/api/notify >/dev/null 2>&1 || true"}]}
+    {"matcher": "", "hooks": [{"type": "command", "command": "python3 \"<skill-dir>/notify_hook.py\""}]}
   ]
 }
 ```
+
+On native Windows use `python` instead of `python3`, and a Windows path. Pass a URL as the first argument for a non-default port: `python3 "<skill-dir>/notify_hook.py" http://127.0.0.1:9999/api/notify`.
 
 After adding it (or after any settings change that breaks it), tell the user to open `/hooks` once or restart Claude Code to reload hook config.
 
 Simulate for testing:
 ```bash
-echo '{"session_id":"<id>","message":"test"}' | curl -s -X POST --data-binary @- http://127.0.0.1:4553/api/notify
+echo '{"session_id":"<id>","message":"test"}' | python3 "<skill-dir>/notify_hook.py"
 ```
 
 ## Options
 
 | Flag / URL | Effect |
 |---|---|
-| `--port N` | Change port (default 4553). If the port is busy, check `curl -s localhost:4553/api/data` first — a running dashboard may already be there; don't kill it blindly. |
+| `--port N` | Change port (default 4553). If the port is busy, check `curl -s http://127.0.0.1:4553/api/data` first — a running dashboard may already be there; don't kill it blindly. |
 | `--window-hours H` | Sessions idle longer than H hours are hidden (default 24) |
-| `http://localhost:4553/?all=1` | Show all sessions ever, including idle ones |
+| `--diagnose` | Print where each harness's data was searched for and what was found there, then exit. Use this first whenever a harness the user expects is missing — collectors skip broken or absent stores silently, so a wrong path looks exactly like an idle machine. Add `--json` for machine-readable output. Reads local paths only; nothing is transmitted. |
+| `http://127.0.0.1:4553/?all=1` | Show all sessions ever, including idle ones |
 | `/api/data` | Raw JSON, same data as the UI |
 
 ## Interpretation notes (share with the user if asked)
 
-- **Age** = time since the task file was created (macOS birthtime). For completed tasks it is creation → last update.
+- **Age** = time since the task file was created (birthtime where the platform has it — macOS, and Windows on Python 3.12+; elsewhere it falls back to mtime). For completed tasks it is creation → last update.
 - **Output rate** = output tokens over the last 10 minutes. Generation rate, not billed input/cache tokens. Claude, Codex, Gemini CLI / Antigravity CLI, and Goose expose per-message or per-generation token data. Copilot, OpenCode, Cursor, and Droid sessions always contribute 0 to this tile (their stores do not expose usable live token totals).
 - **Rate sparklines** (the trend under the Output rate number, and the mini one beside each working card's tok/min) trail the last 5 minutes and are client-side only: they start filling when the page opens, discard points that age out of the window, and reset on page reload. Hover or focus the tile sparkline for exact values.
 - **"This request" ETA** = per-session current-turn estimate shown while Working. Estimated total = median of that session's past turns that lasted at least as long as the current one has so far. Turn boundaries: user prompt → last event before the next prompt (Claude, Gemini, Droid), explicit start/end events (Codex `task_started`/`task_complete`, Copilot `user.message`/`session.task_complete`), or DB message timestamps (OpenCode, Goose). JSONL harnesses use an incremental whole-file scanner (survives turns longer than the transcript tail). No ETA for Cursor. "running longer than recent turns" = no past turn was this long. Naive by design. A ⚠️ appears when elapsed or estimated total ≥ 15 min (`LONG_TURN_WARN_SEC`). Elapsed measures generation, not waiting: a mid-turn quiet stretch longer than 5 minutes (`TURN_GAP_RESET_SEC` — permission prompt, open question, sleep) re-anchors the clock at the post-gap event.
@@ -91,13 +124,30 @@ echo '{"session_id":"<id>","message":"test"}' | curl -s -X POST --data-binary @-
 ## Stop
 
 ```bash
+# macOS, Linux, WSL (lsof is absent on many minimal images — fuser is the fallback)
 lsof -ti tcp:4553 -sTCP:LISTEN | xargs kill
+fuser -k 4553/tcp
+```
+```powershell
+# Windows PowerShell
+Get-NetTCPConnection -LocalPort 4553 -State Listen |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+```
+```bat
+:: Windows cmd, typed at the prompt — inside a .bat file write %%a for %a.
+:: Two literal findstr passes; findstr does not take a regex without /R.
+for /f "tokens=5" %a in ('netstat -ano ^| findstr "LISTENING" ^| findstr ":4553"') do taskkill /PID %a /F
 ```
 
-`-sTCP:LISTEN` matters: without it, lsof also matches connected clients (the browser's network process). Substitute the port the server was actually started on.
+Match only *listening* sockets (`-sTCP:LISTEN`, `-State Listen`, `LISTENING`): without that filter these commands also match connected clients — including the browser's network process. Substitute the port the server was actually started on, and note the cmd form matches any port whose digits contain the string (`:4553` also matches `:45530`), so prefer the PowerShell form on Windows.
 
 ## Common mistakes
 
 - The server binds to 127.0.0.1 only — do not "fix" it to 0.0.0.0; it exposes local session data.
+- A harness the user expects is missing: run `--diagnose` before guessing. It distinguishes "no store here", "store present but unreadable", and "store read, no recent sessions" — the collectors cannot, because they skip unreadable stores silently by design.
+- Headless Linux (no graphical session): `python3 -m webbrowser` and `notify-send` both need a desktop. Reach the dashboard over SSH with `ssh -L 4553:127.0.0.1:4553 <host>` and open it locally. If running it under systemd, use a **user** unit — a system unit expands `~` to `/root` and `ProtectHome` hides every harness store.
+- Flatpak- or Snap-installed harnesses write inside their sandbox, and Snap's `home` interface excludes dotfiles like `.claude`. Cargento running outside the sandbox will not see them; `--diagnose` shows where it looked.
+- Very long Windows paths: Claude's encoded project directory names are long by construction, and without `LongPathsEnabled` a store can exceed the 260-character limit. Those transcripts are skipped rather than crashing, so the symptom is missing sessions — `--diagnose` reports the root it scanned.
+- On Windows, Cargento briefly holds a transcript open while reading it, and Python cannot request `FILE_SHARE_DELETE`. If a harness rotates that exact file in that window it may see a sharing violation. Reads are short and bounded, but the window is not zero; there is no way to close it from Python without native calls.
 - A session stuck on "Needs input" after you already answered: the state clears on the next transcript event; `SessionEnd` clears it on a clean Claude exit; a server restart also clears hook-reported notifications (they're in-memory). An abrupt kill cannot be distinguished from a terminal left open at a prompt, so it clears only by a later transcript event or restart.
 - After two missed refreshes, the live header changes to "stalled" and shows the last successful update — restart the server, no need to reload the page.
