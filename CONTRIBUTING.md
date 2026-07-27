@@ -75,12 +75,24 @@ touches more than one:
 Before trusting a new contract, mutation-check it: break the behaviour deliberately and confirm the
 targeted test actually fails.
 
+**Known flake.** The page tests shell out to `node` with a 30-second timeout. On the Windows runner
+that occasionally expires on process start, surfacing as
+`subprocess.TimeoutExpired: … page_test.js`. It is a runner-speed artifact, not a page bug — re-run
+the job before investigating, and check the traceback is a timeout rather than an assertion.
+
 ### Rules the validator enforces
 
 - The plugin **version** must be identical everywhere it appears (marketplace metadata + entry, and the Claude, Codex, and Gemini manifests); the **description** in five places (marketplace entry, those three manifests, plus the Antigravity `plugin.json`). **Never bump versions in a PR** — the `version-guard` check will fail it; see [Releases](#releases).
 - Skill bodies must stay **host-neutral**: no `${CLAUDE_PLUGIN_ROOT}`, no host-specific tool names. Describe capabilities, not tool APIs.
 - The skill description is at most 300 characters, and `agents/openai.yaml` keeps its 25–64 character short description.
-- Every relative Markdown link — in the skill and in the repository's prose docs — must resolve within the repository.
+- Every relative Markdown link — in the skill and in the repository's prose docs — must resolve
+  within the repository, **and so must every `#heading-anchor`**. Anchors are slugged the way GitHub
+  does it, so a link to a heading you renamed fails the build.
+- No prose doc may spell the dashboard URL with `localhost`; the server binds IPv4 loopback only, so
+  it is always `127.0.0.1:4553`.
+- Two link forms the checker cannot parse, both avoidable: unbalanced parentheses in a bare
+  destination (wrap the target in `<>`), and links inside a four-space-indented code block (use a
+  fence instead).
 
 ### Design constraints for `server.py`
 
