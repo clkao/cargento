@@ -2328,9 +2328,9 @@ def sd_boot_entity_dir(records: list[dict[str, Any]], workflow_dir: str) -> str:
 
 
 # Subagent-transcript classification cache. Whether a top-level transcript
-# belongs to a subagent is immutable for a given file, but young files may
-# not have written their identifying records yet — so negative results are
-# only cached once the file is big enough to be conclusive.
+# belongs to a subagent and its eventual label are immutable for a given file,
+# but young files may not have written both identifying records yet — so
+# incomplete results are cached only once the file is big enough to be conclusive.
 _agent_class_cache: dict[str, tuple[bool, str, str]] = {}
 _AGENT_SCAN_LINES = 50
 _AGENT_CACHE_NEGATIVE_MIN_BYTES = 16384
@@ -2350,7 +2350,7 @@ def claude_agent_identity(path: str) -> tuple[bool, str, str]:
         cached = _agent_class_cache.get(path)
     if cached is not None:
         return cached
-    is_agent, name, parent = False, "", ""
+    name, parent = "", ""
     size = 0
     lines_seen = 0
     try:
@@ -2364,7 +2364,7 @@ def claude_agent_identity(path: str) -> tuple[bool, str, str]:
             if not line:
                 continue
             lines_seen += 1
-            if is_agent and parent:
+            if name and parent:
                 break
             try:
                 rec = json.loads(line)
@@ -2373,17 +2373,21 @@ def claude_agent_identity(path: str) -> tuple[bool, str, str]:
             if not isinstance(rec, dict):
                 continue
             agent_name = rec.get("agentName")
-            if not is_agent and isinstance(agent_name, str) and agent_name:
-                is_agent, name = True, agent_name
+            if not name and isinstance(agent_name, str) and agent_name:
+                name = agent_name
             team = rec.get("teamName")
             if not parent and isinstance(team, str) and team.startswith("session-"):
                 parent = team[len("session-") :][:8]
     except OSError:
         return (False, "", "")
-    result = (is_agent, name, parent)
-    # A positive is conclusive; a negative is only trusted once the file has
-    # enough content that the identifying records would have appeared.
-    if is_agent or lines_seen >= _AGENT_SCAN_LINES or size >= _AGENT_CACHE_NEGATIVE_MIN_BYTES:
+    result = (bool(parent), name, parent)
+    # A complete subagent identity is conclusive; an incomplete result is only
+    # trusted once the file has enough content that later records cannot change it.
+    if (
+        (parent and name)
+        or lines_seen >= _AGENT_SCAN_LINES
+        or size >= _AGENT_CACHE_NEGATIVE_MIN_BYTES
+    ):
         with _cache_lock:
             bounded_put(_agent_class_cache, path, result)
     return result
