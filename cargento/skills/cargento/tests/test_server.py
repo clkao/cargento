@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import contextlib
 import email.message
 import errno
@@ -45,6 +46,26 @@ assert HOOK_SPEC is not None
 assert HOOK_SPEC.loader is not None
 dashboard_hook = importlib.util.module_from_spec(HOOK_SPEC)
 HOOK_SPEC.loader.exec_module(dashboard_hook)
+
+
+def serve_until_closed(httpd: Any) -> threading.Thread:
+    """Serve on a thread that closes the listening socket when the loop exits.
+
+    Mirrors what ``main()`` does in its ``try/finally``. Serving without the
+    close leaves the port bound after the accept loop has gone — a state
+    ``main()`` never produces, and one that makes anything waiting for the port
+    to come free (``--stop``, and therefore any restart) wait for nothing.
+    """
+
+    def serve() -> None:
+        try:
+            httpd.serve_forever()
+        finally:
+            httpd.server_close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    return thread
 
 
 def protobuf_varint(value: int) -> bytes:
@@ -102,8 +123,14 @@ const document = {
 };
 const window = {addEventListener(type, fn){
   (__listeners["window:" + type] = __listeners["window:" + type] || []).push(fn); }};
-const fetch = () => new Promise(() => {});
-const setInterval = () => 0;
+// Records what the page requested and lets a test choose the reply. The old
+// never-settling stub is the default, so existing tests behave identically.
+let __fetchCalls = [];
+let __fetchImpl = () => new Promise(() => {});
+const fetch = (...args) => { __fetchCalls.push(args); return __fetchImpl(...args); };
+let __clearedIntervals = [];
+const clearInterval = id => { __clearedIntervals.push(id); };
+const setInterval = () => 73;
 // Notification stub: records what the page would have raised, with a
 // permission value tests can set. Defined here so every page test runs with a
 // browser-notification-capable environment, as a real browser would.
@@ -3540,6 +3567,820 @@ console.log(JSON.stringify(out));
         self.assertEqual("Ship feature", s["title"])
         self.assertEqual("ship it", s["last_prompt"])
 
+    def test_health_reports_identity_without_scanning_any_store(self) -> None:
+        httpd = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            # The readiness wait and --status poll this in a loop. If it ever
+            # reaches collect(), a liveness check costs a full multi-harness
+            # filesystem scan.
+            with mock.patch.object(dashboard, "collect") as collect:
+                conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=2)
+                conn.request("GET", "/api/health")
+                response = conn.getresponse()
+                status = response.status
+                payload = json.loads(response.read())
+                conn.close()
+            collect.assert_not_called()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(os.getpid(), payload["pid"])
+        self.assertEqual(httpd.server_port, payload["port"])
+        self.assertIsInstance(payload["started"], (int, float))
+
+    def test_health_is_refused_from_a_non_local_host_header(self) -> None:
+        httpd = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=2)
+            conn.putrequest("GET", "/api/health", skip_host=True)
+            conn.putheader("Host", "evil.example")
+            conn.endheaders()
+            response = conn.getresponse()
+            self.assertEqual(403, response.status)
+            response.read()
+            conn.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_cargento_home_honours_the_override_and_defaults_under_home(self) -> None:
+        with mock.patch.dict(os.environ, {"CARGENTO_HOME": "/tmp/elsewhere"}):
+            self.assertEqual("/tmp/elsewhere", dashboard.cargento_home())
+            self.assertEqual("/tmp/elsewhere", os.path.dirname(dashboard.state_path(4553)))
+        environ = {k: v for k, v in os.environ.items() if k != "CARGENTO_HOME"}
+        with mock.patch.dict(os.environ, environ, clear=True):
+            self.assertEqual(os.path.join(dashboard.HOME, ".cargento"), dashboard.cargento_home())
+        for blank in ("", " ", "\t\r\n"):
+            with (
+                self.subTest(blank=repr(blank)),
+                mock.patch.dict(os.environ, {"CARGENTO_HOME": blank}),
+            ):
+                self.assertEqual(
+                    os.path.join(dashboard.HOME, ".cargento"),
+                    dashboard.cargento_home(),
+                )
+
+    def test_cli_port_type_rejects_values_outside_the_tcp_range(self) -> None:
+        for value in ("-1", "0", "65536", "not-a-port"):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                dashboard.tcp_port(value)
+        for value in ("1", "4553", "65535"):
+            with self.subTest(value=value):
+                self.assertEqual(int(value), dashboard.tcp_port(value))
+        with (
+            mock.patch.object(sys, "argv", ["server.py", "--port", "0"]),
+            mock.patch.object(sys, "stderr", io.StringIO()),
+            mock.patch.object(dashboard, "LoopbackHTTPServer") as bind,
+            self.assertRaises(SystemExit) as caught,
+        ):
+            dashboard.main()
+        self.assertEqual(2, caught.exception.code)
+        bind.assert_not_called()
+
+    def test_state_file_roundtrips_and_names_itself_per_port(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict(os.environ, {"CARGENTO_HOME": tmp}),
+        ):
+            dashboard.write_state(4553)
+            dashboard.write_state(9999)
+            self.assertTrue(os.path.exists(os.path.join(tmp, "cargento-4553.json")))
+            state = dashboard.read_state(4553)
+            assert state is not None
+            self.assertEqual(os.getpid(), state["pid"])
+            self.assertEqual(4553, state["port"])
+            self.assertEqual(dashboard.log_path(4553), state["log"])
+            self.assertEqual(sys.executable, state["python"])
+            # Two instances on two ports do not overwrite each other.
+            other = dashboard.read_state(9999)
+            assert other is not None
+            self.assertEqual(9999, other["port"])
+            dashboard.remove_state(4553)
+            self.assertIsNone(dashboard.read_state(4553))
+            dashboard.remove_state(4553)  # removing twice is not an error
+
+    def test_read_state_returns_none_for_absent_corrupt_and_non_object_files(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict(os.environ, {"CARGENTO_HOME": tmp}),
+        ):
+            self.assertIsNone(dashboard.read_state(4553))
+            Path(dashboard.state_path(4553)).write_text("{not json", encoding="utf-8")
+            self.assertIsNone(dashboard.read_state(4553))
+            Path(dashboard.state_path(4553)).write_text("[1,2]", encoding="utf-8")
+            self.assertIsNone(dashboard.read_state(4553))
+
+    def test_write_state_reports_and_survives_an_unwritable_home(self) -> None:
+        # A dashboard that cannot write its state file still serves; --status
+        # just cannot see it. This must never be fatal.
+        with tempfile.TemporaryDirectory() as tmp:
+            blocker = os.path.join(tmp, "home")
+            Path(blocker).write_text("not a directory", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"CARGENTO_HOME": blocker}):
+                with mock.patch.object(dashboard, "diag") as diag:
+                    dashboard.write_state(4553)
+                self.assertTrue(diag.called)
+
+    def test_probe_port_classifies_cargento_foreign_and_closed(self) -> None:
+        httpd = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        port = httpd.server_port
+        try:
+            kind, health = dashboard.probe_port(port, timeout=2)
+            self.assertEqual("cargento", kind)
+            assert health is not None
+            self.assertEqual(os.getpid(), health["pid"])
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+        # Same port, now nothing listening.
+        self.assertEqual(("closed", None), dashboard.probe_port(port, timeout=1))
+
+    def test_probe_port_calls_a_non_cargento_listener_foreign(self) -> None:
+        class Other(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"hi")
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        httpd = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), Other)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            # 200 but not JSON: something else owns this port. Reporting it as
+            # Cargento is how a stop command ends up aimed at an unrelated
+            # process.
+            self.assertEqual(("foreign", None), dashboard.probe_port(httpd.server_port, timeout=2))
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_probe_port_rejects_recursive_and_lookalike_health_payloads(self) -> None:
+        invalid = (
+            ("recursive JSON", b"[" * 2000 + b"]" * 2000),
+            ("truthy ok", b'{"ok":"yes","pid":7,"port":4553,"started":1}'),
+            ("boolean pid", b'{"ok":true,"pid":true,"port":4553,"started":1}'),
+            ("zero pid", b'{"ok":true,"pid":0,"port":4553,"started":1}'),
+            ("wrong port", b'{"ok":true,"pid":7,"port":9999,"started":1}'),
+            ("missing start time", b'{"ok":true,"pid":7,"port":4553}'),
+        )
+        for label, body in invalid:
+            with (
+                self.subTest(payload=label),
+                mock.patch.object(http.client, "HTTPConnection") as connection,
+            ):
+                response = connection.return_value.getresponse.return_value
+                response.status = 200
+                response.read.return_value = body
+                self.assertEqual(("foreign", None), dashboard.probe_port(4553))
+                connection.return_value.close.assert_called_once_with()
+
+    def test_instance_status_covers_running_stale_foreign_and_absent(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict(os.environ, {"CARGENTO_HOME": tmp}),
+        ):
+            health = {"ok": True, "pid": 4242, "port": 4553, "started": 1000.0}
+            with mock.patch.object(dashboard, "probe_port", return_value=("cargento", health)):
+                running = dashboard.instance_status(4553)
+            self.assertEqual("running", running["state"])
+            self.assertEqual(4242, running["pid"])
+
+            with mock.patch.object(dashboard, "probe_port", return_value=("closed", None)):
+                self.assertEqual("absent", dashboard.instance_status(4553)["state"])
+                dashboard.write_state(4553)
+                stale = dashboard.instance_status(4553)
+            self.assertEqual("stale", stale["state"])
+            self.assertEqual(os.getpid(), stale["pid"])
+
+            with mock.patch.object(dashboard, "probe_port", return_value=("foreign", None)):
+                self.assertEqual("foreign", dashboard.instance_status(4553)["state"])
+
+    def test_render_status_names_the_state_and_never_suggests_a_kill(self) -> None:
+        running = dashboard.render_status(
+            {"state": "running", "port": 4553, "pid": 7, "started": 1000.0, "log": "/l"}
+        )
+        self.assertIn("running", running)
+        self.assertIn("pid 7", running)
+        self.assertIn("http://127.0.0.1:4553/", running)
+        stale = dashboard.render_status({"state": "stale", "port": 4553, "pid": 7, "log": "/l"})
+        self.assertIn("--stop", stale)
+        foreign = dashboard.render_status({"state": "foreign", "port": 4553, "pid": None})
+        self.assertIn("another process", foreign)
+        self.assertIn("Nothing was stopped", foreign)
+        self.assertIn("not running", dashboard.render_status({"state": "absent", "port": 4553}))
+
+    def test_render_status_survives_a_started_value_it_cannot_convert(self) -> None:
+        # Keep render_status defensive even though probe_port now rejects
+        # non-finite values. Tests and callers can still construct a status
+        # directly, and a value outside time_t must not replace a line with a
+        # traceback.
+        for started in (1e19, -1e19, float("inf"), float("nan")):
+            with self.subTest(started=started):
+                line = dashboard.render_status(
+                    {"state": "running", "port": 4553, "pid": 7, "started": started, "log": "/l"}
+                )
+                self.assertIn("running", line)
+                self.assertIn("since unknown", line)
+
+    def test_port_released_is_false_while_a_server_still_holds_the_port(self) -> None:
+        httpd = dashboard.LoopbackHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        port = httpd.server_port
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            self.assertFalse(dashboard.port_released(port), "bound and serving")
+            httpd.shutdown()
+            thread.join(timeout=5)
+            # The accept loop has exited but the socket is still open. A connect
+            # probe cannot see this state, and repeated connects fill the
+            # backlog and then wrongly report the port gone; binding sees it.
+            for _ in range(dashboard.LoopbackHTTPServer.request_queue_size + 3):
+                self.assertFalse(dashboard.port_released(port), "bound, not accepting")
+        finally:
+            httpd.server_close()
+            thread.join(timeout=2)
+        self.assertTrue(dashboard.port_released(port), "closed")
+
+    def test_stop_instance_waits_for_the_port_before_claiming_it_stopped(self) -> None:
+        # A server that answers the shutdown POST but never releases the port
+        # must not be reported as stopped: the caller's next move is a start.
+        running = {"state": "running", "port": 4553, "pid": 7, "started": 1000.0, "log": "/l"}
+        with (
+            mock.patch.object(dashboard, "instance_status", return_value=running),
+            mock.patch.object(dashboard, "port_released", return_value=False) as released,
+            mock.patch.object(dashboard, "STOP_RELEASE_TIMEOUT_SEC", 0.2),
+            mock.patch.object(http.client, "HTTPConnection") as conn,
+        ):
+            conn.return_value.getresponse.return_value.status = 200
+            message, code = dashboard.stop_instance(4553)
+        self.assertEqual(1, code)
+        self.assertIn("still listening", message)
+        self.assertNotIn("stopped (pid", message)
+        self.assertGreater(released.call_count, 1, "it never waited")
+
+    def test_await_release_sleeps_between_failed_probes(self) -> None:
+        with (
+            mock.patch.object(dashboard, "port_released", side_effect=(False, True)) as released,
+            mock.patch.object(dashboard.time, "sleep") as sleep,
+        ):
+            self.assertTrue(dashboard.await_release(4553, timeout=1))
+        self.assertEqual(2, released.call_count)
+        sleep.assert_called_once_with(0.05)
+
+    def test_stop_instance_reports_a_refused_shutdown_response(self) -> None:
+        running = {"state": "running", "port": 4553, "pid": 7, "started": 1000.0, "log": "/l"}
+        with (
+            mock.patch.object(dashboard, "instance_status", return_value=running),
+            mock.patch.object(dashboard, "await_release") as released,
+            mock.patch.object(http.client, "HTTPConnection") as connection,
+        ):
+            response = connection.return_value.getresponse.return_value
+            response.status = 503
+            message, code = dashboard.stop_instance(4553)
+        self.assertEqual(1, code)
+        self.assertIn("refused to stop", message)
+        self.assertIn("503", message)
+        released.assert_not_called()
+        connection.return_value.close.assert_called_once_with()
+
+    def test_status_flag_exits_zero_only_when_running(self) -> None:
+        for state, expected in (("running", 0), ("stale", 1), ("foreign", 1), ("absent", 1)):
+            with (
+                mock.patch.object(
+                    dashboard,
+                    "instance_status",
+                    return_value={"state": state, "port": 4553, "pid": 1},
+                ),
+                mock.patch.object(sys, "argv", ["server.py", "--status"]),
+                mock.patch.object(dashboard, "diag"),
+                self.assertRaises(SystemExit) as caught,
+            ):
+                dashboard.main()
+            self.assertEqual(expected, caught.exception.code, state)
+
+    def test_stop_instance_stops_a_running_server_over_http(self) -> None:
+        httpd = dashboard.LoopbackHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        port = httpd.server_port
+        loop_exited = threading.Event()
+        allow_close = threading.Event()
+        result: list[tuple[str, int]] = []
+
+        def serve_with_delayed_close() -> None:
+            try:
+                httpd.serve_forever()
+            finally:
+                loop_exited.set()
+                allow_close.wait(timeout=10)
+                httpd.server_close()
+
+        thread = threading.Thread(target=serve_with_delayed_close, daemon=True)
+        thread.start()
+        stop_thread = threading.Thread(
+            target=lambda: result.append(dashboard.stop_instance(port)),
+            daemon=True,
+        )
+        try:
+            stop_thread.start()
+            self.assertTrue(loop_exited.wait(timeout=5), "serve_forever did not stop")
+            self.assertFalse(dashboard.port_released(port), "the delayed close lost its bind")
+            self.assertTrue(
+                stop_thread.is_alive(),
+                "stop_instance returned before the listener released its port",
+            )
+            allow_close.set()
+            stop_thread.join(timeout=10)
+            self.assertFalse(stop_thread.is_alive(), "stop_instance did not notice the release")
+            self.assertEqual(1, len(result))
+            message, code = result[0]
+            self.assertEqual(0, code, message)
+            self.assertIn("stopped", message)
+            self.assertTrue(dashboard.port_released(port), "the port is still bound")
+            thread.join(timeout=10)
+            self.assertFalse(thread.is_alive())
+        finally:
+            allow_close.set()
+            with contextlib.suppress(OSError):
+                httpd.shutdown()
+            stop_thread.join(timeout=2)
+            thread.join(timeout=2)
+            with contextlib.suppress(OSError):
+                httpd.server_close()
+
+    @unittest.skipIf(os.name == "nt", "POSIX SO_REUSEADDR/TIME_WAIT semantics")
+    def test_port_release_probe_matches_the_listener_during_time_wait(self) -> None:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        listener.listen()
+        client = socket.create_connection(("127.0.0.1", port), timeout=2)
+        accepted, _ = listener.accept()
+        try:
+            # The server endpoint closes first, putting this local address in
+            # TIME_WAIT after the client observes EOF and closes. Cargento's
+            # listener can rebind here because it uses SO_REUSEADDR, so its
+            # release probe must use the same option or report a false hold.
+            accepted.close()
+            self.assertEqual(b"", client.recv(1))
+            client.close()
+            listener.close()
+            self.assertTrue(dashboard.port_released(port))
+        finally:
+            with contextlib.suppress(OSError):
+                accepted.close()
+            with contextlib.suppress(OSError):
+                client.close()
+            with contextlib.suppress(OSError):
+                listener.close()
+
+    def test_stop_instance_removes_a_stale_state_file_and_succeeds(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict(os.environ, {"CARGENTO_HOME": tmp}),
+        ):
+            dashboard.write_state(4553)
+            # port_released is mocked alongside probe_port because the stale
+            # branch now waits for the port too. Left live it asks the real
+            # 4553, so the result would depend on what the machine is running.
+            with (
+                mock.patch.object(dashboard, "probe_port", return_value=("closed", None)),
+                mock.patch.object(dashboard, "port_released", return_value=True),
+            ):
+                message, code = dashboard.stop_instance(4553)
+            self.assertEqual(0, code)
+            self.assertIn("stale", message)
+            self.assertIsNone(dashboard.read_state(4553))
+
+    def test_stop_instance_will_not_call_it_stopped_while_the_port_is_held(self) -> None:
+        # main() removes the state file *before* it closes the listener, so a
+        # stop already in progress reaches the absent/stale branches with the
+        # port still bound. Exit 0 there meant "nothing running" for a port that
+        # the very next start could not bind.
+        for state, probe in (("stale", True), ("absent", False)):
+            with (
+                self.subTest(state=state),
+                tempfile.TemporaryDirectory() as tmp,
+                mock.patch.dict(os.environ, {"CARGENTO_HOME": tmp}),
+            ):
+                if probe:
+                    dashboard.write_state(4553)
+                with (
+                    mock.patch.object(dashboard, "probe_port", return_value=("closed", None)),
+                    mock.patch.object(dashboard, "port_released", return_value=False),
+                    mock.patch.object(dashboard, "STOP_RELEASE_TIMEOUT_SEC", 0.1),
+                ):
+                    message, code = dashboard.stop_instance(4553)
+                self.assertEqual(1, code)
+                self.assertIn("still holding the port", message)
+                self.assertNotIn("nothing running", message)
+                if probe:
+                    # It did not own the port, so it does not get to tidy up.
+                    self.assertIsNotNone(dashboard.read_state(4553))
+
+    def test_stop_instance_lets_the_port_settle_a_lost_connection(self) -> None:
+        # A concurrent --stop, or the page's own button, can take the server down
+        # while this request is in flight. The reset that causes is not evidence
+        # the stop failed, and reporting exit 1 for it broke the documented
+        # unconditional-stop idempotency about 3 runs in 5.
+        running = {"state": "running", "port": 4553, "pid": 7, "started": 1000.0, "log": "/l"}
+        for released, expected_code, expected in ((True, 0, "stopped"), (False, 1, "could not")):
+            with (
+                self.subTest(released=released),
+                mock.patch.object(dashboard, "instance_status", return_value=running),
+                mock.patch.object(dashboard, "port_released", return_value=released),
+                mock.patch.object(dashboard, "STOP_RELEASE_TIMEOUT_SEC", 0.1),
+                mock.patch.object(http.client, "HTTPConnection") as conn,
+            ):
+                conn.return_value.getresponse.side_effect = ConnectionResetError(
+                    errno.ECONNRESET, "Connection reset by peer"
+                )
+                message, code = dashboard.stop_instance(4553)
+            self.assertEqual(expected_code, code, message)
+            self.assertIn(expected, message)
+
+    def test_port_released_only_reads_address_in_use_as_still_held(self) -> None:
+        # EACCES on a privileged port says nothing about whether the port is in
+        # use, and answering "held" for it made --stop wait out its whole
+        # timeout and then claim an instance was still listening when it had
+        # stopped. Where a bind cannot answer, the answer is not "held".
+        cases = (
+            (errno.EADDRINUSE, False),
+            # Windows reports an in-use port as EACCES once SO_EXCLUSIVEADDRUSE
+            # is in play, so it counts as held there; on POSIX it only ever means
+            # privilege, which is no evidence about use at all.
+            (errno.EACCES, os.name != "nt"),
+            (errno.EPERM, True),
+            (errno.EMFILE, True),
+            (errno.ENFILE, True),
+        )
+        for code, expected in cases:
+            with (
+                self.subTest(errno=errno.errorcode.get(code, code)),
+                mock.patch.object(
+                    dashboard.socket, "socket", side_effect=OSError(code, os.strerror(code))
+                ),
+            ):
+                self.assertEqual(expected, dashboard.port_released(4553))
+        # A real privileged port: nothing listens on 1, but binding is refused.
+        if os.name != "nt" and os.geteuid() != 0:
+            self.assertTrue(dashboard.port_released(1), "EACCES read as a held port")
+
+    def test_read_state_rejects_a_corrupt_file_instead_of_raising(self) -> None:
+        # json.load raises RecursionError, not ValueError, past the nesting
+        # limit, and it tracebacked straight out of --status and --stop. "None if
+        # there is none to trust" has to cover corrupt, not only missing.
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict(os.environ, {"CARGENTO_HOME": tmp}),
+        ):
+            path = Path(dashboard.state_path(4553))
+            for label, body in (
+                ("deeply nested", "[" * 30000 + "]" * 30000),
+                ("truncated", '{"pid": 1'),
+                ("not an object", "[1, 2, 3]"),
+                ("empty", ""),
+                ("oversized", "0" * (dashboard.STATE_READ_CAP_BYTES + 1024)),
+                (
+                    "oversized valid object",
+                    '{"pid": 1}' + " " * dashboard.STATE_READ_CAP_BYTES,
+                ),
+                (
+                    "oversized UTF-8 object",
+                    json.dumps(
+                        {"note": "é" * 40000},
+                        ensure_ascii=False,
+                    ),
+                ),
+            ):
+                with self.subTest(body=label):
+                    path.write_text(body, encoding="utf-8")
+                    self.assertIsNone(dashboard.read_state(4553))
+                    # And the commands built on it still explain themselves.
+                    with mock.patch.object(dashboard, "probe_port", return_value=("closed", None)):
+                        self.assertIn(
+                            "not running", dashboard.render_status(dashboard.instance_status(4553))
+                        )
+
+    def test_daemon_explains_a_log_it_cannot_open(self) -> None:
+        # ensure_cargento_home() is makedirs(exist_ok=True), which succeeds for
+        # an existing directory whatever its mode — so the likeliest bad home of
+        # all, one that exists and is not writable, got past that guard and
+        # raised in daemon_redirect_stdio after the fork, where no message can
+        # reach the terminal that asked.
+        if os.name == "nt":
+            self.skipTest("POSIX directory modes do not apply on Windows")
+        with tempfile.TemporaryDirectory() as tmp:
+            home = os.path.join(tmp, "readonly")
+            os.makedirs(home)
+            os.chmod(home, 0o500)
+            try:
+                with (
+                    mock.patch.dict(os.environ, {"CARGENTO_HOME": home}),
+                    mock.patch.object(sys, "argv", ["server.py", "--port", "4553", "--daemon"]),
+                    mock.patch.object(dashboard, "diag") as diag,
+                    mock.patch.object(dashboard, "LoopbackHTTPServer") as bind,
+                    mock.patch.object(dashboard, "fork_daemon") as fork,
+                    mock.patch.object(dashboard, "spawn_detached") as spawn,
+                    self.assertRaises(SystemExit) as caught,
+                ):
+                    dashboard.main()
+            finally:
+                # Restore before TemporaryDirectory tries to remove it, and
+                # before this frame can leave a 0o500 directory behind.
+                os.chmod(home, 0o700)
+        self.assertEqual(1, caught.exception.code)
+        bind.assert_not_called()
+        fork.assert_not_called()
+        spawn.assert_not_called()
+        said = " ".join(str(call.args[0]) for call in diag.call_args_list)
+        self.assertIn("CARGENTO_HOME", said)
+        self.assertIn(home, said)
+
+    def test_stop_instance_refuses_to_touch_a_port_owned_by_something_else(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict(os.environ, {"CARGENTO_HOME": tmp}),
+        ):
+            dashboard.write_state(4553)
+            with mock.patch.object(dashboard, "probe_port", return_value=("foreign", None)):
+                message, code = dashboard.stop_instance(4553)
+            self.assertEqual(1, code)
+            self.assertIn("another process", message)
+            # The state file is evidence, not garbage: leave it alone.
+            self.assertIsNotNone(dashboard.read_state(4553))
+
+    def test_stop_instance_is_idempotent_when_nothing_is_running(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.dict(os.environ, {"CARGENTO_HOME": tmp}),
+            mock.patch.object(dashboard, "probe_port", return_value=("closed", None)),
+            mock.patch.object(dashboard, "port_released", return_value=True),
+        ):
+            message, code = dashboard.stop_instance(4553)
+        self.assertEqual(0, code)
+        self.assertIn("nothing running", message)
+
+    def test_stop_flag_exits_with_the_code_stop_instance_returned(self) -> None:
+        with (
+            mock.patch.object(dashboard, "stop_instance", return_value=("nope", 1)) as stop,
+            mock.patch.object(sys, "argv", ["server.py", "--port", "4553", "--stop"]),
+            mock.patch.object(dashboard, "diag") as diag,
+            self.assertRaises(SystemExit) as caught,
+        ):
+            dashboard.main()
+        self.assertEqual(1, caught.exception.code)
+        stop.assert_called_once_with(4553)
+        diag.assert_called_once_with("nope")
+
+    def test_fork_daemon_returns_parent_role_without_touching_setsid(self) -> None:
+        calls: list[str] = []
+
+        def fake_fork() -> int:
+            calls.append("fork")
+            return 4242  # a pid: this process is the original
+
+        def fake_setsid() -> int:
+            calls.append("setsid")
+            return 0
+
+        role, fd = dashboard.fork_daemon(fork=fake_fork, setsid=fake_setsid)
+        os.close(fd)
+        self.assertEqual("parent", role)
+        self.assertEqual(["fork"], calls)
+
+    def test_fork_daemon_double_forks_and_sessions_the_daemon(self) -> None:
+        calls: list[str] = []
+        exited: list[int] = []
+
+        def fake_fork() -> int:
+            calls.append("fork")
+            return 0  # child both times: this process becomes the daemon
+
+        def fake_setsid() -> int:
+            calls.append("setsid")
+            return 0
+
+        role, fd = dashboard.fork_daemon(
+            fork=fake_fork, setsid=fake_setsid, exit_intermediate=exited.append
+        )
+        os.close(fd)
+        self.assertEqual("daemon", role)
+        # setsid between the two forks: the second fork is what guarantees the
+        # daemon is not a session leader and can never acquire a terminal.
+        self.assertEqual(["fork", "setsid", "fork"], calls)
+        self.assertEqual([], exited)
+
+    def test_fork_daemon_exits_the_intermediate_child(self) -> None:
+        forks = iter([0, 9999])  # child, then parent-of-grandchild
+        exited: list[int] = []
+        role, fd = dashboard.fork_daemon(
+            fork=lambda: next(forks),
+            setsid=lambda: 0,
+            exit_intermediate=exited.append,
+        )
+        os.close(fd)
+        # The intermediate's only job was setsid. In production os._exit never
+        # returns; the injected stub does, so the role is reported for the test.
+        self.assertEqual([0], exited)
+        self.assertEqual("daemon", role)
+
+    # await_daemon is POSIX-only by construction: it waits on the pipe with
+    # select(), which on Windows accepts sockets and nothing else, so a pipe fd
+    # raises there. main() never reaches it on Windows — that platform takes the
+    # re-spawn path and await_spawned — so the function is unreachable rather
+    # than broken. Skipped rather than rewritten rather than pretending: without
+    # the skip the second of these two passed on Windows for the wrong reason,
+    # because select() raising produced the same exit code it asserts.
+    @unittest.skipIf(os.name == "nt", "select() cannot watch a pipe on Windows; POSIX-only path")
+    def test_await_daemon_reports_the_pid_the_daemon_announced(self) -> None:
+        read_fd, write_fd = os.pipe()
+        try:
+            os.write(write_fd, b"31337\n")
+        finally:
+            os.close(write_fd)
+        message, code = dashboard.await_daemon(read_fd, 4553, "/tmp/c.log", timeout=2)
+        self.assertEqual(0, code)
+        self.assertIn("pid 31337", message)
+        self.assertIn("http://127.0.0.1:4553/", message)
+        self.assertIn("/tmp/c.log", message)
+
+    @unittest.skipIf(os.name == "nt", "select() cannot watch a pipe on Windows; POSIX-only path")
+    def test_await_daemon_reports_failure_when_the_daemon_says_nothing(self) -> None:
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)  # daemon died before announcing
+        message, code = dashboard.await_daemon(read_fd, 4553, "/tmp/c.log", timeout=1)
+        self.assertEqual(1, code)
+        self.assertIn("/tmp/c.log", message)
+
+    @unittest.skipIf(os.name == "nt", "select() cannot watch a pipe on Windows; POSIX-only path")
+    def test_await_daemon_does_not_report_a_pipe_error_as_a_timeout(self) -> None:
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)
+        with mock.patch.object(
+            dashboard.select,
+            "select",
+            side_effect=OSError(errno.EBADF, os.strerror(errno.EBADF)),
+        ):
+            message, code = dashboard.await_daemon(read_fd, 4553, "/tmp/c.log", timeout=10)
+        self.assertEqual(1, code)
+        self.assertIn("readiness pipe", message)
+        self.assertIn("/tmp/c.log", message)
+        self.assertNotIn("within 10s", message)
+
+    def test_daemon_rejects_the_flags_it_cannot_combine_with(self) -> None:
+        for other in ("--diagnose", "--stop", "--status"):
+            with (
+                mock.patch.object(sys, "argv", ["server.py", "--daemon", other]),
+                self.assertRaises(SystemExit) as caught,
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                dashboard.main()
+            self.assertEqual(2, caught.exception.code, other)
+
+    def test_daemon_explains_a_home_it_cannot_create_instead_of_tracebacking(self) -> None:
+        # CARGENTO_HOME is user-facing in README, SKILL.md, SECURITY.md and
+        # COMPATIBILITY.md, so pointing it somewhere unusable is an ordinary
+        # mistake. write_state() already degrades for a foreground run; without
+        # this guard only --daemon crashed, and with a raw traceback.
+        with tempfile.TemporaryDirectory() as tmp:
+            not_a_dir = os.path.join(tmp, "occupied")
+            Path(not_a_dir).write_text("", encoding="utf-8")
+            with (
+                mock.patch.dict(os.environ, {"CARGENTO_HOME": not_a_dir}),
+                mock.patch.object(sys, "argv", ["server.py", "--port", "4553", "--daemon"]),
+                mock.patch.object(dashboard, "diag") as diag,
+                # A traceback here would escape before either of these is used.
+                mock.patch.object(dashboard, "LoopbackHTTPServer") as bind,
+                mock.patch.object(dashboard, "fork_daemon") as fork,
+                self.assertRaises(SystemExit) as caught,
+            ):
+                dashboard.main()
+        self.assertEqual(1, caught.exception.code)
+        bind.assert_not_called()
+        fork.assert_not_called()
+        said = " ".join(str(call.args[0]) for call in diag.call_args_list)
+        self.assertIn("CARGENTO_HOME", said)
+        self.assertIn("--daemon", said)
+        self.assertIn(not_a_dir, said)
+
+    def test_forwarded_args_carries_the_flags_the_child_needs_and_drops_daemon(self) -> None:
+        args = argparse.Namespace(port=4553, window_hours=12.0, no_spacedock=True, daemon=True)
+        forwarded = dashboard.forwarded_args(args)
+        self.assertEqual(["--port", "4553", "--window-hours", "12.0", "--no-spacedock"], forwarded)
+        # --daemon must not be forwarded: the child is an ordinary foreground
+        # run that happens to own no console. Forwarding it would re-spawn
+        # forever.
+        self.assertNotIn("--daemon", forwarded)
+        plain = dashboard.forwarded_args(
+            argparse.Namespace(port=1, window_hours=24.0, no_spacedock=False, daemon=True)
+        )
+        self.assertEqual(["--port", "1", "--window-hours", "24.0"], plain)
+
+    def test_spawn_detached_uses_a_fixed_argv_and_detaching_flags(self) -> None:
+        args = argparse.Namespace(port=4553, window_hours=24.0, no_spacedock=False, daemon=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            log_file = os.path.join(tmp, "c.log")
+            with mock.patch.object(dashboard.subprocess, "Popen") as popen:
+                popen.return_value = mock.Mock(pid=321)
+                dashboard.spawn_detached(args, log_file)
+        argv = popen.call_args.args[0]
+        self.assertEqual(sys.executable, argv[0])
+        self.assertTrue(argv[1].endswith("server.py"))
+        self.assertEqual(["--port", "4553", "--window-hours", "24.0"], argv[2:])
+        self.assertEqual(dashboard.subprocess.DEVNULL, popen.call_args.kwargs["stdin"])
+        self.assertTrue(popen.call_args.kwargs["close_fds"])
+        # 0 on POSIX, where these creationflags do not exist; the call must
+        # still be well-formed so the test runs everywhere.
+        self.assertIsInstance(popen.call_args.kwargs["creationflags"], int)
+
+    def test_await_spawned_reports_the_child_that_answered(self) -> None:
+        health = {"ok": True, "pid": 777, "port": 4553, "started": 1.0}
+        proc = mock.Mock(returncode=None, pid=777)
+        proc.poll.return_value = None
+        with mock.patch.object(dashboard, "probe_port", return_value=("cargento", health)):
+            message, code = dashboard.await_spawned(proc, 4553, "/tmp/c.log", timeout=2)
+        self.assertEqual(0, code)
+        self.assertIn("pid 777", message)
+        self.assertIn("http://127.0.0.1:4553/", message)
+
+    def test_await_spawned_does_not_mistake_another_cargento_for_its_own_child(self) -> None:
+        # The Windows failure this exists to prevent: the child loses the bind
+        # to a dashboard already on that port, and the parent's readiness poll
+        # gets a perfectly valid /api/health answer — from the *other*
+        # instance. Reporting success there tells the user their daemon
+        # started when it did not, and hands back a pid they do not own.
+        health = {"ok": True, "pid": 999, "port": 4553, "started": 1.0}
+        with tempfile.TemporaryDirectory() as tmp:
+            log_file = os.path.join(tmp, "c.log")
+            Path(log_file).write_text("Cargento: port 4553 is already in use.", encoding="utf-8")
+            proc = mock.Mock(returncode=1, pid=777)
+            proc.poll.return_value = 1
+            with mock.patch.object(dashboard, "probe_port", return_value=("cargento", health)):
+                message, code = dashboard.await_spawned(proc, 4553, log_file, timeout=2)
+        self.assertEqual(1, code)
+        self.assertNotIn("pid 999", message)
+        self.assertIn("already in use", message)
+
+    def test_await_spawned_keeps_waiting_while_a_foreign_answer_and_a_live_child(self) -> None:
+        # Same mismatch, but the child is still running: the answer is not
+        # evidence about our child either way, so this must time out rather
+        # than claim success.
+        health = {"ok": True, "pid": 999, "port": 4553, "started": 1.0}
+        proc = mock.Mock(returncode=None, pid=777)
+        proc.poll.return_value = None
+        with mock.patch.object(dashboard, "probe_port", return_value=("cargento", health)):
+            message, code = dashboard.await_spawned(proc, 4553, "/tmp/c.log", timeout=0.3)
+        self.assertEqual(1, code)
+        self.assertNotIn("pid 999", message)
+
+    def test_await_spawned_surfaces_the_log_when_the_child_exits_at_once(self) -> None:
+        # This is the case that keeps D-1's promise on Windows: the parent
+        # cannot see the child's failed bind, so it shows the child's log.
+        with tempfile.TemporaryDirectory() as tmp:
+            log_file = os.path.join(tmp, "c.log")
+            Path(log_file).write_text("Cargento: port 4553 is already in use.", encoding="utf-8")
+            proc = mock.Mock(returncode=1)
+            proc.poll.return_value = 1
+            with mock.patch.object(dashboard, "probe_port", return_value=("closed", None)):
+                message, code = dashboard.await_spawned(proc, 4553, log_file, timeout=2)
+        self.assertEqual(1, code)
+        self.assertIn("already in use", message)
+
+    def test_await_spawned_gives_up_after_the_timeout(self) -> None:
+        proc = mock.Mock(returncode=None)
+        proc.poll.return_value = None
+        with mock.patch.object(dashboard, "probe_port", return_value=("closed", None)):
+            message, code = dashboard.await_spawned(proc, 4553, "/tmp/c.log", timeout=0.3)
+        self.assertEqual(1, code)
+        self.assertIn("/tmp/c.log", message)
+
+    def test_log_tail_reads_the_end_and_never_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_file = os.path.join(tmp, "c.log")
+            Path(log_file).write_bytes(b"x" * 3000 + b"LAST LINE")
+            tail = dashboard.log_tail(log_file, limit=200)
+            self.assertIn("LAST LINE", tail)
+            self.assertLessEqual(len(tail), 200)
+            self.assertIn("could not read", dashboard.log_tail(os.path.join(tmp, "nope.log")))
+            Path(log_file).write_bytes(b"")
+            self.assertIn("empty", dashboard.log_tail(log_file))
+
 
 class ReverseLinesTest(unittest.TestCase):
     """Replaces the reverse mmap scans. A mapped region whose file is truncated
@@ -4659,6 +5500,64 @@ class ReviewFixTest(unittest.TestCase):
         self.assertIn("setsockopt:65531", order)
         self.assertEqual("bind", order[-1], "options must be set before bind()")
         self.assertLess(order.index("setsockopt:65531"), order.index("bind"))
+
+    def test_shutdown_endpoint_answers_before_it_stops_the_server(self) -> None:
+        httpd = dashboard.LoopbackHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=5)
+            conn.request("POST", "/api/shutdown", body=b"", headers={"Content-Length": "0"})
+            response = conn.getresponse()
+            # This proves the client gets a 200 and that the server actually
+            # stops (via the join/is_alive check below) — it does not pin how
+            # shutdown is implemented, e.g. that it must run on its own thread.
+            self.assertEqual(200, response.status)
+            self.assertEqual(b'{"ok":true,"stopping":true}', response.read())
+            conn.close()
+            thread.join(timeout=10)
+            self.assertFalse(thread.is_alive(), "serve_forever did not return")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_shutdown_still_runs_when_the_client_drops_during_the_reply(self) -> None:
+        handler = object.__new__(dashboard.Handler)
+        handler.server = mock.Mock()
+        handler.wfile = mock.Mock()
+        stopped = threading.Event()
+        handler.server.shutdown.side_effect = stopped.set
+        with mock.patch.object(handler, "_send", side_effect=BrokenPipeError):
+            handler._shutdown()
+        self.assertTrue(stopped.wait(timeout=2), "the failed reply cancelled the shutdown")
+        handler.server.shutdown.assert_called_once_with()
+
+    def test_shutdown_endpoint_refuses_a_cross_site_post(self) -> None:
+        httpd = dashboard.LoopbackHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=2)
+            conn.request(
+                "POST",
+                "/api/shutdown",
+                body=b"",
+                headers={"Content-Length": "0", "Sec-Fetch-Site": "cross-site"},
+            )
+            response = conn.getresponse()
+            self.assertEqual(403, response.status)
+            response.read()
+            conn.close()
+            # Still serving: a refused stop must not stop anything.
+            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=2)
+            conn.request("GET", "/api/health")
+            self.assertEqual(200, conn.getresponse().status)
+            conn.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
 
 
 class VerificationFixTest(unittest.TestCase):
@@ -5876,6 +6775,17 @@ class HarnessContractTest(unittest.TestCase):
     NOW = 1_700_000_000.0
     SID = "abcdef12-3456-7890-abcd-ef1234567890"
     TITLE = "Investigate the failing build"
+
+    def setUp(self) -> None:
+        # collect() updates transition/cooldown state. Without clearing it here,
+        # a shuffled run can inherit a prior test's _last_state and suppress or
+        # invent the transition this contract is meant to observe.
+        with dashboard._lock:
+            dashboard._hook_notifs.clear()
+            dashboard._last_popup.clear()
+            dashboard._last_popup_message.clear()
+            dashboard._last_state.clear()
+            dashboard._hook_generation.clear()
 
     def collect(self, build: Any, *, when: float, subdir: str = "store") -> dict[str, Any]:
         """Build one harness's store in isolation and run a full collection."""
@@ -7644,6 +8554,400 @@ console.log(JSON.stringify({
             with self.subTest(token=name):
                 self.assertIn(name, dark.group(1))
 
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_stop_button_arms_then_posts_and_shows_the_stopped_panel(self) -> None:
+        checks = """
+const out = {};
+render(board());
+out.shown = __els.app.innerHTML.includes('data-calm="stop"');
+out.armedBefore = __els.app.innerHTML.includes("sure?");
+
+// First click only arms it: the page cannot undo a stop.
+__fire("click", {target: {closest: sel => sel === "[data-calm]"
+  ? {getAttribute: a => a === "data-calm" ? "stop" : null} : null}});
+out.armedAfter = __els.app.innerHTML.includes("sure?");
+out.postedYet = __fetchCalls.filter(c => c[0] === "/api/shutdown").length;
+
+// A refresh must not disarm it — #app is rebuilt every 5s and the button
+// would flicker under the reader's cursor.
+render(board());
+out.survivesRender = __els.app.innerHTML.includes("sure?");
+
+__fetchImpl = () => Promise.resolve({ok: true});
+__fire("click", {target: {closest: sel => sel === "[data-calm]"
+  ? {getAttribute: a => a === "data-calm" ? "stop" : null} : null}});
+await __settle(); await __settle();
+const posted = __fetchCalls.filter(c => c[0] === "/api/shutdown");
+out.posted = posted.length;
+out.method = posted.length ? posted[0][1].method : null;
+out.stoppedPanel = __els.app.innerHTML.includes("Cargento stopped");
+out.buttonGone = __els.app.innerHTML.includes('data-calm="stop"');
+out.title = document.title;
+out.refreshTimer = refreshTimer;
+out.clearedIntervals = __clearedIntervals;
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["shown"])
+        self.assertFalse(out["armedBefore"])
+        self.assertTrue(out["armedAfter"])
+        self.assertEqual(0, out["postedYet"])
+        self.assertTrue(out["survivesRender"])
+        self.assertEqual(1, out["posted"])
+        self.assertEqual("POST", out["method"])
+        self.assertTrue(out["stoppedPanel"])
+        self.assertFalse(out["buttonGone"])
+        self.assertIn("stopped", out["title"])
+        self.assertIsNone(out["refreshTimer"])
+        self.assertEqual([73], out["clearedIntervals"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_armed_stop_button_keeps_focus_and_accepts_keyboard_activation(self) -> None:
+        checks = """
+const out = {trials: []};
+const stopButton = {
+  tagName: "BUTTON",
+  getAttribute: a => a === "data-calm" ? "stop" : null,
+  closest(sel){
+    return sel === "[data-calm]" || sel === '[data-calm="stop"]' ||
+      sel === "a[href],button,select,textarea,input,[tabindex]" ? this : null;
+  },
+  focus(){ document.activeElement = this; }
+};
+__els["stop-control"] = stopButton;
+const clickStop = () => __fire("click", {target: stopButton});
+__fetchImpl = () => Promise.resolve({ok: true});
+
+for(const key of [" ", "Enter"]){
+  stopArmed = false; stopError = ""; serverStopped = false; stopFocusPending = false;
+  refreshTimer = 73; document.activeElement = null; __fetchCalls = [];
+  render(board());
+  clickStop();
+  const armed = __els.app.innerHTML.includes("sure?");
+  const focusKept = document.activeElement === stopButton;
+  __fire("keydown", {key, target: stopButton, preventDefault(){}});
+  const armedAfterKey = __els.app.innerHTML.includes("sure?");
+  clickStop();  // the native click generated by Space or Enter
+  await __settle(); await __settle();
+  out.trials.push({key, armed, focusKept, armedAfterKey,
+    posts: __fetchCalls.filter(c => c[0] === "/api/shutdown").length,
+    stopped: __els.app.innerHTML.includes("Cargento stopped")});
+}
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertEqual(2, len(out["trials"]))
+        for trial in out["trials"]:
+            with self.subTest(key=repr(trial["key"])):
+                self.assertTrue(trial["armed"])
+                self.assertTrue(
+                    trial["focusKept"],
+                    "arming re-rendered the focused button away",
+                )
+                self.assertTrue(
+                    trial["armedAfterKey"],
+                    "the activation key disarmed before the button could click",
+                )
+                self.assertEqual(1, trial["posts"])
+                self.assertTrue(trial["stopped"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_stop_disarms_on_escape_and_on_a_click_elsewhere(self) -> None:
+        checks = """
+const out = {};
+const clickStop = () => __fire("click", {target: {closest: sel => sel === "[data-calm]"
+  ? {getAttribute: a => a === "data-calm" ? "stop" : null} : null}});
+const clickAway = () => __fire("click", {target: {closest: () => null}});
+
+render(board());
+clickStop();
+out.armed = __els.app.innerHTML.includes("sure?");
+__fire("keydown", {key: "Escape", preventDefault(){}, target: {tagName: "DIV"}});
+out.afterEsc = __els.app.innerHTML.includes("sure?");
+
+clickStop();
+out.armedAgain = __els.app.innerHTML.includes("sure?");
+clickAway();
+out.afterClickAway = __els.app.innerHTML.includes("sure?");
+
+// A click on a *different* control is an answer too. Otherwise the armed
+// state outlives the moment it was armed in, and a single later click on
+// stop takes the server down with no confirmation at all.
+const clickControl = (act) => __fire("click", {target: {closest: sel => sel === "[data-calm]"
+  ? {getAttribute: a => a === "data-calm" ? act : null} : null}});
+clickStop();
+out.armedOnceMore = __els.app.innerHTML.includes("sure?");
+clickControl("flag");
+out.afterOtherControl = __els.app.innerHTML.includes("sure?");
+clickStop();                    // must re-arm, not fire
+out.rearmed = __els.app.innerHTML.includes("sure?");
+await __settle(); await __settle();
+out.nothingPosted = __fetchCalls.filter(c => c[0] === "/api/shutdown").length;
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["armed"])
+        self.assertFalse(out["afterEsc"])
+        self.assertTrue(out["armedAgain"])
+        self.assertFalse(out["afterClickAway"])
+        self.assertTrue(out["armedOnceMore"])
+        self.assertFalse(out["afterOtherControl"], "a click on another control left stop armed")
+        self.assertTrue(out["rearmed"])
+        self.assertEqual(0, out["nothingPosted"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_a_failed_stop_reports_inline_and_leaves_the_page_live(self) -> None:
+        checks = """
+const out = {};
+render(board());
+const clickStop = () => __fire("click", {target: {closest: sel => sel === "[data-calm]"
+  ? {getAttribute: a => a === "data-calm" ? "stop" : null} : null}});
+clickStop();
+__fetchImpl = () => Promise.resolve({ok: false, status: 403});
+clickStop();
+await __settle(); await __settle();
+// The server is still running, so the page must not claim otherwise.
+out.stoppedPanel = __els.app.innerHTML.includes("Cargento stopped");
+out.error = __els.app.innerHTML.includes("stop failed");
+out.rows = rows();
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertFalse(out["stoppedPanel"])
+        self.assertTrue(out["error"])
+        self.assertEqual(3, out["rows"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_a_poll_starting_after_the_stop_never_reaches_the_network(self) -> None:
+        checks = """
+const out = {};
+render(board());
+// The page's own bottom-of-script `refresh()` already fired once at load,
+// before this check ever ran — count from here, not from zero.
+const before = __fetchCalls.filter(c => String(c[0]).startsWith("/api/data")).length;
+serverStopped = true;
+renderStopped();
+await refresh();
+out.stillStopped = __els.app.innerHTML.includes("Cargento stopped");
+out.noFetch = __fetchCalls.filter(c => String(c[0]).startsWith("/api/data")).length - before;
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["stillStopped"])
+        self.assertEqual(0, out["noFetch"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_a_poll_in_flight_across_the_stop_does_not_repaint_the_panel(self) -> None:
+        # The one the entry guard above cannot cover: this poll had already
+        # called fetch before the stop landed, so it settles afterwards. The
+        # panel surviving is now the render() guard's doing, so this also
+        # asserts what only refresh()'s own post-await guard can protect: a
+        # payload that arrived after the stop must not be absorbed into the rate
+        # history, which does not go through render() and would otherwise leave
+        # a sample recorded for a server that was already gone.
+        checks = """
+const out = {};
+render(board());
+let releaseData;
+const later = () => { const d = board(); d.generated = d.generated + 60; return d; };
+__fetchImpl = (url) => String(url).startsWith("/api/data")
+  ? new Promise(r => { releaseData = () =>
+      r({ok: true, json: () => Promise.resolve(later())}); })
+  : Promise.resolve({ok: true});          // /api/shutdown answers at once
+const poll = refresh();                   // in flight, deliberately unsettled
+
+const clickStop = () => __fire("click", {target: {closest: sel => sel === "[data-calm]"
+  ? {getAttribute: a => a === "data-calm" ? "stop" : null} : null}});
+clickStop(); clickStop();                 // arm, then confirm
+await __settle(); await __settle();
+out.stoppedAfterStop = __els.app.innerHTML.includes("Cargento stopped");
+const ratesBefore = rateHistory.length;
+const generatedBefore = lastGenerated;
+
+releaseData();
+await poll; await __settle(); await __settle();
+out.stoppedAfterLatePoll = __els.app.innerHTML.includes("Cargento stopped");
+out.dashboardBack = __els.app.innerHTML.includes("cm-frame");
+out.title = document.title;
+out.ratesGrew = rateHistory.length - ratesBefore;
+out.generatedMoved = lastGenerated !== generatedBefore;
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertEqual(0, out["ratesGrew"], "a payload that arrived after the stop was recorded")
+        self.assertFalse(out["generatedMoved"], "the stale payload advanced lastGenerated")
+        self.assertTrue(out["stoppedAfterStop"])
+        self.assertTrue(out["stoppedAfterLatePoll"], "a late poll repainted the stopped panel")
+        self.assertFalse(out["dashboardBack"])
+        self.assertIn("stopped", out["title"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_a_keystroke_disarms_the_stop_just_like_a_click(self) -> None:
+        # The keyboard drives the same controls the mouse does — `c` is the mode
+        # button, `f` the flag, Enter opens a row — so disarming only on click
+        # left the armed state outliving the interaction it was armed in, and one
+        # later click on stop would end the server unconfirmed.
+        checks = """
+const out = {trials: []};
+const shutdowns = () => __fetchCalls.filter(c => String(c[0]) === "/api/shutdown").length;
+const clickStop = () => __fire("click", {target: {closest: sel => sel === "[data-calm]"
+  ? {getAttribute: a => a === "data-calm" ? "stop" : null} : null}});
+const key = k => __fire("keydown", {key: k, target: {}, preventDefault(){}});
+__fetchImpl = () => Promise.resolve({ok: true});
+
+const trial = async (label, act) => {
+  displayMode = "calm"; calmOpenKey = null; calmCursorKey = null;
+  calmFlagOnly = false; calmStateOnly = null;
+  stopArmed = false; stopError = ""; serverStopped = false;
+  render(board());
+  clickStop();
+  const armed = stopArmed;
+  act();
+  const stillArmed = __els.app.innerHTML.includes("sure?");
+  const before = shutdowns();
+  clickStop();                                    // ONE further click
+  await __settle(); await __settle();
+  return {label, armed, stillArmed, posts: shutdowns() - before,
+    stopped: __els.app.innerHTML.includes("Cargento stopped")};
+};
+for(const [label, act] of [
+    ["c", () => key("c")], ["f", () => key("f")], ["Enter", () => key("Enter")],
+    ["j", () => key("j")], ["k", () => key("k")], ["ArrowDown", () => key("ArrowDown")]]){
+  out.trials.push(await trial(label, act));
+}
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertEqual(6, len(out["trials"]))
+        for trial in out["trials"]:
+            with self.subTest(key=trial["label"]):
+                self.assertTrue(trial["armed"], "the first click did not arm it")
+                self.assertFalse(trial["stillArmed"], "the keystroke left stop armed")
+                self.assertEqual(0, trial["posts"], "one click after a keystroke stopped it")
+                self.assertFalse(trial["stopped"], "the server was stopped unconfirmed")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_stopped_panel_takes_no_keyboard_side_effects(self) -> None:
+        # render()'s guard stops the paint but not what happens on the way there.
+        # setDisplayMode writes localStorage *before* it paints, so `c` on the
+        # terminal panel looked inert while durably flipping the saved mode for
+        # the next run; and the calm keys went on calling preventDefault(),
+        # swallowing page scrolling on a page that is no longer live.
+        checks = """
+const out = {};
+let prevented = 0;
+const key = k => __fire("keydown", {key: k, target: {},
+  preventDefault(){ prevented++; }});
+const clickStop = () => __fire("click", {target: {closest: sel => sel === "[data-calm]"
+  ? {getAttribute: a => a === "data-calm" ? "stop" : null} : null}});
+__fetchImpl = () => Promise.resolve({ok: true});
+render(board());
+out.modeBefore = displayMode;
+out.storedBefore = __store["cargento.displayMode"];
+clickStop(); clickStop();
+await __settle(); await __settle();
+out.stopped = __els.app.innerHTML.includes("Cargento stopped");
+
+prevented = 0;
+["c", "j", "k", "ArrowDown", "ArrowUp", "Enter", " ", "f", "Escape"].forEach(key);
+out.storedAfter = __store["cargento.displayMode"];
+out.modeAfter = displayMode;
+out.prevented = prevented;
+out.stillStopped = __els.app.innerHTML.includes("Cargento stopped");
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["stopped"])
+        self.assertTrue(out["stillStopped"])
+        self.assertEqual(
+            out["storedBefore"], out["storedAfter"], "a keystroke persisted a mode change"
+        )
+        self.assertEqual(out["modeBefore"], out["modeAfter"], "a keystroke changed the mode")
+        self.assertEqual(0, out["prevented"], "the terminal panel still swallows keystrokes")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_nothing_repaints_over_the_stopped_panel(self) -> None:
+        # refresh() is not the only way into render(): fourteen other call sites
+        # end in render(lastData), and the keydown listener is bound to
+        # `document`, so nothing in #app gates it. One `c` was enough to put a
+        # live-looking board back with a stale needs-input count in the title.
+        checks = """
+const out = {};
+render(board());
+__fetchImpl = () => Promise.resolve({ok: true});
+const clickStop = () => __fire("click", {target: {closest: sel => sel === "[data-calm]"
+  ? {getAttribute: a => a === "data-calm" ? "stop" : null} : null}});
+clickStop(); clickStop();
+await __settle(); await __settle();
+out.stopped = __els.app.innerHTML.includes("Cargento stopped");
+out.title = document.title;
+
+const key = k => __fire("keydown", {key: k, target: {}, preventDefault(){}});
+const live = () => __els.app.innerHTML.includes("cm-frame")
+  || __els.app.innerHTML.includes('class="tile"');
+
+// `c` toggles the display mode, which ends in render(lastData).
+key("c");
+out.afterC = {stopped: __els.app.innerHTML.includes("Cargento stopped"),
+  live: live(), title: document.title};
+
+// The calm ledger keys, and a direct call for the paths keys cannot reach.
+key("f"); key("j"); key("k"); key("Escape"); key("Enter");
+out.afterKeys = {stopped: __els.app.innerHTML.includes("Cargento stopped"), live: live()};
+
+calmAction("flag", null);
+toggleIdle();
+setDisplayMode("regular");
+render(board());
+out.afterDirect = {stopped: __els.app.innerHTML.includes("Cargento stopped"),
+  live: live(), title: document.title};
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["stopped"])
+        self.assertIn("stopped", out["title"])
+        for label in ("afterC", "afterKeys", "afterDirect"):
+            with self.subTest(after=label):
+                self.assertTrue(out[label]["stopped"], f"{label} repainted over the stopped panel")
+                self.assertFalse(out[label]["live"], f"{label} brought the dashboard back")
+        # The title is part of the panel: a stale needs-input count there says
+        # a session wants you, for a server that cannot tell you either way.
+        self.assertIn("stopped", out["afterC"]["title"])
+        self.assertIn("stopped", out["afterDirect"]["title"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_a_stop_is_not_counted_as_a_failed_refresh(self) -> None:
+        # The same race down the catch arm: the server has gone, so the poll in
+        # flight rejects. A stop the reader asked for is not a refresh failure,
+        # and counting it as one drives the "stalled · retrying every 5s"
+        # bookkeeping for a server that is never coming back.
+        checks = """
+const out = {};
+render(board());
+let failData;
+__fetchImpl = (url) => String(url).startsWith("/api/data")
+  ? new Promise((_, reject) => { failData = () => reject(new Error("connection refused")); })
+  : Promise.resolve({ok: true});
+const poll = refresh();
+
+const clickStop = () => __fire("click", {target: {closest: sel => sel === "[data-calm]"
+  ? {getAttribute: a => a === "data-calm" ? "stop" : null} : null}});
+clickStop(); clickStop();
+await __settle(); await __settle();
+
+failData();
+await poll; await __settle(); await __settle();
+out.stillStopped = __els.app.innerHTML.includes("Cargento stopped");
+out.failures = window.__refreshFailures || 0;
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["stillStopped"])
+        # No assertion on the stalled banner here: it is written to #live-status
+        # and #live-dot, which the DOM stub does not register, so any such check
+        # would pass whatever the code did. The failure count is the observable.
+        self.assertEqual(0, out["failures"], "a deliberate stop was counted as a refresh failure")
+
 
 class DocumentationMatchesCodeTest(unittest.TestCase):
     """Reviewers found documentation describing behaviour the code no longer
@@ -7659,10 +8963,14 @@ class DocumentationMatchesCodeTest(unittest.TestCase):
 
     def test_documented_store_paths_are_the_ones_searched(self) -> None:
         # Every "~/..." path in the data-source list must be a real default.
+        # ".claude/settings" (the user's own hook config) and ".cargento" (Cargento's
+        # own state and log directory) are not harness stores, so the store-root
+        # assertion below does not apply to them.
+        excluded_prefixes = (".claude/settings", ".cargento")
         documented = {
             "~/" + match
             for match in re.findall(r"`~/([\w./*<>-]+?)[`/]", self.SKILL)
-            if not match.startswith(".claude/settings")
+            if not match.startswith(excluded_prefixes)
         }
         searched = {
             root.replace("/HOME", "~") for roots in self.posix_roots().values() for root in roots
@@ -7707,6 +9015,104 @@ class DocumentationMatchesCodeTest(unittest.TestCase):
         # The listener is IPv4-only, so "localhost" can resolve to ::1 and fail.
         self.assertNotIn("http://localhost:4553", self.SKILL)
         self.assertIn("http://127.0.0.1:4553", self.SKILL)
+
+
+class DaemonLifecycleTest(unittest.TestCase):
+    """The real thing: detach, outlive the caller, answer --status, stop.
+
+    Everything else in this file tests a piece. This tests the promise.
+    """
+
+    SERVER = str(SERVER_PATH)
+
+    @staticmethod
+    def _free_port() -> int:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            return int(probe.getsockname()[1])
+
+    def _run(self, *flags: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, self.SERVER, *flags],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+    def test_daemon_outlives_its_caller_and_stops_on_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {**os.environ, "CARGENTO_HOME": tmp}
+            port = self._free_port()
+            flags = ("--port", str(port))
+            try:
+                start = self._run(*flags, "--daemon", env=env)
+                self.assertEqual(0, start.returncode, start.stdout + start.stderr)
+                # The starting process has exited by now. Everything below runs
+                # against a server whose parent is gone.
+                self.assertIn(f"http://127.0.0.1:{port}/", start.stdout)
+                self.assertIn("pid ", start.stdout)
+
+                kind, health = dashboard.probe_port(port, timeout=10)
+                self.assertEqual("cargento", kind, start.stdout)
+                assert health is not None
+                self.assertNotEqual(os.getpid(), health["pid"])
+
+                state = json.loads(Path(tmp, f"cargento-{port}.json").read_text(encoding="utf-8"))
+                self.assertEqual(health["pid"], state["pid"])
+
+                status = self._run(*flags, "--status", env=env)
+                self.assertEqual(0, status.returncode, status.stdout + status.stderr)
+                self.assertIn("running", status.stdout)
+
+                stopped = self._run(*flags, "--stop", env=env)
+                self.assertEqual(0, stopped.returncode, stopped.stdout + stopped.stderr)
+                self.assertIn("stopped", stopped.stdout)
+
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    if dashboard.probe_port(port, timeout=1)[0] == "closed":
+                        break
+                    time.sleep(0.2)
+                self.assertEqual("closed", dashboard.probe_port(port, timeout=1)[0])
+                self.assertFalse(Path(tmp, f"cargento-{port}.json").exists())
+
+                after = self._run(*flags, "--status", env=env)
+                self.assertEqual(1, after.returncode)
+                self.assertIn("not running", after.stdout)
+            finally:
+                # Never leave a detached server behind, however this test ended.
+                self._run(*flags, "--stop", env=env)
+
+    def test_a_busy_port_still_explains_itself_under_daemon(self) -> None:
+        """D-1's promise: binding happens before detaching, so this message
+        reaches the terminal that asked for it and not just a log file."""
+        httpd = dashboard.LoopbackHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        # Closes the listener when the loop exits, so the reaping --stop below
+        # does not sit out the whole release timeout waiting for a socket that
+        # only the outer finally was ever going to close.
+        thread = serve_until_closed(httpd)
+        port = httpd.server_port
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                env = {**os.environ, "CARGENTO_HOME": tmp}
+                try:
+                    result = self._run("--port", str(port), "--daemon", env=env)
+                    self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+                    self.assertIn(f"port {port}", result.stdout + result.stderr)
+                finally:
+                    # If the busy-port race let the bind through anyway, this
+                    # reaps the detached daemon before the temp dir is gone. It
+                    # also stops this fixture, which is a real Handler on the
+                    # same port and indistinguishable from a stray daemon.
+                    reap = self._run("--port", str(port), "--stop", env=env)
+                    self.assertEqual(0, reap.returncode, reap.stdout + reap.stderr)
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+            with contextlib.suppress(OSError):
+                httpd.server_close()
 
 
 if __name__ == "__main__":

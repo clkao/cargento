@@ -143,8 +143,31 @@ so re-run the job before investigating, and check the traceback is a timeout and
   `test_server.py` executes the real script under node against a stub DOM, so a test can fire a
   click or a keystroke and assert on what the page did. A `assertIn("some-class", PAGE)` passes
   forever after the behavior behind it breaks.
+- Acquire everything that can fail before forking (or, on Windows, before waiting on the re-spawned
+  child): the listening socket, and the log file the detached process will write to. After the fork
+  there is nowhere for a failure to go. Reporting one means pointing the user at the very log that
+  could not be opened. Note that `os.makedirs(exist_ok=True)` is not this check: it succeeds for a
+  directory that already exists whatever its mode, which is the likeliest bad state of all.
+- Never use `os.kill`, including `os.kill(pid, 0)` for liveness. CPython implements it on Windows
+  through `TerminateProcess`, so a liveness check would kill the process it was asked to inspect.
+  Probe `/api/health` instead.
+- Stopping goes over HTTP, so the CLI and the page share one code path, and a handler that stops the
+  server must do it on its own thread. Not because a `ThreadingHTTPServer` handler would deadlock
+  calling `server.shutdown()` inline. It would not, since every request already runs on its own
+  thread and the accept loop is never the caller. The reason is that `shutdown()` blocks until the accept
+  loop notices, up to one poll interval, and the client should not be held open for that just to hear
+  "stopping".
+- Because of that delay, nothing may report a stop as *finished* until the port is free. Ask by
+  binding the port, not by connecting to it: a connect to a bound socket that nothing is accepting
+  from still succeeds, and repeated connects fill the backlog and then report the port gone while it
+  is still bound.
+- Guard the sink, not the caller. A check against work landing after teardown belongs in the function
+  that actually writes the DOM, the file or the socket: `render()`, not `refresh()`. Guarding a
+  caller was wrong twice for the same stop button: first it missed the request already in flight,
+  then it missed the other fourteen callers, one of which was a keystroke. If you do also guard a
+  caller, it must be for something the sink cannot see, and say so.
 
-The reasoning behind these, and the alternatives that were tried and rejected, is in [docs/design-cross-platform.md](docs/design-cross-platform.md); for the Spacedock reader, [docs/design-spacedock.md](docs/design-spacedock.md); and for how a row is labelled and identified, [docs/design-session-identity.md](docs/design-session-identity.md).
+The reasoning behind these, and the alternatives that were tried and rejected, is in [docs/design-cross-platform.md](docs/design-cross-platform.md); for the Spacedock reader, [docs/design-spacedock.md](docs/design-spacedock.md); for how a row is labelled and identified, [docs/design-session-identity.md](docs/design-session-identity.md); and for `--daemon`/`--status`/`--stop`, [docs/design-daemon.md](docs/design-daemon.md).
 
 ## Commits
 
