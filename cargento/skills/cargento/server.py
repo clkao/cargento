@@ -64,7 +64,14 @@ DATA_HOME = os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "sha
 # whose semantics are not documented upstream are deliberately absent rather
 # than guessed at — a wrong override would break a working setup, while a
 # missing one only costs an entry in --diagnose.
-STORE_ENV_VARS = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "COPILOT_HOME")
+STORE_ENV_VARS = (
+    "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
+    "GEMINI_CLI_HOME",
+    "COPILOT_HOME",
+    "PI_CODING_AGENT_DIR",
+    "PI_CODING_AGENT_SESSION_DIR",
+)
 
 # Wall-clock start of the serving process, reported by /api/health so a caller
 # can compute uptime without a second request. Set once by main().
@@ -72,7 +79,11 @@ SERVER_STARTED = 0.0
 
 
 def resolve_store_roots(
-    *, platform_name: str, environ: Mapping[str, str], home: str
+    *,
+    platform_name: str,
+    environ: Mapping[str, str],
+    home: str,
+    pi_settings: Mapping[str, Any] | None = None,
 ) -> dict[str, list[str]]:
     """Candidate locations for every harness store, best candidate first.
 
@@ -89,6 +100,7 @@ def resolve_store_roots(
     # Join with the *target* platform's rules, not the host's, so a Windows
     # layout resolved on a Linux runner is byte-identical to the real thing.
     join = ntpath.join if windows else posixpath.join
+    is_absolute = ntpath.isabs if windows else posixpath.isabs
 
     def under_home(*parts: str) -> str:
         return join(home, *parts)
@@ -114,6 +126,19 @@ def resolve_store_roots(
     gemini_root = env_dir("GEMINI_CLI_HOME")
     gemini_home = join(gemini_root, ".gemini") if gemini_root else under_home(".gemini")
     copilot_home = env_dir("COPILOT_HOME") or under_home(".copilot")
+    pi_config_dir = env_dir("PI_CODING_AGENT_DIR") or under_home(".pi", "agent")
+    pi_session_dir = env_dir("PI_CODING_AGENT_SESSION_DIR")
+    session_setting = pi_settings.get("sessionDir") if pi_settings is not None else None
+    if pi_session_dir is None and isinstance(session_setting, str) and session_setting.strip():
+        if session_setting == "~":
+            pi_session_dir = home
+        elif len(session_setting) > 1 and session_setting[0] == "~" and session_setting[1] in "/\\":
+            pi_session_dir = join(home, session_setting[2:])
+        elif is_absolute(session_setting):
+            pi_session_dir = session_setting
+        else:
+            pi_session_dir = join(pi_config_dir, session_setting)
+    pi_sessions = pi_session_dir or join(pi_config_dir, "sessions")
     antigravity_home = join(gemini_home, "antigravity-cli")
 
     def ordered(*candidates: str | None) -> list[str]:
@@ -143,6 +168,7 @@ def resolve_store_roots(
         "claude.projects": ordered(join(claude_home, "projects")),
         "claude.tasks": ordered(join(claude_home, "tasks")),
         "codex.sessions": ordered(join(codex_home, "sessions")),
+        "pi.sessions": ordered(pi_sessions),
         "gemini.tmp": ordered(join(gemini_home, "tmp")),
         "antigravity.root": ordered(antigravity_home),
         "copilot.root": ordered(copilot_home),
@@ -167,8 +193,24 @@ def resolve_store_roots(
     }
 
 
+def load_pi_settings(config_dir: str) -> dict[str, Any]:
+    try:
+        with open(os.path.join(config_dir, "settings.json"), "rb") as source:
+            value = json.loads(source.read(1_000_001))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+_pi_config_dir = os.environ.get("PI_CODING_AGENT_DIR")
+if not isinstance(_pi_config_dir, str) or not _pi_config_dir.strip():
+    _pi_config_dir = os.path.join(HOME, ".pi", "agent")
+
 STORE_ROOTS: dict[str, list[str]] = resolve_store_roots(
-    platform_name=sys.platform, environ=os.environ, home=HOME
+    platform_name=sys.platform,
+    environ=os.environ,
+    home=HOME,
+    pi_settings=load_pi_settings(_pi_config_dir),
 )
 
 
@@ -212,6 +254,7 @@ def existing_stores(key: str, primary: str) -> list[str]:
 TASKS_DIR = STORE_ROOTS["claude.tasks"][0]
 PROJECTS_DIR = STORE_ROOTS["claude.projects"][0]
 CODEX_SESSIONS_DIR = STORE_ROOTS["codex.sessions"][0]
+PI_SESSIONS_DIR = STORE_ROOTS["pi.sessions"][0]
 GEMINI_TMP = STORE_ROOTS["gemini.tmp"][0]
 ANTIGRAVITY_CLI_DIR = STORE_ROOTS["antigravity.root"][0]
 ANTIGRAVITY_CONVERSATIONS_DIR = os.path.join(ANTIGRAVITY_CLI_DIR, "conversations")
@@ -978,6 +1021,24 @@ def droid_meta(path: str) -> dict[str, Any]:
     return first_line_meta(path, parse)
 
 
+def pi_meta(path: str) -> dict[str, Any]:
+    """Pi v3's immutable session header: identity and workspace only."""
+
+    def parse(d: dict[str, Any]) -> dict[str, Any]:
+        if d.get("type") != "session":
+            return {}
+        session_id = d.get("id")
+        cwd = d.get("cwd")
+        parent_session = d.get("parentSession")
+        return {
+            "session_id": session_id if isinstance(session_id, str) else None,
+            "cwd": cwd if isinstance(cwd, str) else None,
+            "parent_session": parent_session if isinstance(parent_session, str) else None,
+        }
+
+    return first_line_meta(path, parse)
+
+
 # ---------------------------------------------------------------------------
 # Transcript analyzers (tail pass -> title, prompt, usage, activity)
 
@@ -1476,6 +1537,282 @@ def analyze_droid_transcript(path: str) -> dict[str, Any]:
                 if isinstance(c, dict) and c.get("type") == "tool_use":
                     info["last_tool"] = c.get("name")
     return info
+
+
+# Pi stores an append-only tree rather than a linear transcript.  The session
+# selector follows the path from the newest entry back to parentId: null, so
+# retaining sibling branches would report tools and tokens the agent abandoned.
+_PI_NO_NAME = object()
+_pi_scan: dict[str, dict[str, Any]] = {}
+
+
+def _pi_projection(record: Any) -> dict[str, Any] | None:
+    """The bounded subset of a Pi JSONL entry needed by the dashboard."""
+    if not isinstance(record, dict):
+        return None
+    kind = record.get("type")
+    entry_id = record.get("id")
+    parent_id = record.get("parentId")
+    if not isinstance(entry_id, str) or not entry_id:
+        entry_id = None
+    if not isinstance(parent_id, str):
+        parent_id = None
+    message = message_dict(record)
+    role = message.get("role")
+    prompt = None
+    tool = None
+    usage_source: Any = record.get("usage")
+    if kind == "message":
+        usage_source = message.get("usage")
+        if role == "user":
+            text = extract_text(message.get("content")).strip()
+            prompt = text or None
+        if role == "assistant":
+            for block in as_list(message.get("content")):
+                if not isinstance(block, dict) or block.get("type") != "toolCall":
+                    continue
+                tool_name = block.get("name")
+                if isinstance(tool_name, str) and tool_name:
+                    tool = tool_name
+    output = as_dict(usage_source).get("output")
+    usage = output if isinstance(output, (int, float)) and not isinstance(output, bool) else None
+    name: Any = _PI_NO_NAME
+    if kind == "session_info":
+        value = record.get("name")
+        name = value if isinstance(value, str) and value else None
+    return {
+        "id": entry_id,
+        "parent_id": parent_id,
+        "timestamp": parse_ts(record.get("timestamp") or "") or 0,
+        "prompt": prompt,
+        "usage": usage,
+        "tool": tool,
+        "name": name,
+        "kind": kind,
+    }
+
+
+def _pi_complete_end(path: str, size: int) -> int:
+    """End offset after the newest complete JSONL entry, or zero."""
+    if not size:
+        return 0
+    try:
+        with open(path, "rb") as source:
+            pos = size
+            while pos:
+                read_size = min(REVERSE_CHUNK_BYTES, pos)
+                pos -= read_size
+                source.seek(pos)
+                chunk = source.read(read_size)
+                if len(chunk) < read_size:
+                    return 0
+                newline = chunk.rfind(b"\n")
+                if newline >= 0:
+                    return pos + newline + 1
+    except OSError:
+        return 0
+    return 0
+
+
+def _pi_latest_name(path: str, end_pos: int) -> Any:
+    """The newest global Pi session name, including an explicit clear."""
+    for raw in reverse_lines(path, end_pos, contains=b'"session_info"'):
+        if not raw.startswith(b"{") or b'"session_info"' not in raw:
+            continue
+        try:
+            projection = _pi_projection(json.loads(raw))
+        except ValueError:
+            continue
+        if projection is not None and projection["name"] is not _PI_NO_NAME:
+            return projection["name"]
+    return _PI_NO_NAME
+
+
+def _pi_state(path_entries: list[dict[str, Any]], path: str, end_pos: int) -> dict[str, Any]:
+    """Build cache state only for a branch whose ancestry reaches root."""
+    return {
+        "pos": end_pos,
+        "path": path_entries,
+        "ids": {entry["id"]: index for index, entry in enumerate(path_entries)},
+        "name": _pi_latest_name(path, end_pos),
+    }
+
+
+def _pi_last_complete_branch(path: str, end_pos: int) -> list[dict[str, Any]]:
+    """Find the newest root-connected path after the latest candidate breaks."""
+    entries: dict[str, dict[str, Any]] = {}
+    newest: list[dict[str, Any]] = []
+    for raw in reverse_lines(path, end_pos):
+        if not raw.startswith(b"{"):
+            continue
+        try:
+            projection = _pi_projection(json.loads(raw))
+        except ValueError:
+            continue
+        if projection is None or projection["kind"] == "session":
+            continue
+        entry_id = projection["id"]
+        if entry_id is None or entry_id in entries:
+            continue
+        entries[entry_id] = projection
+        newest.append(projection)
+    for leaf in newest:
+        reverse_path = []
+        entry = leaf
+        seen = set()
+        while entry["id"] not in seen:
+            reverse_path.append(entry)
+            seen.add(entry["id"])
+            parent_id = entry["parent_id"]
+            if parent_id is None:
+                return list(reversed(reverse_path))
+            parent = entries.get(parent_id)
+            if parent is None:
+                break
+            entry = parent
+    return []
+
+
+def _pi_rebuild(path: str, end_pos: int) -> dict[str, Any]:
+    """Reconstruct the live Pi branch newest-first without retaining payloads."""
+    reverse_path: list[dict[str, Any]] = []
+    wanted: str | None = None
+    for raw in reverse_lines(path, end_pos):
+        if not raw.startswith(b"{"):
+            continue
+        try:
+            projection = _pi_projection(json.loads(raw))
+        except ValueError:
+            continue
+        if projection is None or projection["kind"] == "session":
+            continue
+        entry_id = projection["id"]
+        if entry_id is None:
+            continue
+        if wanted is None or entry_id == wanted:
+            reverse_path.append(projection)
+            wanted = projection["parent_id"]
+        else:
+            continue
+        if wanted is None:
+            break
+    if wanted is None and reverse_path:
+        return _pi_state(list(reversed(reverse_path)), path, end_pos)
+    return _pi_state(_pi_last_complete_branch(path, end_pos), path, end_pos)
+
+
+def _pi_extend(state: dict[str, Any], entry: dict[str, Any]) -> bool:
+    """Add one complete Pi entry; false asks the caller to rebuild from disk."""
+    if entry["name"] is not _PI_NO_NAME:
+        state["name"] = entry["name"]
+    if entry["kind"] == "session" or entry["id"] is None:
+        return True
+    path_entries = state["path"]
+    if not path_entries:
+        if entry["parent_id"] is not None:
+            return False
+        state["path"] = [entry]
+        state["ids"] = {entry["id"]: 0}
+        return True
+    parent_id = entry["parent_id"]
+    ids = state["ids"]
+    if parent_id == path_entries[-1]["id"]:
+        path_entries.append(entry)
+        ids[entry["id"]] = len(path_entries) - 1
+        return True
+    index = ids.get(parent_id)
+    if index is None:
+        return False
+    state["path"] = [*path_entries[: index + 1], entry]
+    state["ids"] = {item["id"]: i for i, item in enumerate(state["path"])}
+    return True
+
+
+def _pi_turn(path_entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Turn state for Pi's active branch, using scan_turns' quiet-gap rule."""
+    turn_start = prev_ts = None
+    durations: list[float] = []
+    for entry in path_entries:
+        timestamp = entry["timestamp"]
+        if not timestamp:
+            continue
+        if turn_start and prev_ts and timestamp - prev_ts > TURN_GAP_RESET_SEC:
+            if prev_ts > turn_start:
+                durations.append(prev_ts - turn_start)
+            turn_start = timestamp
+        if entry["prompt"]:
+            if turn_start and prev_ts and prev_ts > turn_start:
+                durations.append(prev_ts - turn_start)
+            turn_start = timestamp
+        prev_ts = timestamp
+    return {"turn_start": turn_start, "durations": durations[-50:]}
+
+
+def _pi_info(state: dict[str, Any]) -> dict[str, Any] | None:
+    """Dashboard analyzer output from the compact active-branch projection."""
+    path_entries = state["path"]
+    if not path_entries:
+        return None
+    prompts = [entry["prompt"] for entry in path_entries if entry["prompt"]]
+    name = state["name"]
+    title = (
+        name if isinstance(name, str) and name else (prompt_title(prompts[0]) if prompts else None)
+    )
+    usage_events = [
+        (entry["timestamp"], entry["usage"])
+        for entry in path_entries
+        if entry["timestamp"] and entry["usage"] is not None
+    ]
+    tools = [entry["tool"] for entry in path_entries if entry["tool"]]
+    return {
+        "title": title,
+        "last_prompt": prompts[-1] if prompts else None,
+        "usage_events": usage_events,
+        "last_tool": tools[-1] if tools else None,
+        "last_event_ts": max((entry["timestamp"] for entry in path_entries), default=0),
+        "turn": _pi_turn(path_entries),
+    }
+
+
+def scan_pi_session(path: str) -> dict[str, Any] | None:
+    """Scan Pi's live branch incrementally, retaining only compact entries."""
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return None
+    with _scan_lock:
+        state = _pi_scan.get(path)
+        if state is None or state["pos"] > size:
+            if len(_pi_scan) >= MAX_CACHE_ENTRIES:
+                _pi_scan.pop(next(iter(_pi_scan)))
+            state = _pi_rebuild(path, _pi_complete_end(path, size))
+            _pi_scan[path] = state
+            return _pi_info(state)
+        if size == state["pos"]:
+            return _pi_info(state)
+        try:
+            with open(path, "rb") as source:
+                source.seek(state["pos"])
+                data = source.read()
+        except OSError:
+            return _pi_info(state)
+        end = data.rfind(b"\n")
+        if end < 0:
+            return _pi_info(state)
+        new_pos = state["pos"] + end + 1
+        for raw in data[:end].split(b"\n"):
+            if not raw.startswith(b"{"):
+                continue
+            try:
+                projection = _pi_projection(json.loads(raw))
+            except ValueError:
+                continue
+            if projection is not None and not _pi_extend(state, projection):
+                state = _pi_rebuild(path, new_pos)
+                _pi_scan[path] = state
+                return _pi_info(state)
+        state["pos"] = new_pos
+        return _pi_info(state)
 
 
 # ---------------------------------------------------------------------------
@@ -3097,6 +3434,69 @@ def collect_codex(now: float, window_hours: float, show_all: bool) -> list[dict[
     return out
 
 
+def discover_pi() -> bool:
+    """Whether Pi has at least one JSONL file with a valid session header."""
+    paths = set(glob_stores("pi.sessions", PI_SESSIONS_DIR, "*.jsonl"))
+    paths.update(glob_stores("pi.sessions", PI_SESSIONS_DIR, "*", "*.jsonl"))
+    for path in paths:
+        try:
+            if pi_meta(path).get("session_id"):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+def collect_pi(now: float, window_hours: float, show_all: bool) -> list[dict[str, Any]]:
+    """Collect Pi's independent JSONL sessions from flat and nested stores."""
+    paths = set(glob_stores("pi.sessions", PI_SESSIONS_DIR, "*.jsonl"))
+    paths.update(glob_stores("pi.sessions", PI_SESSIONS_DIR, "*", "*.jsonl"))
+    sessions: dict[str, tuple[float, str, dict[str, Any]]] = {}
+    for path in paths:
+        try:
+            mtime = os.path.getmtime(path)
+            meta = pi_meta(path)
+        except (OSError, ValueError):
+            continue
+        sid = meta.get("session_id")
+        if not isinstance(sid, str) or not sid:
+            continue
+        if sid not in sessions or mtime > sessions[sid][0]:
+            sessions[sid] = (mtime, path, meta)
+
+    out: list[dict[str, Any]] = []
+    for sid, (mtime, path, meta) in sessions.items():
+        try:
+            info = scan_pi_session(path)
+        except (OSError, ValueError):
+            continue
+        last_event_ts = info["last_event_ts"] if info else 0
+        last_activity = newest_plausible(now, (last_event_ts, mtime))
+        active = is_fresh(now, last_activity, window_hours * 3600)
+        if not (active or show_all):
+            continue
+        state, state_detail = "idle", "awaiting your message"
+        if is_fresh(now, last_activity, WORKING_THRESHOLD_SEC):
+            state = "working"
+            state_detail = working_detail(info, [])
+        project = project_from_cwd(meta.get("cwd") or "") or "pi"
+        session = base_session("pi", sid, project)
+        session.update(
+            {
+                "title": (info or {}).get("title"),
+                "last_prompt": ((info or {}).get("last_prompt") or "")[:140],
+                "state": state,
+                "state_detail": state_detail,
+                "active": active,
+                "last_activity": last_activity,
+                "rate_per_min": rate_from(info, now),
+                "turn": turn_progress((info or {}).get("turn"), state, now),
+            }
+        )
+        out.append(session)
+    return out
+
+
 def antigravity_log_head_lines(path: str) -> list[str]:
     """Read the bounded identity-bearing beginning of an Antigravity CLI log."""
     try:
@@ -4187,6 +4587,7 @@ HARNESSES: list[
 ] = [
     ("claude", "Claude", lambda: any_store_dir("claude.projects", PROJECTS_DIR), collect_claude),
     ("codex", "Codex", lambda: any_store_dir("codex.sessions", CODEX_SESSIONS_DIR), collect_codex),
+    ("pi", "Pi", discover_pi, collect_pi),
     # Predicate matches both supported Gemini stores: legacy Gemini CLI
     # JSONL and current Antigravity CLI per-conversation SQLite databases.
     (
@@ -4855,6 +5256,7 @@ const iconURI = d => "data:image/svg+xml," + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#000"><path d="' + d + '"/></svg>');
 const HARNESS = {
   claude:{code:"CL",name:"Claude"}, codex:{code:"CX",name:"Codex"},
+  pi:{code:"PI",name:"Pi"},
   gemini:{code:"GE",name:"Gemini"}, copilot:{code:"CP",name:"Copilot"},
   opencode:{code:"OC",name:"OpenCode"}, cursor:{code:"CU",name:"Cursor"},
   goose:{code:"GO",name:"Goose"}, droid:{code:"DR",name:"Droid"}
@@ -6673,6 +7075,7 @@ def store_primaries() -> dict[str, str]:
         "claude.projects": PROJECTS_DIR,
         "claude.tasks": TASKS_DIR,
         "codex.sessions": CODEX_SESSIONS_DIR,
+        "pi.sessions": PI_SESSIONS_DIR,
         "gemini.tmp": GEMINI_TMP,
         "antigravity.root": ANTIGRAVITY_CLI_DIR,
         "copilot.root": COPILOT_DIR,

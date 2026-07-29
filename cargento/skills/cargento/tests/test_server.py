@@ -182,6 +182,543 @@ const __settle = () => new Promise(r => setImmediate(r));
         return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
+class PiTranscriptTest(unittest.TestCase):
+    """Pi v3 transcripts: only the leaf's parent chain is the live branch."""
+
+    NOW = "2026-07-29T12:00:00Z"
+
+    @staticmethod
+    def _write(path: Path, records: list[dict[str, Any]]) -> None:
+        path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+    @staticmethod
+    def _message(
+        entry_id: str,
+        parent_id: str | None,
+        timestamp: str,
+        role: str,
+        content: Any,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        return {
+            "type": "message",
+            "id": entry_id,
+            "parentId": parent_id,
+            "timestamp": timestamp,
+            "message": {"role": role, "content": content, **extra},
+        }
+
+    def test_metadata_and_global_name_survive_a_long_transcript(self) -> None:
+        # Removing the global name pass, or reading only TAIL_BYTES, would make
+        # this live session fall back to its prompt despite Pi's named selector.
+        sid = "pi-session-id"
+        header = {"type": "session", "version": 3, "id": sid, "cwd": "/w/proj"}
+        named = {
+            "type": "session_info",
+            "id": "info-named",
+            "parentId": None,
+            "timestamp": "2026-07-29T11:59:00Z",
+            "name": "Named session",
+        }
+        root = self._message(
+            "root",
+            None,
+            "2026-07-29T11:59:10Z",
+            "user",
+            [{"type": "text", "text": "Implement the fix"}],
+        )
+        assistant = self._message(
+            "assistant",
+            "root",
+            self.NOW,
+            "assistant",
+            [{"type": "toolCall", "id": "call-1", "name": "bash", "arguments": {}}],
+            usage={"output": 40},
+        )
+        leaf = self._message(
+            "leaf",
+            "assistant",
+            "2026-07-29T12:00:01Z",
+            "toolResult",
+            [{"type": "text", "text": "done"}],
+        )
+        filler = self._message(
+            "discarded-filler",
+            "root",
+            "2026-07-29T11:59:20Z",
+            "assistant",
+            "x" * (dashboard.TAIL_BYTES + 10),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pi-session.jsonl"
+            self._write(path, [header, named, root, filler, assistant, leaf])
+
+            self.assertEqual(
+                {"session_id": sid, "cwd": "/w/proj", "parent_session": None},
+                dashboard.pi_meta(str(path)),
+            )
+            scan = dashboard.scan_pi_session(str(path))
+            assert scan is not None
+            self.assertEqual("Named session", scan["title"])
+            self.assertEqual("Implement the fix", scan["last_prompt"])
+            self.assertEqual("bash", scan["last_tool"])
+            self.assertEqual([(dashboard.parse_ts(self.NOW), 40)], scan["usage_events"])
+            self.assertIn("turn", scan)
+
+            with path.open("a") as output:
+                output.write(
+                    json.dumps(
+                        {
+                            "type": "session_info",
+                            "id": "info-cleared",
+                            "parentId": "leaf",
+                            "timestamp": "2026-07-29T12:00:02Z",
+                            "name": None,
+                        }
+                    )
+                    + "\n"
+                )
+            cleared = dashboard.scan_pi_session(str(path))
+            assert cleared is not None
+
+        self.assertEqual("Implement the fix", cleared["title"])
+
+    def test_active_branch_ignores_abandoned_usage_and_tools(self) -> None:
+        # Following file order instead of parentId would surface this abandoned
+        # branch's 900-token shell call as the active Pi session.
+        records = [
+            {"type": "session", "version": 3, "id": "tree", "cwd": "/w/proj"},
+            self._message("root", None, "2026-07-29T11:00:00Z", "user", "Start work"),
+            self._message("abandoned", "root", "2026-07-29T11:00:01Z", "user", "Abandoned prompt"),
+            self._message(
+                "bad-tool",
+                "abandoned",
+                "2026-07-29T11:00:02Z",
+                "assistant",
+                [{"type": "toolCall", "name": "wrong-tool"}],
+                usage={"output": 900},
+            ),
+            self._message("shared", "root", "2026-07-29T11:00:30Z", "assistant", "thinking"),
+            self._message("winning", "shared", "2026-07-29T11:01:00Z", "user", "Winning prompt"),
+            self._message(
+                "output-10",
+                "winning",
+                "2026-07-29T11:01:01Z",
+                "assistant",
+                [{"type": "toolCall", "name": "bash"}],
+                usage={"output": 10},
+            ),
+            self._message(
+                "output-3",
+                "output-10",
+                "2026-07-29T11:01:02Z",
+                "toolResult",
+                [],
+                usage={"output": 3},
+            ),
+            {
+                "type": "compaction",
+                "id": "output-4",
+                "parentId": "output-3",
+                "timestamp": "2026-07-29T11:01:03Z",
+                "usage": {"output": 4},
+            },
+            {
+                "type": "branch_summary",
+                "id": "output-5",
+                "parentId": "output-4",
+                "timestamp": "2026-07-29T11:01:04Z",
+                "usage": {"output": 5},
+            },
+            self._message("leaf", "output-5", "2026-07-29T11:01:05Z", "assistant", "complete"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pi-tree.jsonl"
+            self._write(path, records)
+            scan = dashboard.scan_pi_session(str(path))
+            assert scan is not None
+
+        self.assertEqual("Winning prompt", scan["last_prompt"])
+        self.assertEqual("bash", scan["last_tool"])
+        self.assertEqual(
+            [
+                (dashboard.parse_ts("2026-07-29T11:01:01Z"), 10),
+                (dashboard.parse_ts("2026-07-29T11:01:02Z"), 3),
+                (dashboard.parse_ts("2026-07-29T11:01:03Z"), 4),
+                (dashboard.parse_ts("2026-07-29T11:01:04Z"), 5),
+            ],
+            scan["usage_events"],
+        )
+        self.assertEqual([30.0], scan["turn"]["durations"])
+        self.assertEqual(dashboard.parse_ts("2026-07-29T11:01:00Z"), scan["turn"]["turn_start"])
+
+    def test_initial_rebuild_follows_messages_through_session_info(self) -> None:
+        records = [
+            {"type": "session", "version": 3, "id": "named-tree", "cwd": "/w/proj"},
+            self._message("root", None, "2026-07-29T11:00:00Z", "user", "Old prompt"),
+            {
+                "type": "session_info",
+                "id": "named",
+                "parentId": "root",
+                "timestamp": "2026-07-29T11:00:01Z",
+                "name": "Renamed work",
+            },
+            self._message(
+                "new-prompt",
+                "named",
+                "2026-07-29T11:00:02Z",
+                "user",
+                "Continue after rename",
+            ),
+            self._message(
+                "tool",
+                "new-prompt",
+                "2026-07-29T11:00:03Z",
+                "assistant",
+                [{"type": "toolCall", "name": "bash"}],
+                usage={"output": 12},
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pi-named-tree.jsonl"
+            self._write(path, records)
+            scan = dashboard.scan_pi_session(str(path))
+            assert scan is not None
+
+        self.assertEqual("Renamed work", scan["title"])
+        self.assertEqual("Continue after rename", scan["last_prompt"])
+        self.assertEqual("bash", scan["last_tool"])
+        self.assertEqual(
+            [(dashboard.parse_ts("2026-07-29T11:00:03Z"), 12)],
+            scan["usage_events"],
+        )
+        self.assertEqual(
+            dashboard.parse_ts("2026-07-29T11:00:02Z"),
+            scan["turn"]["turn_start"],
+        )
+        self.assertEqual(
+            dashboard.parse_ts("2026-07-29T11:00:03Z"),
+            scan["last_event_ts"],
+        )
+
+    def test_incremental_append_follows_messages_through_session_info(self) -> None:
+        records = [
+            {"type": "session", "version": 3, "id": "append-name", "cwd": "/w/proj"},
+            self._message("root", None, "2026-07-29T11:00:00Z", "user", "Old prompt"),
+        ]
+        appended = [
+            {
+                "type": "session_info",
+                "id": "named",
+                "parentId": "root",
+                "timestamp": "2026-07-29T11:00:01Z",
+                "name": "Renamed work",
+            },
+            self._message(
+                "new-prompt",
+                "named",
+                "2026-07-29T11:00:02Z",
+                "user",
+                "Continue after rename",
+            ),
+            self._message(
+                "tool",
+                "new-prompt",
+                "2026-07-29T11:00:03Z",
+                "assistant",
+                [{"type": "toolCall", "name": "bash"}],
+                usage={"output": 12},
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pi-append-name.jsonl"
+            self._write(path, records)
+            before = dashboard.scan_pi_session(str(path))
+            assert before is not None
+            with path.open("a") as output:
+                for record in appended:
+                    output.write(json.dumps(record) + "\n")
+            scan = dashboard.scan_pi_session(str(path))
+            assert scan is not None
+
+        self.assertEqual("Old prompt", before["last_prompt"])
+        self.assertEqual("Renamed work", scan["title"])
+        self.assertEqual("Continue after rename", scan["last_prompt"])
+        self.assertEqual("bash", scan["last_tool"])
+        self.assertEqual(
+            [(dashboard.parse_ts("2026-07-29T11:00:03Z"), 12)],
+            scan["usage_events"],
+        )
+        self.assertEqual(
+            dashboard.parse_ts("2026-07-29T11:00:02Z"),
+            scan["turn"]["turn_start"],
+        )
+        self.assertEqual(
+            dashboard.parse_ts("2026-07-29T11:00:03Z"),
+            scan["last_event_ts"],
+        )
+
+    def test_disconnected_first_append_does_not_seed_an_empty_branch(self) -> None:
+        header = {"type": "session", "version": 3, "id": "empty", "cwd": "/w/proj"}
+        child = self._message(
+            "child",
+            "missing-parent",
+            "2026-07-29T11:00:00Z",
+            "user",
+            "Disconnected prompt",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pi-empty.jsonl"
+            self._write(path, [header])
+            self.assertIsNone(dashboard.scan_pi_session(str(path)))
+            with path.open("a") as output:
+                output.write(json.dumps(child) + "\n")
+            scan = dashboard.scan_pi_session(str(path))
+
+        self.assertIsNone(scan)
+
+    def test_partial_writes_and_rebranching_preserve_the_last_complete_branch(self) -> None:
+        # Treating an incomplete append as EOF, or retaining children after a
+        # rebranch to root, would respectively erase useful state or show it.
+        records = [
+            {"type": "session", "version": 3, "id": "append", "cwd": "/w/proj"},
+            self._message("root", None, "2026-07-29T11:00:00Z", "user", "First prompt"),
+            self._message("old-leaf", "root", "2026-07-29T11:00:01Z", "assistant", "old"),
+        ]
+        rebranch = self._message(
+            "new-leaf", "root", "2026-07-29T11:02:00Z", "user", "Rebranched prompt"
+        )
+        encoded = json.dumps(rebranch)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pi-append.jsonl"
+            self._write(path, records)
+            first = dashboard.scan_pi_session(str(path))
+            assert first is not None
+            with path.open("a") as output:
+                output.write("not json\n" + encoded[:-1])
+            partial = dashboard.scan_pi_session(str(path))
+            assert partial is not None
+            with path.open("a") as output:
+                output.write(encoded[-1:] + "\n")
+            rebased = dashboard.scan_pi_session(str(path))
+            assert rebased is not None
+
+        self.assertEqual("First prompt", partial["last_prompt"])
+        self.assertEqual("Rebranched prompt", rebased["last_prompt"])
+        self.assertEqual("First prompt", rebased["title"])
+
+    def test_corrupt_parent_does_not_replace_the_last_complete_branch(self) -> None:
+        # Publishing a newest child before its parent has decoded disconnects
+        # it from root and makes a partial write look like a new Pi session.
+        records = [
+            {"type": "session", "version": 3, "id": "corrupt-parent", "cwd": "/w/proj"},
+            self._message("root", None, "2026-07-29T11:00:00Z", "user", "Stable prompt"),
+            self._message("stable-leaf", "root", "2026-07-29T11:00:01Z", "assistant", "stable"),
+        ]
+        child = self._message(
+            "unrooted-child", "corrupt-parent", "2026-07-29T11:01:00Z", "user", "Unrooted child"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pi-corrupt-parent.jsonl"
+            self._write(path, records)
+            stable = dashboard.scan_pi_session(str(path))
+            assert stable is not None
+            with path.open("a") as output:
+                output.write('{"type":"message","id":"corrupt-parent"\n')
+                output.write(json.dumps(child) + "\n")
+            after_corruption = dashboard.scan_pi_session(str(path))
+            assert after_corruption is not None
+
+        self.assertEqual("Stable prompt", stable["last_prompt"])
+        self.assertEqual("Stable prompt", after_corruption["last_prompt"])
+
+
+class PiCollectorTest(unittest.TestCase):
+    """Pi session stores are flat for exports and one-level nested by default."""
+
+    NOW = 1_700_000_000.0
+
+    def setUp(self) -> None:
+        with dashboard._scan_lock:
+            dashboard._pi_scan.clear()
+
+    @staticmethod
+    def _header(sid: str, *, parent: str | None = None) -> dict[str, Any]:
+        return {
+            "type": "session",
+            "version": 3,
+            "id": sid,
+            "timestamp": _iso(PiCollectorTest.NOW - 60),
+            "cwd": "/w/proj",
+            "parentSession": parent,
+        }
+
+    @staticmethod
+    def _message(
+        entry_id: str,
+        parent_id: str | None,
+        when: float,
+        role: str,
+        content: Any,
+        *,
+        usage: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        message: dict[str, Any] = {"role": role, "content": content}
+        if usage is not None:
+            message["usage"] = usage
+        return {
+            "type": "message",
+            "id": entry_id,
+            "parentId": parent_id,
+            "timestamp": _iso(when),
+            "message": message,
+        }
+
+    def test_collects_flat_and_nested_sessions_with_render_ready_details(self) -> None:
+        # Missing either glob would hide one of Pi's supported on-disk layouts.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _jsonl(
+                root / "flat.jsonl",
+                [
+                    self._header("flat"),
+                    {"type": "session_info", "name": "Pi collector"},
+                    self._message("prompt", None, self.NOW - 30, "user", "Build Pi support"),
+                    self._message(
+                        "tool",
+                        "prompt",
+                        self.NOW - 20,
+                        "assistant",
+                        [{"type": "toolCall", "name": "bash"}],
+                        usage={"output": 100},
+                    ),
+                ],
+                self.NOW - 20,
+            )
+            _jsonl(
+                root / "--w-proj--" / "nested.jsonl",
+                [
+                    self._header("nested"),
+                    self._message("prompt", None, self.NOW - 10, "user", "Nested session"),
+                ],
+                self.NOW - 10,
+            )
+            with mock.patch.object(dashboard, "PI_SESSIONS_DIR", str(root)):
+                rows = dashboard.collect_pi(self.NOW, 24, False)
+
+        by_sid = {row["sid"]: row for row in rows}
+        self.assertEqual({"flat", "nested"}, set(by_sid))
+        flat = by_sid["flat"]
+        self.assertEqual("w/proj", flat["project"])
+        self.assertEqual("Pi collector", flat["title"])
+        self.assertEqual("Build Pi support", flat["last_prompt"])
+        self.assertEqual(10, flat["rate_per_min"])
+        self.assertEqual("running bash", flat["state_detail"])
+        self.assertIsNotNone(flat["turn"])
+        self.assertEqual("30s", flat["turn"]["elapsed_h"])
+
+    def test_keeps_the_newest_duplicate_and_does_not_fold_parent_sessions(self) -> None:
+        # Deduping by parentSession would merge independent resumed Pi sessions.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _jsonl(
+                root / "old.jsonl",
+                [
+                    self._header("duplicate"),
+                    {"type": "session_info", "name": "Old copy"},
+                    self._message("old", None, self.NOW - 60, "user", "Old prompt"),
+                ],
+                self.NOW - 60,
+            )
+            _jsonl(
+                root / "--w-proj--" / "new.jsonl",
+                [
+                    self._header("duplicate"),
+                    {"type": "session_info", "name": "New copy"},
+                    self._message("new", None, self.NOW - 5, "user", "New prompt"),
+                ],
+                self.NOW - 5,
+            )
+            _jsonl(
+                root / "--w-proj--" / "parent.jsonl",
+                [
+                    self._header("parent"),
+                    self._message("parent-prompt", None, self.NOW - 5, "user", "Parent prompt"),
+                ],
+                self.NOW - 5,
+            )
+            _jsonl(
+                root / "--w-proj--" / "child.jsonl",
+                [
+                    self._header("child", parent="parent"),
+                    self._message("child-prompt", None, self.NOW - 5, "user", "Child prompt"),
+                ],
+                self.NOW - 5,
+            )
+            with mock.patch.object(dashboard, "PI_SESSIONS_DIR", str(root)):
+                rows = dashboard.collect_pi(self.NOW, 24, True)
+
+        by_sid = {row["sid"]: row for row in rows}
+        self.assertEqual({"duplicate", "parent", "child"}, set(by_sid))
+        self.assertEqual("New copy", by_sid["duplicate"]["title"])
+
+    def test_ignores_non_session_files_and_rejects_future_event_activity_and_rate(self) -> None:
+        # Promoting any JSONL to a session or accepting a future token event
+        # would show phantom Pi work and output.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _jsonl(
+                root / "not-a-session.jsonl",
+                [self._message("orphan", None, self.NOW, "user", "Not a session")],
+                self.NOW,
+            )
+            _jsonl(
+                root / "future.jsonl",
+                [
+                    self._header("future"),
+                    self._message("prompt", None, self.NOW - 20, "user", "Real prompt"),
+                    self._message(
+                        "future-output",
+                        "prompt",
+                        self.NOW + 86_400,
+                        "assistant",
+                        "future output",
+                        usage={"output": 999},
+                    ),
+                ],
+                self.NOW - 20,
+            )
+            with mock.patch.object(dashboard, "PI_SESSIONS_DIR", str(root)):
+                rows = dashboard.collect_pi(self.NOW, 24, True)
+
+        self.assertEqual(["future"], [row["sid"] for row in rows])
+        self.assertEqual(self.NOW - 20, rows[0]["last_activity"])
+        self.assertEqual(0, rows[0]["rate_per_min"])
+
+
+class TurnTrackingTest(unittest.TestCase):
+    def test_pi_turns_apply_the_quiet_gap_rule(self) -> None:
+        # Omitting the quiet-gap reset would count the inactive wait as work.
+        records = [
+            {"type": "session", "version": 3, "id": "turns", "cwd": "/w/proj"},
+            PiTranscriptTest._message("prompt", None, "2026-07-29T11:00:00Z", "user", "Work"),
+            PiTranscriptTest._message(
+                "event", "prompt", "2026-07-29T11:00:05Z", "assistant", "working"
+            ),
+            PiTranscriptTest._message(
+                "resumed", "event", "2026-07-29T11:11:00Z", "assistant", "resumed"
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pi-turns.jsonl"
+            PiTranscriptTest._write(path, records)
+            scan = dashboard.scan_pi_session(str(path))
+            assert scan is not None
+
+        self.assertEqual([5.0], scan["turn"]["durations"])
+        self.assertEqual(dashboard.parse_ts("2026-07-29T11:11:00Z"), scan["turn"]["turn_start"])
+
+
 class CargentoServerTest(PageJsHarness):
     def setUp(self) -> None:
         with dashboard._lock:
@@ -1844,6 +2381,11 @@ class CargentoServerTest(PageJsHarness):
             '<span class="rrow-badge">${badge(r.key, true)}</span>',
             dashboard.PAGE,
         )
+
+    def test_pi_badge_uses_the_explicit_pi_label(self) -> None:
+        # A generic fallback monogram hides a missing harness presentation entry.
+        rendered = self._run_page_js("console.log(JSON.stringify(HARNESS.pi));")
+        self.assertEqual({"code": "PI", "name": "Pi"}, rendered)
 
     def test_page_ships_trailing_rate_sparklines(self) -> None:
         # Overall + per-session trailing sparklines: client-side ring buffers
@@ -4984,6 +5526,96 @@ class StoreRootsTest(unittest.TestCase):
         self.assertEqual(["/home/u/.local/share/opencode"], roots["opencode.data"])
         self.assertEqual(["/home/u/.local/share/goose/sessions/sessions.db"], roots["goose.db"])
 
+    def test_pi_defaults_to_its_agent_sessions_directory(self) -> None:
+        # Removing Pi's default candidate would leave an ordinary installation
+        # invisible, even though every other harness still resolves normally.
+        roots = self.resolve("darwin", {}, self.POSIX_HOME)
+        self.assertEqual(["/home/u/.pi/agent/sessions"], roots["pi.sessions"])
+
+    def test_pi_session_environment_override_is_authoritative(self) -> None:
+        # A user may relocate sessions independently of Pi's configuration;
+        # searching the configured or default directory as well risks stale
+        # sessions appearing in the dashboard.
+        roots = dashboard.resolve_store_roots(
+            platform_name="linux",
+            environ={
+                "PI_CODING_AGENT_DIR": "/opt/pi",
+                "PI_CODING_AGENT_SESSION_DIR": "/sessions",
+            },
+            home=self.POSIX_HOME,
+            pi_settings={"sessionDir": "/global-history"},
+        )
+        self.assertEqual(["/sessions"], roots["pi.sessions"])
+
+    def test_pi_global_session_directory_precedes_the_default(self) -> None:
+        # Ignoring Pi's global setting would scan the wrong store after a user
+        # changes the history location without setting the session env var.
+        roots = dashboard.resolve_store_roots(
+            platform_name="linux",
+            environ={"PI_CODING_AGENT_DIR": "/opt/pi"},
+            home=self.POSIX_HOME,
+            pi_settings={"sessionDir": "history"},
+        )
+        self.assertEqual(["/opt/pi/history"], roots["pi.sessions"])
+
+    def test_pi_session_setting_expands_home_and_accepts_absolute_paths(self) -> None:
+        # Treating either setting as relative would redirect an intentional
+        # custom location underneath Pi's configuration directory.
+        tilde = dashboard.resolve_store_roots(
+            platform_name="linux",
+            environ={"PI_CODING_AGENT_DIR": "/opt/pi"},
+            home=self.POSIX_HOME,
+            pi_settings={"sessionDir": "~/pi-history"},
+        )
+        absolute = dashboard.resolve_store_roots(
+            platform_name="linux",
+            environ={"PI_CODING_AGENT_DIR": "/opt/pi"},
+            home=self.POSIX_HOME,
+            pi_settings={"sessionDir": "/var/lib/pi/sessions"},
+        )
+        self.assertEqual(["/home/u/pi-history"], tilde["pi.sessions"])
+        self.assertEqual(["/var/lib/pi/sessions"], absolute["pi.sessions"])
+
+    def test_pi_invalid_session_settings_fall_back_to_its_default(self) -> None:
+        # A malformed global settings file must not make Pi disappear; its
+        # documented sessions child remains the safe fallback.
+        invalid_values: tuple[Any, ...] = ("", "   ", None, 42, [])
+        for value in invalid_values:
+            with self.subTest(value=value):
+                roots = dashboard.resolve_store_roots(
+                    platform_name="linux",
+                    environ={"PI_CODING_AGENT_DIR": "/opt/pi"},
+                    home=self.POSIX_HOME,
+                    pi_settings={"sessionDir": value},
+                )
+                self.assertEqual(["/opt/pi/sessions"], roots["pi.sessions"])
+
+    def test_load_pi_settings_reads_only_a_json_object(self) -> None:
+        # Returning arbitrary JSON would make the resolver trust a malformed
+        # global settings file as if it had Pi's object-shaped configuration.
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "agent"
+            config.mkdir()
+            (config / "settings.json").write_text('{"sessionDir":"history"}')
+            self.assertEqual({"sessionDir": "history"}, dashboard.load_pi_settings(str(config)))
+            (config / "settings.json").write_text("[]")
+            self.assertEqual({}, dashboard.load_pi_settings(str(config)))
+            (config / "settings.json").write_text("{")
+            self.assertEqual({}, dashboard.load_pi_settings(str(config)))
+
+        self.assertEqual({}, dashboard.load_pi_settings("/not/a/pi/config"))
+
+    def test_pi_uses_target_windows_path_rules(self) -> None:
+        # A POSIX host resolving a Windows Pi path must not produce mixed
+        # separators, which Windows then interprets as a different location.
+        roots = dashboard.resolve_store_roots(
+            platform_name="win32",
+            environ={"PI_CODING_AGENT_DIR": r"D:\Pi"},
+            home=self.WIN_HOME,
+            pi_settings={"sessionDir": r"history\today"},
+        )
+        self.assertEqual([r"D:\Pi\history\today"], roots["pi.sessions"])
+
     def test_xdg_data_home_is_honored(self) -> None:
         roots = self.resolve("linux", {"XDG_DATA_HOME": "/xdg"}, self.POSIX_HOME)
         self.assertEqual(["/xdg/opencode"], roots["opencode.data"])
@@ -5146,6 +5778,25 @@ class DiagnoseTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"CODEX_HOME": "/opt/cx"}):
             report = dashboard.diagnose(24)
         self.assertEqual("/opt/cx", report["env"]["CODEX_HOME"])
+
+    def test_pi_overrides_and_session_candidate_are_surfaced(self) -> None:
+        # Omitting either override or the candidate leaves a relocated Pi
+        # install indistinguishable from a harness Cargento does not support.
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "PI_CODING_AGENT_DIR": "/opt/pi",
+                    "PI_CODING_AGENT_SESSION_DIR": "/sessions",
+                },
+            ),
+            mock.patch.object(dashboard, "PI_SESSIONS_DIR", "/sessions"),
+        ):
+            report = dashboard.diagnose(24)
+
+        self.assertEqual("/opt/pi", report["env"]["PI_CODING_AGENT_DIR"])
+        self.assertEqual("/sessions", report["env"]["PI_CODING_AGENT_SESSION_DIR"])
+        self.assertEqual("/sessions", report["stores"]["pi.sessions"]["candidates"][0]["path"])
 
 
 class HostAndSocketTest(unittest.TestCase):
@@ -6670,6 +7321,7 @@ STORE_CONSTANTS = (
     "PROJECTS_DIR",
     "TASKS_DIR",
     "CODEX_SESSIONS_DIR",
+    "PI_SESSIONS_DIR",
     "GEMINI_TMP",
     "ANTIGRAVITY_CLI_DIR",
     "ANTIGRAVITY_CONVERSATIONS_DIR",
@@ -6740,6 +7392,34 @@ def build_codex(root: Path, when: float, sid: str, title: str) -> dict[str, str]
         when,
     )
     return {"CODEX_SESSIONS_DIR": str(root)}
+
+
+def build_pi(root: Path, when: float, sid: str, title: str) -> dict[str, str]:
+    _jsonl(
+        root / "--w-proj--" / f"2026-07-29_{sid}.jsonl",
+        [
+            {
+                "type": "session",
+                "version": 3,
+                "id": sid,
+                "timestamp": _iso(when),
+                "cwd": "/w/proj",
+            },
+            {
+                "type": "message",
+                "id": "user0001",
+                "parentId": None,
+                "timestamp": _iso(when),
+                "message": {
+                    "role": "user",
+                    "content": title,
+                    "timestamp": int(when * 1000),
+                },
+            },
+        ],
+        when,
+    )
+    return {"PI_SESSIONS_DIR": str(root)}
 
 
 def build_gemini(root: Path, when: float, sid: str, title: str) -> dict[str, str]:
@@ -6879,6 +7559,7 @@ def build_droid(root: Path, when: float, sid: str, title: str) -> dict[str, str]
 HARNESSES: tuple[tuple[str, Any], ...] = (
     ("claude", build_claude),
     ("codex", build_codex),
+    ("pi", build_pi),
     ("gemini", build_gemini),
     ("gemini", build_antigravity),
     ("copilot", build_copilot),
@@ -6931,6 +7612,14 @@ class HarnessContractTest(unittest.TestCase):
 
     def sessions_for(self, data: dict[str, Any], key: str) -> list[dict[str, Any]]:
         return [s for s in data["sessions"] if s["harness"] == key]
+
+    def test_pi_store_is_registered_as_a_harness(self) -> None:
+        # Removing Pi from the registry would make a valid store invisible.
+        data = self.collect(build_pi, when=self.NOW)
+        self.assertTrue(
+            any(harness["key"] == "pi" for harness in data["harnesses"]),
+            "Pi store must appear in the harness registry",
+        )
 
     def test_a_fresh_store_is_discovered_and_reads_working(self) -> None:
         for key, build in HARNESSES:
@@ -9113,7 +9802,14 @@ class DocumentationMatchesCodeTest(unittest.TestCase):
     def test_documented_env_overrides_are_the_ones_honoured(self) -> None:
         documented = {
             name
-            for name in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "COPILOT_HOME")
+            for name in (
+                "CLAUDE_CONFIG_DIR",
+                "CODEX_HOME",
+                "GEMINI_CLI_HOME",
+                "COPILOT_HOME",
+                "PI_CODING_AGENT_DIR",
+                "PI_CODING_AGENT_SESSION_DIR",
+            )
             if f"`{name}`" in self.SKILL
         }
         self.assertEqual(set(dashboard.STORE_ENV_VARS), documented)
@@ -9123,6 +9819,8 @@ class DocumentationMatchesCodeTest(unittest.TestCase):
             ("CODEX_HOME", "codex.sessions", "/opt/x/sessions"),
             ("GEMINI_CLI_HOME", "gemini.tmp", "/opt/x/.gemini/tmp"),
             ("COPILOT_HOME", "copilot.root", "/opt/x"),
+            ("PI_CODING_AGENT_DIR", "pi.sessions", "/opt/x/sessions"),
+            ("PI_CODING_AGENT_SESSION_DIR", "pi.sessions", "/opt/x"),
         ):
             with self.subTest(env=name):
                 roots = dashboard.resolve_store_roots(
