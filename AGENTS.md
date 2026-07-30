@@ -21,6 +21,8 @@ cargento/                           # plugin root
         ├── SKILL.md                # shared skill body (all harnesses)
         ├── server.py               # stdlib-only dashboard server
         ├── notify_hook.py          # loopback POST forwarder for the user-installed Claude hooks
+        ├── cargento_runtime/       # importable dashboard runtime package
+        │   └── web/                # HTML, CSS, JS, and byte-preserving page loader
         ├── agents/openai.yaml      # Codex presentation metadata
         └── tests/                  # dashboard unit tests and shared support
 ```
@@ -41,7 +43,7 @@ shipped skill body, lives in the `sync-docs` skill at `.claude/skills/sync-docs/
 | `README.md` | The front door: what Cargento is, install per harness, skill inventory, links out. |
 | `AGENTS.md` | **This file.** The repository contract for agents, and the canonical pre-PR command list. |
 | `CLAUDE.md` | Claude-Code-only addenda; imports this file. |
-| `CONTRIBUTING.md` | The human contributor journey, and the design constraints on `server.py`. |
+| `CONTRIBUTING.md` | The human contributor journey, and the dashboard implementation constraints. |
 | `COMPATIBILITY.md` | The cross-harness and cross-platform contract, and the Python floor. |
 | `SECURITY.md` | Security invariants, accepted exposures, and private reporting. |
 | `cargento/skills/cargento/SKILL.md` | The shipped product surface. A validated artifact — see the portability rules below. |
@@ -119,7 +121,7 @@ without skill discovery should read that file and follow it.
 
 ## Quality Gate
 
-Every PR must pass the `quality-gate` required check (`.github/workflows/quality-gate.yml`): ruff with `select = ALL` (curated ignores documented in `pyproject.toml`), `ruff format --check`, `mypy --strict`, the embedded HTML/CSS/JS asset linter (`scripts/lint_embedded.py`), a direct-launch smoke test on the Python 3.11 runtime floor, the full unittest suite under `coverage` with the `fail_under` threshold from `pyproject.toml`, and `platform-tests` — the same unit suite re-run natively on Ubuntu, macOS and Windows. The threshold only ratchets up — never lower it in a PR. A PR that must merge below threshold needs the `coverage-exception` label, which is visible in the PR timeline.
+Every PR must pass the `quality-gate` required check (`.github/workflows/quality-gate.yml`): ruff with `select = ALL` (curated ignores documented in `pyproject.toml`), `ruff format --check`, `mypy --strict`, the HTML/CSS/JS frontend source linter (`scripts/lint_embedded.py`), a direct-launch smoke test on the Python 3.11 runtime floor, the full unittest suite under `coverage` with the `fail_under` threshold from `pyproject.toml`, and `platform-tests` — the same unit suite re-run natively on Ubuntu, macOS and Windows. The threshold only ratchets up — never lower it in a PR. A PR that must merge below threshold needs the `coverage-exception` label, which is visible in the PR timeline.
 
 ## Versioning and Releases
 
