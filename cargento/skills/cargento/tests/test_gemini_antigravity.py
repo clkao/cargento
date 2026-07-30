@@ -216,8 +216,14 @@ class GeminiAntigravityCollectorTest(LegacyDashboardTestCase):
                     create=True,
                 ),
             ):
-                gemini = next(h for h in dashboard.HARNESSES if h[0] == "gemini")
-                discovered = gemini[2]()
+                # Reach the predicate through a live registry spec, so this
+                # still pins that the "gemini" row is wired to the right
+                # predicate and not merely that the key is present.
+                runtime = dashboard._legacy_runtime()
+                spec = next(
+                    s for s in dashboard._legacy_harness_specs(*runtime) if s.key == "gemini"
+                )
+                discovered = spec.discover(*runtime)
                 sessions = dashboard.collect_gemini(now, 24, False)
 
         self.assertTrue(discovered)

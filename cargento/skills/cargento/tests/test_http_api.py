@@ -17,6 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from unittest import mock
 
+from cargento_runtime import aggregate
+
 from .support import (
     PAGE_BYTES,
     LegacyDashboardTestCase,
@@ -162,13 +164,15 @@ class CargentoServerTest(LegacyDashboardTestCase):
         calls: list[tuple[float, bool]] = []
         calls_lock = threading.Lock()
 
-        def fake_collect(window_hours: float, show_all: bool) -> dict[str, Any]:
+        # Read the window off the application under test, so a collect_json that
+        # ignored its window argument is visible here rather than silent.
+        def fake_collect(app: aggregate.Application, *, show_all: bool) -> dict[str, Any]:
             with calls_lock:
-                calls.append((window_hours, show_all))
+                calls.append((app.config.window_hours, show_all))
             dashboard.time.sleep(0.02)
-            return {"window_hours": window_hours, "show_all": show_all}
+            return {"window_hours": app.config.window_hours, "show_all": show_all}
 
-        with mock.patch.object(dashboard, "collect", fake_collect):
+        with mock.patch.object(aggregate.Application, "collect", fake_collect):
             with ThreadPoolExecutor(max_workers=12) as pool:
                 bodies = list(pool.map(lambda _: dashboard.collect_json(24, False), range(24)))
             alternate = dashboard.collect_json(24, True)
@@ -179,13 +183,27 @@ class CargentoServerTest(LegacyDashboardTestCase):
         self.assertNotEqual(bodies[0], alternate)
         self.assertEqual(2, len(dashboard._collect_memo))
 
+    def test_a_requested_window_reaches_the_collection_and_its_memo_key(self) -> None:
+        # The window is a request-time argument: /api/data must collect and
+        # report the window it was asked for, not the configured default.
+        # Mutation-checked: dropping the override in _legacy_application, so
+        # every request silently used the configured window, passed the suite.
+        with mock.patch.object(dashboard, "_LEGACY_HARNESSES", ()):
+            requested = json.loads(dashboard.collect_json(6, False))
+            default = json.loads(dashboard.collect_json(24, False))
+
+            self.assertEqual(6, requested["window_hours"])
+            self.assertEqual(24, default["window_hours"])
+            self.assertIn((6, False), dashboard._collect_memo)
+            self.assertIn((24, False), dashboard._collect_memo)
+
     def test_collector_failure_is_exposed_in_harness_status(self) -> None:
         def fail(*_args: object) -> list[dict[str, Any]]:
             raise RuntimeError("broken store")
 
-        harnesses = [("test", "Test", lambda: True, fail)]
+        harnesses = (("test", "Test", lambda: True, fail),)
         with (
-            mock.patch.object(dashboard, "HARNESSES", harnesses),
+            mock.patch.object(dashboard, "_LEGACY_HARNESSES", harnesses),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             result = dashboard.collect(24, False)
@@ -203,7 +221,7 @@ class CargentoServerTest(LegacyDashboardTestCase):
             # The readiness wait and --status poll this in a loop. If it ever
             # reaches collect(), a liveness check costs a full multi-harness
             # filesystem scan.
-            with mock.patch.object(dashboard, "collect") as collect:
+            with mock.patch.object(aggregate.Application, "collect") as collect:
                 conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=2)
                 conn.request("GET", "/api/health")
                 response = conn.getresponse()
@@ -551,8 +569,8 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
         thread = serve_until_closed(httpd)
         with mock.patch.object(
             dashboard,
-            "collect",
-            return_value={"generated": 1.0, "sessions": [], "harnesses": []},
+            "collect_json",
+            return_value=json.dumps({"generated": 1.0, "sessions": [], "harnesses": []}).encode(),
         ):
             try:
                 cases = (
@@ -707,7 +725,7 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
             # must remain a pure liveness response even if somebody bypasses
             # collect() and later reaches into a harness store directly.
             with (
-                mock.patch.object(dashboard, "collect") as collect,
+                mock.patch.object(aggregate.Application, "collect") as collect,
                 mock.patch("builtins.open", side_effect=AssertionError("health read a file")),
                 mock.patch.object(
                     dashboard.os,
@@ -739,7 +757,7 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
         second_done = threading.Event()
         bodies: list[bytes] = []
 
-        def scan(*_: Any) -> dict[str, Any]:
+        def scan(*_: Any, **__: Any) -> dict[str, Any]:
             entered.set()
             self.assertTrue(release.wait(timeout=5), "test did not release the scan")
             return {"generated": 1.0, "sessions": [], "harnesses": []}
@@ -748,7 +766,7 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
             bodies.append(dashboard.collect_json(24, False))
             second_done.set()
 
-        with mock.patch.object(dashboard, "collect", side_effect=scan) as collect:
+        with mock.patch.object(aggregate.Application, "collect", side_effect=scan) as collect:
             first = threading.Thread(
                 target=lambda: bodies.append(dashboard.collect_json(24, False))
             )
@@ -769,7 +787,7 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
     def test_collection_memo_releases_its_lock_after_failure(self) -> None:
         good = {"generated": 1.0, "sessions": [], "harnesses": []}
         with mock.patch.object(
-            dashboard, "collect", side_effect=(RuntimeError("broken store"), good)
+            aggregate.Application, "collect", side_effect=(RuntimeError("broken store"), good)
         ):
             with self.assertRaisesRegex(RuntimeError, "broken store"):
                 dashboard.collect_json(24, False)
