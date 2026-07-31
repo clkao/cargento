@@ -17,21 +17,38 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from unittest import mock
 
-from cargento_runtime import aggregate, notifications
+from cargento_runtime import aggregate, http_api, notifications
 
 from .support import (
     PAGE_BYTES,
     LegacyDashboardTestCase,
     dashboard,
+    make_runtime,
+    make_server,
     serve_until_closed,
 )
 
 
+def _application(os_name: str) -> Any:
+    """An application whose config claims `os_name`, whatever the host is.
+
+    The port-sharing tests below turn on a config that *disagrees* with the
+    host, which is the only way to tell a config read from an ambient one.
+    """
+    config, state = make_runtime(os_name=os_name)
+    return aggregate.Application(
+        config,
+        state,
+        (),
+        native_notifier=lambda _platform: "",
+        popup_notifier=lambda _title, _message: None,
+        diagnostic_sink=lambda _line: None,
+    )
+
+
 class CargentoServerTest(LegacyDashboardTestCase):
     def test_notify_endpoint_accepts_valid_non_object_and_deep_json(self) -> None:
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         bodies = [
@@ -62,9 +79,7 @@ class CargentoServerTest(LegacyDashboardTestCase):
             thread.join(timeout=2)
 
     def test_cross_site_fetch_metadata_is_rejected(self) -> None:
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         try:
@@ -140,9 +155,7 @@ class CargentoServerTest(LegacyDashboardTestCase):
             ),
             ("GET", "/", {"Host": "evil.example"}, 403, "DNS rebinding"),
         ]
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         try:
@@ -212,9 +225,7 @@ class CargentoServerTest(LegacyDashboardTestCase):
         self.assertEqual("RuntimeError: broken store", result["harnesses"][0]["error"])
 
     def test_health_reports_identity_without_scanning_any_store(self) -> None:
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         try:
@@ -240,9 +251,7 @@ class CargentoServerTest(LegacyDashboardTestCase):
         self.assertIsInstance(payload["started"], (int, float))
 
     def test_health_is_refused_from_a_non_local_host_header(self) -> None:
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         try:
@@ -275,7 +284,7 @@ class HostAndSocketTest(unittest.TestCase):
             "::1",
         ):
             with self.subTest(host=value):
-                self.assertIn(dashboard.normalize_host(value), dashboard.Handler.LOCAL_HOSTS)
+                self.assertIn(http_api.normalize_host(value), http_api._RequestHandler.LOCAL_HOSTS)
 
     def test_host_header_forms_that_are_not_loopback(self) -> None:
         for value in (
@@ -299,22 +308,24 @@ class HostAndSocketTest(unittest.TestCase):
             "localhost:",
         ):
             with self.subTest(host=value):
-                self.assertNotIn(dashboard.normalize_host(value), dashboard.Handler.LOCAL_HOSTS)
+                self.assertNotIn(
+                    http_api.normalize_host(value), http_api._RequestHandler.LOCAL_HOSTS
+                )
 
     def test_reuse_address_is_off_only_on_windows(self) -> None:
         # POSIX: SO_REUSEADDR just bypasses TIME_WAIT, so restarts work.
         # Windows: it lets a second process bind an already-bound port.
-        self.assertTrue(dashboard.reuse_address_allowed("posix"))
-        self.assertFalse(dashboard.reuse_address_allowed("nt"))
+        self.assertTrue(http_api.reuse_address_allowed("posix"))
+        self.assertFalse(http_api.reuse_address_allowed("nt"))
 
     def test_bind_errors_explain_themselves(self) -> None:
         in_use = OSError(errno.EADDRINUSE, "Address already in use")
-        self.assertIn("already in use", dashboard.bind_error_message(in_use, 4553))
-        self.assertIn("4553", dashboard.bind_error_message(in_use, 4553))
+        self.assertIn("already in use", http_api.bind_error_message(in_use, 4553))
+        self.assertIn("4553", http_api.bind_error_message(in_use, 4553))
         denied = OSError(errno.EACCES, "Permission denied")
-        self.assertIn("not permitted", dashboard.bind_error_message(denied, 4553))
+        self.assertIn("not permitted", http_api.bind_error_message(denied, 4553))
         other = OSError(errno.EINVAL, "Invalid argument")
-        self.assertIn("cannot bind", dashboard.bind_error_message(other, 4553))
+        self.assertIn("cannot bind", http_api.bind_error_message(other, 4553))
 
     def test_windows_error_codes_are_recognized(self) -> None:
         # winerror, not errno, is what Windows populates. 10013 is also what an
@@ -323,12 +334,10 @@ class HostAndSocketTest(unittest.TestCase):
             with self.subTest(winerror=winerror):
                 exc = OSError()
                 exc.winerror = winerror  # type: ignore[attr-defined]
-                self.assertIn(expected, dashboard.bind_error_message(exc, 4553))
+                self.assertIn(expected, http_api.bind_error_message(exc, 4553))
 
     def test_server_binds_and_serves(self) -> None:
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         try:
@@ -354,9 +363,7 @@ class ReviewFixTest(unittest.TestCase):
         # "same-site" for a page served from another local port. A hostname-only
         # Origin check trusted it, and text/plain is CORS-safelisted so no
         # preflight would have stopped the request.
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         port = httpd.server_port
@@ -387,10 +394,50 @@ class ReviewFixTest(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=2)
 
+    def _options_requested(self, os_name: str, exclusive_option: int) -> list[int]:
+        """Socket options the listener asks for under a given configured OS."""
+        options: list[int] = []
+        real_setsockopt = socket.socket.setsockopt
+
+        def traced_setsockopt(sock: Any, level: int, option: int, value: Any) -> Any:
+            options.append(option)
+            return real_setsockopt(sock, level, option, value)
+
+        with (
+            mock.patch.object(socket.socket, "setsockopt", traced_setsockopt),
+            mock.patch.object(socket, "SO_EXCLUSIVEADDRUSE", exclusive_option, create=True),
+            # The fake option number is rejected by the OS; that path warns,
+            # which is correct behaviour but noise in the test output.
+            mock.patch.object(dashboard.runtime_io, "diag"),
+        ):
+            httpd = make_server(application=_application(os_name))
+            httpd.server_close()
+        return options
+
+    def test_reuse_and_exclusive_options_are_never_both_requested(self) -> None:
+        # Winsock rejects SO_REUSEADDR on a socket that already carries
+        # SO_EXCLUSIVEADDRUSE (WSAEINVAL 10022), so these are complements of one
+        # decision, not independent switches. Taking reuse from the config while
+        # taking exclusivity from the host's socket module set BOTH on a Windows
+        # host running a posix-configured application, and every bind there died
+        # — including the two-server and health-stamp contracts below, which say
+        # nothing about ports and were failing on Windows for this reason alone.
+        exclusive = 0xFFFB
+        posix = self._options_requested("posix", exclusive)
+        windows = self._options_requested("nt", exclusive)
+
+        self.assertIn(socket.SO_REUSEADDR, posix)
+        self.assertNotIn(exclusive, posix)
+
+        self.assertIn(exclusive, windows)
+        self.assertNotIn(socket.SO_REUSEADDR, windows)
+
     def test_exclusive_port_option_is_requested_before_bind(self) -> None:
         # Clearing SO_REUSEADDR stops Cargento hijacking someone else's port;
         # SO_EXCLUSIVEADDRUSE is what stops anyone hijacking Cargento's. Only
-        # meaningful if it is applied before bind().
+        # meaningful if it is applied before bind(). The config has to say "nt"
+        # for the option to be in play at all, so the assertion holds on every
+        # host rather than only on Windows runners.
         order: list[str] = []
         real_setsockopt = socket.socket.setsockopt
         real_bind = socket.socket.bind
@@ -411,9 +458,7 @@ class ReviewFixTest(unittest.TestCase):
             # which is correct behaviour but noise in the test output.
             mock.patch.object(dashboard.runtime_io, "diag"),
         ):
-            httpd = dashboard.LoopbackHTTPServer(
-                ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-            )
+            httpd = make_server(application=_application("nt"))
             httpd.server_close()
 
         self.assertIn("setsockopt:65531", order)
@@ -421,9 +466,7 @@ class ReviewFixTest(unittest.TestCase):
         self.assertLess(order.index("setsockopt:65531"), order.index("bind"))
 
     def test_shutdown_endpoint_answers_before_it_stops_the_server(self) -> None:
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         try:
@@ -444,7 +487,7 @@ class ReviewFixTest(unittest.TestCase):
             thread.join(timeout=2)
 
     def test_shutdown_still_runs_when_the_client_drops_during_the_reply(self) -> None:
-        handler = object.__new__(dashboard.Handler)
+        handler = object.__new__(http_api._RequestHandler)
         handler.server = mock.Mock()
         handler.wfile = mock.Mock()
         stopped = threading.Event()
@@ -455,9 +498,7 @@ class ReviewFixTest(unittest.TestCase):
         handler.server.shutdown.assert_called_once_with()
 
     def test_shutdown_endpoint_refuses_a_cross_site_post(self) -> None:
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         try:
@@ -493,7 +534,7 @@ class VerificationFixTest(unittest.TestCase):
     def test_origin_with_an_implicit_default_port(self) -> None:
         # Browsers omit the port when it is the scheme default, so
         # "http://localhost" is legitimate for a server on port 80.
-        handler = dashboard.Handler.__new__(dashboard.Handler)
+        handler = http_api._RequestHandler.__new__(http_api._RequestHandler)
         handler.headers = email.message.Message()
         handler.headers["Host"] = "localhost"
         handler.headers["Origin"] = "http://localhost"
@@ -508,7 +549,6 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self._spacedock_enabled = dashboard.__dict__["SPACEDOCK_ENABLED"]
-        self._window_hours = dashboard.Handler.window_hours
         self._server_started = dashboard.__dict__["SERVER_STARTED"]
         with dashboard._lock:
             dashboard._hook_notifs.clear()
@@ -541,7 +581,6 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         dashboard.__dict__["SPACEDOCK_ENABLED"] = self._spacedock_enabled
-        dashboard.Handler.window_hours = self._window_hours
         dashboard.__dict__["SERVER_STARTED"] = self._server_started
         with dashboard._collect_memo_lock:
             dashboard._collect_memo.clear()
@@ -563,12 +602,11 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
             conn.close()
 
     def test_http_routes_pin_status_content_type_and_response_shapes(self) -> None:
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = serve_until_closed(httpd)
+        # Patched on the application, which is what the handler collects through.
         with mock.patch.object(
-            dashboard,
+            aggregate.Application,
             "collect_json",
             return_value=json.dumps({"generated": 1.0, "sessions": [], "harnesses": []}).encode(),
         ):
@@ -638,8 +676,7 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
             def __init__(
                 self,
                 address: tuple[str, int],
-                _: Any,
-                *,
+                _application: Any,
                 page_bytes: bytes,
             ) -> None:
                 captured_addresses.append(address)
@@ -656,7 +693,7 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
         # regression to 0.0.0.0 cannot pass merely because this test chose 127.
         with (
             mock.patch.object(sys, "argv", ["server.py", "--port", "4553"]),
-            mock.patch.object(dashboard, "LoopbackHTTPServer", CapturingServer),
+            mock.patch.object(http_api, "CargentoHTTPServer", CapturingServer),
             mock.patch.object(dashboard, "write_state"),
             mock.patch.object(dashboard, "remove_state"),
             mock.patch.object(dashboard.runtime_io, "diag"),
@@ -666,9 +703,7 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
         self.assertEqual([("127.0.0.1", 4553)], captured_addresses)
         self.assertEqual([PAGE_BYTES], captured_pages)
 
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = serve_until_closed(httpd)
         try:
             port = httpd.server_port
@@ -716,9 +751,7 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
             thread.join(timeout=5)
 
     def test_health_performs_no_harness_store_reads(self) -> None:
-        httpd = dashboard.LoopbackHTTPServer(
-            ("127.0.0.1", 0), dashboard.Handler, page_bytes=PAGE_BYTES
-        )
+        httpd = make_server()
         thread = serve_until_closed(httpd)
         try:
             # These are the store-access primitives used by collectors. Health
