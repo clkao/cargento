@@ -10,13 +10,14 @@ The decision record is DEC-1 (Linear DRC-4053): show quota per harness, Codex fi
 then Claude behind a configurable opt-out, with an opt-in sidecar as the fallback shape if the
 opt-out proves wrong.
 
-## Q-1: Two sources, one payload contract
+## Q-1: Three sources, one payload contract
 
 A usage entry is the same shape whoever produced it:
 
 ```
 {harness, state: "ok" | "expired", asOf,
- fiveH: {pct, reset}, week: {pct, reset}}
+ fiveH: {pct, reset}, week: {pct, reset},   // a gauge: used out of a limit
+ used}                                     // a figure: spend with no limit
 ```
 
 - Codex publishes from disk. The CLI writes a `rate_limits` snapshot beside every token count in
@@ -25,9 +26,43 @@ A usage entry is the same shape whoever produced it:
   keeps a weekly-only plan rendering.
 - Claude publishes from the fetch cache. `quota.py` holds the token read, the one outbound
   request, and the cache; `collectors/claude.py` only copies entries out of it.
+- Copilot publishes consumption from disk, and no gauge at all. See Q-6.
 
 `asOf` is epoch seconds of the moment the numbers were true: the snapshot's own timestamp for
-Codex, the fetch time for Claude. The page refuses to show a percentage without it.
+Codex, the fetch time for Claude, the newest contributing row for Copilot. The page refuses to show
+a percentage without it.
+
+## Q-6: A harness can report spend without reporting a limit
+
+GitHub bills Copilot in AI Units, and the CLI records its own consumption per model request in
+`session-store.db`'s `assistant_usage_events` table: `total_nano_aiu`, `request_multiplier`, the
+token breakdown, and a `created_at` per row. That is real spend rather than an estimate, and reading
+it needs no credential, so it ships under the original two invariants like the Codex tile.
+
+The entitlement is the part that does not exist locally. GitHub keeps it server-side and the CLI
+never writes it down, which was confirmed by searching every file under `~/.copilot`: `entitlement`
+and `allowance` appear in none of them, though both are strings inside the CLI binary. So there is a
+numerator and no denominator, and no honest percentage can be derived.
+
+Hence `used`: a preformatted figure, rendered as a labelled row with no track and no percent sign,
+because a bar implies a fraction of something. Three consequences worth stating:
+
+- **It is always shown when present.** The extras (`burn`, `today`, `cost`) default to off in
+  `usageCfg`, and a consumption-only entry whose single figure sat behind `configure` rendered as a
+  harness name and a timestamp with no number, which reads as a broken row rather than a hidden
+  setting. A contract test executes the page script and fails if the figure stops surviving the
+  default config.
+- **It is windowed on each row's own timestamp**, so the number answers "in the last
+  `window_hours`" rather than "since however much session history happens to be retained", which
+  would drift as old session directories accumulate or get cleaned.
+- **Premium requests are the wrong target.** The survey behind DEC-1 described per-session
+  premium-request estimates, but on an AI-Credits account `totalPremiumRequests` reads 0 while real
+  spend flows through the AIU fields. The legacy counter is deliberately not read.
+
+The alternative shapes considered were reusing the `today` extra and force-showing it for
+window-less harnesses, which makes `usageCfg`'s meaning depend on the payload, and deriving a burn
+rate to give the figure context, which is a heuristic over however few rows exist. A first-class
+field says exactly what it is and needs neither.
 
 ## Q-2: The response fields Cargento reads
 
@@ -122,3 +157,52 @@ the query parameter for the first-run case. The parameter alone is the smaller c
 The per-model rows have no rendering yet. Shipping them into `/api/data` early would freeze a
 shape nobody has designed against; the parse point is marked and the field documented here
 instead.
+
+### Antigravity quota, attempted and not feasible (2026-08-04)
+
+Antigravity is the Google authority, and it is the obvious second vendor: Cargento already reads
+its sessions, and its CLI displays quota on a status line. It was attempted with the owner's
+approval, against a live install, and it does not work. Recorded here at length because everything
+about it looks promising until the last step, so the next person will otherwise repeat the work.
+
+What checked out. The endpoint is real and pinned: the `agy` binary carries
+`https://cloudcode-pa.googleapis.com` and the method `v1internal:retrieveUserQuota`, which is the
+same method name the retired Gemini CLI used, so lineage and current binary agree. The refresher is
+real too, and even throttles itself: `quota_manager.go` logs `doRefreshQuota: starting reload`,
+`skipped (throttled)` and `skipped (not logged in)`. The credential's location is real: a macOS
+Keychain generic-password item with service `gemini` and account `antigravity`.
+
+Where it fails, on two independent grounds:
+
+1. **The stored credential is not a usable token.** The Keychain item holds an opaque
+   2246-character string: no `ya29.` or `1//` prefix, not a JWT, not base64, single segment, and
+   containing none of `access_token`, `refresh_token`, `expiry`, `token_type` or `scope` as
+   substrings. Presented as a bearer token it returns HTTP 401 with Google's own text, "Expected
+   OAuth 2 access token, login cookie or other valid authentication credential". Three request
+   bodies were tried (empty, absent, and constants-only metadata) and all three returned the same
+   401, so the failure is authentication rather than request shape. Antigravity evidently keeps its
+   credential in a proprietary form and mints access tokens in process. No `ya29.` token exists in
+   any file under the Gemini home or the usual macOS and Linux config roots.
+2. **Nothing is persisted to read instead.** A disk read was the preferred outcome, since it needs
+   no credential and stays inside the original two invariants, and the binary's
+   `retrieveUserQuotaSummaryCache` symbol made it look likely. Every file under
+   `~/.gemini/antigravity-cli/` below 2 MB was searched for `remainingFraction`, `quotaInfo`,
+   `minutesPerBucket`, `movingWindowSize`, `resetTime` and `userTier`. Zero matches. The logs record
+   that a refresh happened, never what it returned. The cache is in memory.
+
+The opt-in sidecar that DEC-1 kept as a fallback does not rescue this: a sidecar would meet the same
+opaque credential. So the blocker is the credential format, not Cargento's architecture, and no
+option in DEC-1 reaches it.
+
+Two things learned that outlive the attempt. First, Google's quota shape is not this contract's
+shape: the response model is bucketed and moving-window (`remainingFraction`, `minutesPerBucket`,
+`movingWindowSize`, `bucketId`, `resetTime`, `hasQuotaUnavailabilityError`), so `remainingFraction`
+is the inverse of Anthropic's `utilization` and windows are lengths rather than names, which would
+make the mapping follow `codex._usage_window` rather than Claude's. Second, the Code Assist RPCs are
+POSTs carrying a `ClientMetadata` body (`platform`, `ideType`, `ideVersion`, `pluginType`,
+`pluginVersion`, `updateChannel`, `project`), so had authentication worked, there would have been a
+real question about whether sending that breaks this document's own "no machine identifiers" clause.
+Anyone revisiting this inherits that question unanswered.
+
+Revisit only if Antigravity begins persisting quota to disk, or ships a documented local interface.
+The endpoint and method above will still be correct; it is the credential that has to change.
