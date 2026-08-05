@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import email.message
 import errno
 import http.client
@@ -15,6 +16,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -645,6 +647,344 @@ class VerificationFixTest(unittest.TestCase):
         self.assertTrue(handler._local_ok())
         handler.server = mock.Mock(server_port=4553)
         self.assertFalse(handler._local_ok())
+
+
+class RejectedPostDrainTest(unittest.TestCase):
+    """A refused POST has its body read before the refusal is written.
+
+    Closing a socket that still holds unread inbound data makes the OS send RST
+    rather than FIN, and an RST can discard the reply already written, so the
+    client sees ECONNRESET (WSAECONNABORTED on Windows) instead of the 413 it was
+    told to expect. That is what failed on the macOS and Windows runners.
+
+    Asserted at the handler rather than through a socket, deliberately. A
+    socket-level version of this passes on this machine whether or not the drain
+    is there, because the race needs buffer and scheduling conditions a local run
+    does not reproduce: it would be a test that cannot fail. Reading the body
+    before answering is the behaviour being added, so that is what is pinned.
+    """
+
+    class _Handler(http_api._RequestHandler):
+        def __init__(self, declared: str, available: bytes) -> None:
+            # Headers is an email.message.Message on the real handler; a dict
+            # answers the only call the drain makes of it.
+            self.headers = email.message.Message()
+            self.headers["Content-Length"] = declared
+            self.rfile = io.BytesIO(available)
+            self.sent: list[int] = []
+
+        def send_error(
+            self, code: int, message: str | None = None, explain: str | None = None
+        ) -> None:
+            # Records the order: the drain has to have happened by now.
+            del message, explain
+            self.sent.append(code)
+
+    def _reject(self, declared: str, available: bytes) -> tuple[list[int], int]:
+        handler = self._Handler(declared, available)
+        handler._reject(413)
+        return handler.sent, handler.rfile.tell()
+
+    def test_the_declared_body_is_consumed_before_the_error_is_sent(self) -> None:
+        sent, consumed = self._reject("2048", b"a" * 2048)
+        self.assertEqual([413], sent)
+        self.assertEqual(2048, consumed, "the body must be read, or the close sends RST")
+
+    def test_an_oversized_declared_length_is_drained_only_to_the_bound(self) -> None:
+        """Bounded: a refusal must not become an unbounded read."""
+        cap = http_api._RequestHandler.REJECT_DRAIN_CAP_BYTES
+        sent, consumed = self._reject(str(cap * 4), b"b" * (cap + 100))
+        self.assertEqual([413], sent)
+        self.assertEqual(cap, consumed, "never more than the bound, whatever is declared")
+
+    def test_a_body_shorter_than_declared_does_not_hang(self) -> None:
+        """A peer that declares more than it sends must not block the handler.
+
+        BytesIO reports end of stream immediately; a real socket blocks instead,
+        which is why the drain is also bounded by a deadline. The socket case is
+        covered by test_a_declared_body_never_sent_does_not_stall below.
+        """
+        sent, consumed = self._reject("100000", b"c" * 10)
+        self.assertEqual([413], sent)
+        self.assertEqual(10, consumed)
+
+    def test_a_missing_or_unparseable_length_reads_nothing(self) -> None:
+        for declared in ("", "not-a-number"):
+            with self.subTest(declared=declared):
+                sent, consumed = self._reject(declared, b"d" * 50)
+                self.assertEqual([413], sent)
+                self.assertEqual(0, consumed)
+
+    def test_a_declared_body_never_sent_does_not_stall(self) -> None:
+        """The bug my first fix introduced, over a real socket.
+
+        A peer that declares a length and sends nothing made the drain block on
+        read1 until the connection timeout, which turned a refusal into a
+        five-second hang. A request-limit test sends exactly that shape on
+        purpose, so this is a real caller and not a hypothetical one.
+        """
+        httpd = make_server()
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            started = time.monotonic()
+            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=10)
+            try:
+                # Declare a body, send none: putrequest/endheaders without a send.
+                conn.putrequest("POST", "/api/notify")
+                # Above notification_body_cap_bytes, so this takes the rejection
+                # path. A declared length UNDER the cap is a different case: the
+                # accept path reads it and blocks, which is pre-existing
+                # behaviour and not what this test is about.
+                conn.putheader("Content-Length", "200000")
+                conn.putheader("Content-Type", "application/json")
+                conn.endheaders()
+                response = conn.getresponse()
+                self.assertEqual(413, response.status)
+                response.read()
+            finally:
+                conn.close()
+            elapsed = time.monotonic() - started
+            self.assertLess(
+                elapsed,
+                3.0,
+                f"a refusal must not wait out the connection timeout, took {elapsed:.1f}s",
+            )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_every_post_rejection_path_drains(self) -> None:
+        """The whole class of bug, not the one instance that was reported."""
+        source = Path(http_api.__file__).read_text(encoding="utf-8")
+        post_region = source[source.index("    def _usage_receipt") :]
+        self.assertNotIn(
+            "self.send_error(",
+            post_region,
+            "a POST path answering with send_error instead of _reject will strand its peer",
+        )
+
+
+class StreamEndpointTest(RuntimeTestCase):
+    """The SSE contract: immediate state, then one event per revision.
+
+    Every socket read carries a timeout. A blocking read with no deadline turns
+    a Windows CI failure into a hang, which reads as infrastructure trouble
+    rather than as the bug it is.
+    """
+
+    @staticmethod
+    def _open(port: int, headers: dict[str, str] | None = None) -> Any:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/api/stream", headers=headers or {})
+        return conn, conn.getresponse()
+
+    @staticmethod
+    def _read_event(response: Any, *, limit: int = 4096) -> str:
+        """Read until a blank line terminates one SSE frame, or the peer ends."""
+        chunks: list[bytes] = []
+        while len(b"".join(chunks)) < limit:
+            byte = response.read(1)
+            if not byte:
+                break
+            chunks.append(byte)
+            if b"".join(chunks).endswith(b"\n\n"):
+                break
+        return b"".join(chunks).decode()
+
+    def test_the_stream_opens_as_an_event_stream(self) -> None:
+        httpd = make_server()
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn, response = self._open(httpd.server_port)
+            try:
+                self.assertEqual(200, response.status)
+                self.assertEqual("text/event-stream", response.headers["Content-Type"])
+                self.assertEqual("no-store", response.headers["Cache-Control"])
+            finally:
+                conn.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_the_current_revision_arrives_immediately(self) -> None:
+        """A client must not wait for the next change to learn where it is."""
+        httpd = make_server()
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            # Publish something first, so there is a current revision to send.
+            httpd.application.collect_json(show_all=False)
+            conn, response = self._open(httpd.server_port)
+            try:
+                frame = self._read_event(response)
+                self.assertIn("event: revision", frame)
+                self.assertRegex(frame, r"data: \d+\.\d+")
+            finally:
+                conn.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_a_new_revision_is_delivered_to_an_open_stream(self) -> None:
+        httpd = make_server()
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            httpd.application.collect_json(show_all=False)
+            conn, response = self._open(httpd.server_port)
+            try:
+                first = self._read_event(response)
+                # Force a genuinely new revision, then read the next frame.
+                state_of().snapshot.clear()
+                httpd.application.collect_json(show_all=False)
+                second = self._read_event(response)
+                self.assertIn("event: revision", second)
+                self.assertNotEqual(first, second)
+            finally:
+                conn.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_a_cross_site_request_is_refused_unlike_api_data(self) -> None:
+        """A long-lived data stream is not a document navigation.
+
+        do_GET relaxes its origin check so a link to the dashboard works. This
+        route must re-check with the strict form, or that relaxation leaks onto
+        a stream any site could open.
+        """
+        httpd = make_server()
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn, response = self._open(
+                httpd.server_port,
+                {
+                    "Sec-Fetch-Site": "cross-site",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Dest": "document",
+                },
+            )
+            try:
+                self.assertEqual(403, response.status)
+                response.read()
+            finally:
+                conn.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_the_budget_refuses_past_the_cap(self) -> None:
+        """A refusal, not a queue: every stream costs a thread and a socket."""
+        httpd = make_server()
+        httpd.application.config = dataclasses.replace(
+            httpd.application.config, stream_max_clients=1
+        )
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            first_conn, first = self._open(httpd.server_port)
+            try:
+                self.assertEqual(200, first.status)
+                second_conn, second = self._open(httpd.server_port)
+                try:
+                    self.assertEqual(503, second.status)
+                    second.read()
+                finally:
+                    second_conn.close()
+            finally:
+                first_conn.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+
+class StreamShutdownTest(RuntimeTestCase):
+    """A stream asleep in wait() has to be woken, or shutdown looks like a hang.
+
+    server.shutdown() stops the accept loop and never touches handler threads,
+    and daemon_threads means nothing joins them, so nothing else would tell a
+    sleeping stream to stop.
+    """
+
+    def test_shutdown_closes_an_open_stream_promptly(self) -> None:
+        httpd = make_server()
+        # A heartbeat far longer than the assertion window, so a pass cannot be
+        # the heartbeat firing rather than the close.
+        httpd.application.config = dataclasses.replace(
+            httpd.application.config, stream_heartbeat_sec=60.0
+        )
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=10)
+            conn.request("GET", "/api/stream")
+            response = conn.getresponse()
+            self.assertEqual(200, response.status)
+            ended = threading.Event()
+
+            def drain() -> None:
+                while response.read(1):
+                    pass
+                ended.set()
+
+            reader = threading.Thread(target=drain, daemon=True)
+            reader.start()
+            httpd.application.state.streams.close_all()
+            self.assertTrue(
+                ended.wait(timeout=5.0),
+                "an open stream must end when the registry closes it",
+            )
+            conn.close()
+            reader.join(timeout=2)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_the_shutdown_endpoint_closes_streams_before_stopping(self) -> None:
+        httpd = make_server()
+        httpd.application.config = dataclasses.replace(
+            httpd.application.config, stream_heartbeat_sec=60.0
+        )
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            stream_conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=10)
+            stream_conn.request("GET", "/api/stream")
+            stream_response = stream_conn.getresponse()
+            self.assertEqual(200, stream_response.status)
+            ended = threading.Event()
+
+            def drain() -> None:
+                while stream_response.read(1):
+                    pass
+                ended.set()
+
+            reader = threading.Thread(target=drain, daemon=True)
+            reader.start()
+            stop_conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=10)
+            stop_conn.request("POST", "/api/shutdown", body=b"")
+            stop_conn.getresponse().read()
+            stop_conn.close()
+            self.assertTrue(
+                ended.wait(timeout=5.0),
+                "POST /api/shutdown must wake open streams, not leave them asleep",
+            )
+            stream_conn.close()
+            reader.join(timeout=2)
+        finally:
+            with contextlib.suppress(Exception):
+                httpd.server_close()
+            thread.join(timeout=2)
 
 
 class InstalledContractCharacterizationTest(unittest.TestCase):

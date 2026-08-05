@@ -26,6 +26,7 @@ from unittest import mock
 from cargento_runtime import cli, http_api, lifecycle
 from cargento_runtime import io as runtime_io
 
+from . import support
 from .page_harness import PageJsHarness
 from .support import (
     SERVER_PATH,
@@ -1401,3 +1402,155 @@ class SpawnArgvOptOutTest(unittest.TestCase):
         config = cfg()
         argv = lifecycle.spawn_argv(config, self._args(no_usage=True))
         self.assertNotIn("--daemon", argv)
+
+
+class ProducerTest(support.RuntimeTestCase):
+    """The producer keeps the snapshot warm, but only for a connected stream."""
+
+    @staticmethod
+    def _wait_for(predicate: Any, *, timeout: float = 10.0) -> bool:
+        """Poll until true, or give up.
+
+        Never a fixed sleep. A loaded CI runner can starve a 20 ms loop for a
+        quarter second, which made "at least two iterations" fail on macOS while
+        passing locally. Waiting on the condition tests the behaviour; sleeping
+        tests the runner.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.01)
+        return False
+
+    @staticmethod
+    def _server() -> Any:
+        return support.make_server()
+
+    def test_the_producer_does_nothing_with_no_connected_stream(self) -> None:
+        """The guarantee this whole phase most easily breaks.
+
+        An idle daemon does zero filesystem work today. A timer that collected
+        regardless would spend a laptop's battery on a board nobody is watching.
+        """
+        httpd = self._server()
+        calls: list[int] = []
+        stop = threading.Event()
+
+        def counting(_self: Any, *, show_all: bool) -> Any:
+            del show_all
+            calls.append(1)
+            return (0.0, 0), b"{}"
+
+        with mock.patch.object(type(httpd.application), "collect_json", counting):
+            thread = threading.Thread(
+                target=lifecycle.run_producer,
+                args=(httpd,),
+                kwargs={"stop": stop, "interval": 0.02},
+                daemon=True,
+            )
+            thread.start()
+            # A fixed window is right for an absence: there is no condition to
+            # wait for, and 10 intervals is ample opportunity to misbehave.
+            time.sleep(0.2)
+            stop.set()
+            thread.join(timeout=2)
+        httpd.server_close()
+        self.assertEqual([], calls, "no stream connected means no collection at all")
+
+    def test_the_producer_collects_while_a_stream_is_connected(self) -> None:
+        httpd = self._server()
+        calls: list[int] = []
+        stop = threading.Event()
+        client = httpd.application.state.streams.register(limit=4)
+        self.assertIsNotNone(client)
+        assert client is not None
+        self.addCleanup(httpd.application.state.streams.release, client)
+
+        def counting(_self: Any, *, show_all: bool) -> Any:
+            del show_all
+            calls.append(1)
+            return (0.0, 0), b"{}"
+
+        with mock.patch.object(type(httpd.application), "collect_json", counting):
+            thread = threading.Thread(
+                target=lifecycle.run_producer,
+                args=(httpd,),
+                kwargs={"stop": stop, "interval": 0.02},
+                daemon=True,
+            )
+            thread.start()
+            fed = self._wait_for(lambda: len(calls) > 0)
+            stop.set()
+            thread.join(timeout=2)
+        httpd.server_close()
+        self.assertTrue(fed, "a connected stream must be fed")
+
+    def test_the_stop_event_ends_the_producer_well_inside_one_interval(self) -> None:
+        httpd = self._server()
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=lifecycle.run_producer,
+            args=(httpd,),
+            kwargs={"stop": stop, "interval": 30.0},
+            daemon=True,
+        )
+        thread.start()
+        stop.set()
+        thread.join(timeout=3)
+        httpd.server_close()
+        self.assertFalse(thread.is_alive(), "stop must not wait out the interval")
+
+    def test_a_server_without_an_application_ends_the_producer_quietly(self) -> None:
+        """A server double is a real caller: cli.main's bind test uses one.
+
+        Reaching for server.application unguarded raised inside the producer
+        thread, which surfaced as an unhandled daemon-thread exception in the CI
+        log without failing anything: noise that hides real signal.
+        """
+
+        class Bare:
+            pass
+
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=lifecycle.run_producer,
+            args=(Bare(),),
+            kwargs={"stop": stop, "interval": 0.01},
+            daemon=True,
+        )
+        thread.start()
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive(), "it must return, not spin or raise")
+
+    def test_a_collection_error_does_not_kill_the_producer(self) -> None:
+        """A dead producer is a silently frozen dashboard."""
+        httpd = self._server()
+        calls: list[int] = []
+        stop = threading.Event()
+        client = httpd.application.state.streams.register(limit=4)
+        self.assertIsNotNone(client)
+        assert client is not None
+        self.addCleanup(httpd.application.state.streams.release, client)
+
+        def flaky(_self: Any, *, show_all: bool) -> Any:
+            del show_all
+            calls.append(1)
+            if len(calls) == 1:
+                msg = "store exploded"
+                raise OSError(msg)
+            return (0.0, 0), b"{}"
+
+        with mock.patch.object(type(httpd.application), "collect_json", flaky):
+            thread = threading.Thread(
+                target=lifecycle.run_producer,
+                args=(httpd,),
+                kwargs={"stop": stop, "interval": 0.02},
+                daemon=True,
+            )
+            thread.start()
+            survived = self._wait_for(lambda: len(calls) > 1)
+            stop.set()
+            thread.join(timeout=2)
+        httpd.server_close()
+        self.assertTrue(survived, "the loop must survive a failed collection")

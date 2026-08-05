@@ -921,6 +921,7 @@ class RuntimeImportGraphTest(unittest.TestCase):
             "cargento_runtime.notifications",
             "cargento_runtime.quota",
             "cargento_runtime.snapshot",
+            "cargento_runtime.stream",
         },
         "cargento_runtime.lifecycle": {
             "cargento_runtime.config",
@@ -937,7 +938,14 @@ class RuntimeImportGraphTest(unittest.TestCase):
         # revision and takes a lock. It imports no runtime module, which is what
         # lets both aggregate and the HTTP layer depend on it without a cycle.
         "cargento_runtime.snapshot": set(),
-        "cargento_runtime.state": {"cargento_runtime.config", "cargento_runtime.snapshot"},
+        # Connected SSE clients and their one-slot mailboxes. Imports no runtime
+        # module, which is what lets state own a registry without a cycle.
+        "cargento_runtime.stream": set(),
+        "cargento_runtime.state": {
+            "cargento_runtime.config",
+            "cargento_runtime.snapshot",
+            "cargento_runtime.stream",
+        },
         "cargento_runtime.transcripts": {
             "cargento_runtime.config",
             "cargento_runtime.io",

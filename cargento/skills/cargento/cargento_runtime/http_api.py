@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 from cargento_runtime import io as runtime_io
 from cargento_runtime import notifications, quota
 from cargento_runtime import snapshot as runtime_snapshot
+from cargento_runtime import stream as runtime_stream
 
 if TYPE_CHECKING:
     from cargento_runtime.aggregate import Application
@@ -138,6 +139,69 @@ class _RequestHandler(BaseHTTPRequestHandler):
     # reach 127.0.0.1-bound servers through the victim's browser).
     LOCAL_HOSTS: ClassVar[set[str]] = {"127.0.0.1", "localhost", "::1"}
 
+    # How much of a rejected POST's body to read and throw away. Generously above
+    # every accept-path cap so a rejection drains whatever a legitimate client
+    # sent, and still a hard bound so a hostile declared length cannot turn a
+    # refusal into an unbounded read.
+    REJECT_DRAIN_CAP_BYTES: ClassVar[int] = 1 << 20
+
+    # How long to spend draining a rejected body. Bounded in time as well as in
+    # bytes: a peer may declare a length it never sends, which a limit test does
+    # on purpose and a hostile client would do to stall a handler.
+    REJECT_DRAIN_SECONDS: ClassVar[float] = 0.25
+
+    def _drain_body(self) -> None:
+        """Read and discard a rejected request's body before answering.
+
+        Closing a socket that still holds unread inbound data makes the OS send
+        RST rather than FIN, and an RST can discard the reply already written.
+        The client then sees ECONNRESET, or WSAECONNABORTED on Windows, instead
+        of the 403 or 413 it was told to expect. That is what failed on the
+        macOS and Windows runners.
+
+        Bounded three ways, and all three are load-bearing. By the declared
+        length, so a well-behaved client is drained exactly. By
+        REJECT_DRAIN_CAP_BYTES, so a hostile declared length cannot turn a
+        refusal into an unbounded read. And by REJECT_DRAIN_SECONDS, because a
+        peer that declares more than it sends would otherwise stall this handler
+        until the connection timeout: `read1` blocks for at least one byte, and
+        a request-limit test sends exactly that shape deliberately.
+        """
+        try:
+            declared = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return
+        remaining = max(0, min(declared, self.REJECT_DRAIN_CAP_BYTES))
+        if not remaining:
+            return
+        deadline = time.monotonic() + self.REJECT_DRAIN_SECONDS
+        previous = None
+        try:
+            previous = self.connection.gettimeout()
+            self.connection.settimeout(self.REJECT_DRAIN_SECONDS)
+        except (OSError, AttributeError):
+            previous = None  # not a real socket, as in a handler-level test
+        try:
+            while remaining > 0 and time.monotonic() < deadline:
+                try:
+                    # read1, not read: one syscall returning what is available,
+                    # rather than blocking until the full count arrives.
+                    chunk = self.rfile.read1(min(remaining, 65_536))
+                except (OSError, ValueError, AttributeError):
+                    return
+                if not chunk:
+                    return  # end of stream, or nothing more is coming
+                remaining -= len(chunk)
+        finally:
+            if previous is not None:
+                with contextlib.suppress(OSError):
+                    self.connection.settimeout(previous)
+
+    def _reject(self, code: int) -> None:
+        """Refuse a POST without stranding the peer mid-write."""
+        self._drain_body()
+        self.send_error(code)
+
     def _local_ok(self, *, allow_cross_site_navigation: bool = False) -> bool:
         if normalize_host(self.headers.get("Host") or "") not in self.LOCAL_HOSTS:
             return False
@@ -240,6 +304,11 @@ class _RequestHandler(BaseHTTPRequestHandler):
         `shutdown()` inline would then deadlock, exactly as `BaseServer.
         shutdown`'s docstring warns.
         """
+        # Wake every stream first. shutdown() stops the accept loop but never
+        # touches handler threads, and a stream is asleep in wait() rather than
+        # in the socket, so nothing else would tell it to stop.
+        with contextlib.suppress(Exception):
+            self.server.application.state.streams.close_all()
         try:
             self._send(b'{"ok":true,"stopping":true}', "application/json")
             with contextlib.suppress(OSError, ValueError):
@@ -275,12 +344,85 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 "application/json",
                 headers={"X-Cargento-Revision": runtime_snapshot.format_revision(revision)},
             )
+        elif url.path == "/api/stream":
+            self._stream()
         elif url.path == "/api/health":
             self._health()
         elif url.path == "/":
             self._send(self.server.page_bytes, "text/html; charset=utf-8")
         else:
             self.send_error(404)
+
+    def _stream(self) -> None:
+        """The SSE revision stream.
+
+        Strictly same-origin. `do_GET` relaxes its check for document
+        navigations so a link to the dashboard works, and a long-lived data
+        stream is not a document navigation, so re-checking here with the
+        strict form is what keeps that relaxation off this route.
+        """
+        if not self._local_ok():
+            self.send_error(403)
+            return
+        application = self.server.application
+        state = application.state
+        client = state.streams.register(limit=application.config.stream_max_clients)
+        if client is None:
+            # A refusal, not a queue: every stream costs a thread and a socket
+            # for as long as it lives.
+            self.send_error(503)
+            return
+        try:
+            self._stream_forever(client)
+        finally:
+            state.streams.release(client)
+
+    def _stream_forever(self, client: runtime_stream.StreamClient) -> None:
+        application = self.server.application
+        config = application.config
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        with contextlib.suppress(OSError):
+            # A peer that stops reading must not pin this thread forever. The
+            # unbounded default is the real risk here, not server_close.
+            self.connection.settimeout(config.stream_write_timeout_sec)
+        current = application.state.snapshot.current((config.window_hours, False))
+        if current is not None and not self._emit(current[0]):
+            return
+        while True:
+            revision = client.wait(timeout=config.stream_heartbeat_sec)
+            # Checked after the wait, not in the loop condition: close() lands
+            # while this thread is asleep, which is the whole point of it, and a
+            # `while not client.closed` header reads to the type checker as a
+            # value that cannot change inside the body.
+            if client.closed:
+                return
+            if revision is None:
+                if not self._write_raw(b": keepalive\n\n"):
+                    return
+                continue
+            if not self._emit(revision):
+                return
+
+    def _emit(self, revision: runtime_snapshot.Revision) -> bool:
+        rendered = runtime_snapshot.format_revision(revision)
+        return self._write_raw(f"id: {rendered}\nevent: revision\ndata: {rendered}\n\n".encode())
+
+    def _write_raw(self, payload: bytes) -> bool:
+        """Write and flush, reporting whether the peer is still there.
+
+        No lock is held here. A blocked write must never be able to stall a
+        publisher or a collection.
+        """
+        try:
+            self.wfile.write(payload)
+            self.wfile.flush()
+        except (OSError, ValueError):
+            return False
+        return True
 
     def _usage_receipt(self) -> None:
         """A harness's own quota, forwarded here by its status-line command.
@@ -296,7 +438,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         except ValueError:
             length = -1
         if not 0 <= length <= application.config.usage_receipt_cap_bytes:
-            self.send_error(413)
+            self._reject(413)
             return
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -314,7 +456,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if not self._local_ok():
-            self.send_error(403)
+            self._reject(403)
             return
         path = urlparse(self.path).path
         if path == "/api/shutdown":
@@ -324,7 +466,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._usage_receipt()
             return
         if path != "/api/notify":
-            self.send_error(404)
+            self._reject(404)
             return
         # Claude Code Notification-hook payload: {"session_id": ..., "message": ..., ...}
         application = self.server.application
@@ -335,7 +477,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # Checked before the read, so an oversized declared length costs nothing
         # and no path here ever reads an unbounded body.
         if not 0 <= length <= application.config.notification_body_cap_bytes:
-            self.send_error(413)
+            self._reject(413)
             return
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
