@@ -56,9 +56,9 @@ class FrontendAssetContractTest(unittest.TestCase):
         assembled = frontend_page.load_page()
         styles = frontend_page.asset_path("styles.css").read_bytes()
 
-        self.assertEqual(130_266, len(assembled))
+        self.assertEqual(136_414, len(assembled))
         self.assertEqual(
-            "989ad9d7d1b7374ba7615c4878ca13cc36eb2070baef7cd77a92c758ad0a8f26",
+            "ca32abf983d4f80d7438e4464229d80dace6eb08491498d6a7a09fedc095f353",
             hashlib.sha256(assembled).hexdigest(),
         )
         self.assertEqual(39_054, len(styles))
@@ -84,20 +84,24 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "0d7db08f93e91e944989b1a44c587a3fadce368ac4ce7c0d3f1d1d449c7652a6",
             ),
             "controls.js": (
-                3_382,
-                "ca8282870edbf67b14c78e533e1caeb182318632524a6bf6ff3741d78870ffcc",
+                3_363,
+                "b45a331ff631f4293b463765c85f45ae9bc2b5b7b43401034727a5867a1ac0e7",
             ),
             "calm.js": (
-                26_824,
-                "cccfcdfa23e04a175318bc171f9ed1e5e8d5899368893d148120cf090b159548",
+                26_855,
+                "80f1419bf531f2ddb0e5fa3a49a13e62e3e9a311d7ab8301b2a95194de5fbd94",
             ),
             "notify.js": (
                 2_655,
                 "79b0396140c35ad4b34b9656b692ed45855fb04e63a2165610531b5d4aa54984",
             ),
             "main.js": (
-                8_025,
-                "0890ca1a3c6ca4233edd66e4e69a42617369c3371ad434dce1fa148e1f287f6f",
+                7_985,
+                "d756dcc8bfc7a67fab0e2aa085e897e52d611ac8a96c4f1bb3e1f42b6fa59faf",
+            ),
+            "live.js": (
+                6_176,
+                "661a904fca78f02d00f40a7ac8b9f1f8973ddff90bf8db123de5e336d063211f",
             ),
         }
         self.assertEqual(tuple(expected_parts), frontend_page.APP_PARTS)
