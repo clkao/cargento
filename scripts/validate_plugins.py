@@ -93,9 +93,13 @@ UniqueKeyLoader.add_constructor(
 # glob would describe whatever happens to be present and could never notice an
 # omission.
 CARGENTO_RUNTIME_FILES = (
+    # Codex loads this through the `hooks` key in its manifest, so an install
+    # missing it silently reports no Codex events at all rather than failing.
+    "hooks/codex-hooks.json",
     "skills/cargento/server.py",
     "skills/cargento/notify_hook.py",
     "skills/cargento/event_hook.py",
+    "skills/cargento/statusline_hook.py",
     "skills/cargento/cargento_runtime/__init__.py",
     "skills/cargento/cargento_runtime/cli.py",
     "skills/cargento/cargento_runtime/config.py",
