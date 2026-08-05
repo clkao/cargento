@@ -198,7 +198,67 @@ class CargentoServerTest(RuntimeTestCase):
         self.assertEqual(1, calls.count((24, True)))
         self.assertEqual(1, len(set(bodies)))
         self.assertNotEqual(bodies[0], alternate)
-        self.assertEqual(2, len(state_of().collect_memo))
+        # Both variants are published, separately, into the runtime's snapshot.
+        snap = state_of().snapshot
+        self.assertIsNotNone(snap.current((24, False)))
+        self.assertIsNotNone(snap.current((24, True)))
+
+    @staticmethod
+    def _get_headers(port: int, path: str) -> tuple[int, email.message.Message, bytes]:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.request("GET", path)
+            response = conn.getresponse()
+            return response.status, response.headers, response.read()
+        finally:
+            conn.close()
+
+    def test_api_data_names_the_revision_it_served(self) -> None:
+        """A client cannot hold a cursor it cannot see.
+
+        The revision rides in a header, not the body, so the documented JSON
+        contract and every curl caller are untouched.
+        """
+        httpd = make_server()
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            port = httpd.server_port
+            _code, headers, body = self._get_headers(port, "/api/data")
+            first = headers["X-Cargento-Revision"]
+            self.assertRegex(first, r"^\d+\.\d+$")
+            # The body still parses and still carries its documented keys.
+            payload = json.loads(body)
+            self.assertIn("sessions", payload)
+            self.assertIn("generated", payload)
+            # A warm re-read serves the same revision.
+            _code, headers, _body = self._get_headers(port, "/api/data")
+            self.assertEqual(first, headers["X-Cargento-Revision"])
+            # A stale read mints a higher counter against the same start stamp.
+            state_of().snapshot.clear()
+            _code, headers, _body = self._get_headers(port, "/api/data")
+            second = headers["X-Cargento-Revision"]
+            self.assertEqual(first.split(".")[0], second.split(".")[0])
+            self.assertGreater(int(second.split(".")[1]), int(first.split(".")[1]))
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_only_api_data_carries_a_revision(self) -> None:
+        """A page load or a liveness probe must not look like a cursor."""
+        httpd = make_server()
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            for path in ("/", "/api/health"):
+                with self.subTest(path=path):
+                    _code, headers, _body = self._get_headers(httpd.server_port, path)
+                    self.assertIsNone(headers.get("X-Cargento-Revision"))
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
 
     def test_a_requested_window_reaches_the_collection_and_its_memo_key(self) -> None:
         # The window is a request-time argument: /api/data must collect and
@@ -211,8 +271,9 @@ class CargentoServerTest(RuntimeTestCase):
 
             self.assertEqual(6, requested["window_hours"])
             self.assertEqual(24, default["window_hours"])
-            self.assertIn((6, False), state_of().collect_memo)
-            self.assertIn((24, False), state_of().collect_memo)
+            snap = state_of().snapshot
+            self.assertIsNotNone(snap.current((6, False)))
+            self.assertIsNotNone(snap.current((24, False)))
 
     def test_collector_failure_is_exposed_in_harness_status(self) -> None:
         def fail(*_args: object) -> list[dict[str, Any]]:
@@ -597,7 +658,7 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
             state_of().last_session_state.clear()
             state_of().hook_generation.clear()
         with state_of().collect_memo_lock:
-            state_of().collect_memo.clear()
+            state_of().snapshot.clear()
         # Route-shape tests exercise successful /api/notify requests, but do
         # not assert native delivery. Execute the notification code while
         # keeping its osascript process off the host.
@@ -621,7 +682,7 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         with state_of().collect_memo_lock:
-            state_of().collect_memo.clear()
+            state_of().snapshot.clear()
 
     @staticmethod
     def _response(
@@ -646,7 +707,12 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
         with mock.patch.object(
             aggregate.Application,
             "collect_json",
-            return_value=json.dumps({"generated": 1.0, "sessions": [], "harnesses": []}).encode(),
+            # (revision, body): the handler names the revision it served in a
+            # header, so the stub has to carry one too.
+            return_value=(
+                (1.0, 1),
+                json.dumps({"generated": 1.0, "sessions": [], "harnesses": []}).encode(),
+            ),
         ):
             try:
                 cases = (

@@ -6,15 +6,12 @@ import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from cargento_runtime import snapshot as runtime_snapshot
+
 if TYPE_CHECKING:
     from _thread import LockType
 
     from cargento_runtime.config import RuntimeConfig
-
-
-class CollectMemoEntry(TypedDict):
-    ts: float
-    body: bytes
 
 
 class UsageFetchEntry(TypedDict):
@@ -26,9 +23,19 @@ class UsageFetchEntry(TypedDict):
 class RuntimeState:
     config: RuntimeConfig
     server_started: float
+    # The published responses live here rather than on the Application, exactly
+    # where the memo they replace lived. Two applications over one state must
+    # share one scan: that single-flight property is what stops concurrent tabs
+    # stampeding a cold entry, and it is a property of the runtime, not of the
+    # object that happens to serve a request.
+    snapshot: runtime_snapshot.Snapshot = field(init=False)
     hook_lock: LockType = field(default_factory=threading.Lock)
     cache_lock: LockType = field(default_factory=threading.Lock)
     scanner_lock: LockType = field(default_factory=threading.Lock)
+    # Named for the memo it used to guard, and still doing that memo's real job:
+    # held across collection so concurrent readers share one filesystem and
+    # SQLite scan. The published bytes moved to `snapshot`, which has its own
+    # lock and never holds it across a collection or a socket write.
     collect_memo_lock: LockType = field(default_factory=threading.Lock)
     hook_notifications: dict[str, dict[str, Any]] = field(default_factory=dict)
     last_popup: dict[str, float] = field(default_factory=dict)
@@ -59,7 +66,6 @@ class RuntimeState:
     )
     spacedock_entity_cache: dict[tuple[str, int, int], str] = field(default_factory=dict)
     cursor_metadata_cache: dict[str, tuple[float, str | None, str]] = field(default_factory=dict)
-    collect_memo: dict[tuple[float, bool], CollectMemoEntry] = field(default_factory=dict)
     # The quota fetch. One cache entry per vendor key, stamped with the fetch
     # time so the five-minute floor is a comparison, and one in-flight marker
     # per vendor so a slow request cannot stack a second behind it. Guarded by
@@ -72,6 +78,11 @@ class RuntimeState:
     # way and guarded by the same lock: one cache, two ways to fill it. In
     # memory only, so Cargento's two written paths are unchanged.
     usage_receipts: dict[str, UsageFetchEntry] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Built here rather than by a default_factory because it needs
+        # server_started, which is a field of this same dataclass.
+        self.snapshot = runtime_snapshot.Snapshot(server_started=self.server_started)
 
 
 def build_runtime_state(config: RuntimeConfig, *, started: float) -> RuntimeState:
