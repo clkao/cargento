@@ -64,6 +64,23 @@ collector, since the cost is dominated by whichever harness has the most history
 that is not the same harness for everyone. It runs with usage fetching off, so a benchmark never makes
 an outbound request.
 
+`scripts/capture_hook.py` is also outside the gate. It answers the adapter-semantics question for the
+event-driven work: what a harness lifecycle event means, how many arrive per turn, and in what order.
+None of that is documented anywhere, so it has to be observed. `--report` summarises what has
+accumulated, and captures land in `~/.cargento/captures`.
+
+`--install` does not print a block to paste. It reads your existing `settings.json`, appends the
+capture hook as an extra matcher group on each event, and writes the result to
+`settings_with_hooks.json` beside it. Nothing is written over: read the merged file, then swap it in
+yourself. Appending a group rather than editing one in place is what makes an existing hook on the same
+event safe, since Claude Code runs every group whose matcher matches. Running it twice adds nothing.
+
+It records shape and refuses content. A capture line carries the event name, the session prefix, a
+salted digest of the working directory, the sorted top-level keys the payload carried, the tool name,
+and how long the hook itself took. It never records a prompt, a tool argument, a tool result, or a
+path. A research tool that captured those would be a worse leak than the thing it is researching,
+because it writes to disk and accumulates.
+
 ### Tests
 
 Every behavior change to `server.py` or `cargento_runtime/` needs a regression test in
