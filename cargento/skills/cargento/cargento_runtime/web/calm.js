@@ -32,6 +32,12 @@ const CALM_TASK = {
   completed:  {glyph:"✓", ink:"var(--accent-ink)", text:"var(--ink3)"}
 };
 const CALM_TASK_ORDER = {in_progress:0, pending:1, completed:2};
+/* The order segment: the key the action carries, and the word on the button.
+   They differ for one of them. `burn` is what the ordering is called wherever it
+   is implemented; `fastest` is the word a reader scanning for "who is burning
+   fastest" will actually look for. */
+const CALM_SORTS = [["attention", "attention"], ["recent", "recent"],
+                    ["repo", "repo"], ["burn", "fastest"]];
 
 /* These tables are indexed by strings that come out of the payload, and every
    plain object inherits truthy `constructor`, `toString` and friends from
@@ -65,7 +71,27 @@ function calmRow(d, x){
   const tasks = (x.tasks || []).slice().sort(
     (a, b) => own(CALM_TASK_ORDER, a.status, 3) - own(CALM_TASK_ORDER, b.status, 3));
   const taskDone = tasks.filter(t => t.status === "completed").length;
-  const rate = x.rate_per_min || 0;
+  /* `null` where the harness reports no rate at all, which is a different fact
+     from a zero and must never be ranked as one — see calmEntries' burn branch
+     and rateKnown(). */
+  const rateIsKnown = rateKnown(d, x);
+  const rate = rateIsKnown ? ((isFinite(x.rate_per_min) ? x.rate_per_min : 0) || 0) : null;
+  /* The column fills for the working rows and for nothing else: the bucket it
+     describes, and the bucket the burn ordering ranks out of (see calmEntries,
+     which ranks the active ones of them).
+     It used to fill for any row carrying a rate above zero as well, so that the
+     ordering could show what it ranked on — but nothing outside `work` is ranked
+     now, so that clause bought the column nothing and cost it one meaning per
+     glyph. Three states, each with exactly one reading: a number is a
+     measurement, including a real 0; a dash is a harness that never measured
+     one; an empty cell is a row that is not working, whose own headline number
+     is the `idle / wait` column beside it. Filling by rate instead left a
+     measured 0 rendering as the empty cell — less legible than the dash that
+     means nobody knows — which inverts the very distinction rateKnown() exists
+     to draw, and it printed a stopped session's stale mean into a column whose
+     other rows are a live ranking. regular.js draws its rate meter on the same
+     terms: a card that is not working gets no meter at all. */
+  const showRate = st === "work";
   return {
     key: sessKey(x), sid: x.sid,
     harness: x.harness, project: x.project, session: x.session,
@@ -82,6 +108,24 @@ function calmRow(d, x){
     tasks, taskNote: tasks.length ? taskDone + " of " + tasks.length + " done" : "",
     subagents: x.subagents || [], spacedock: x.spacedock || null,
     rank: flag ? CALM_TONE[tone].rank : (st === "work" ? 2 : 4),
+    /* Whether the burn ordering may rank this row at all: `state === "working"
+       && active`, which is the predicate regular.js's burnLeaders() takes,
+       rather than the `work` bucket alone. `active` is the server's "wrote
+       something inside the display window", so a row can hold a working state it
+       has not backed with any activity for longer than that whole window —
+       `?all=1` lists those, and a session whose subagents keep the state file
+       working reaches it too. Such a row still carries the trailing mean its
+       harness last measured, so ranking on the bucket put it at the top under
+       "fastest first" while the regular view marked a live session a fiftieth as
+       fast as `fastest`. One predicate, read by both views, is the only way that
+       stays impossible. */
+    running: x.state === "working" && !!x.active,
+    /* What the burn ordering ranks on: the number itself, or null where nobody
+       measured one. A number here is not on its own a place in the ranking —
+       that branch takes the `running` rows only. Kept separate from the rendered
+       `rate` string below, because a sort key that has been through
+       toLocaleString() sorts on commas. */
+    burn: rate,
     /* One column used to carry all three buckets' headline numbers under the
        single heading `signal` — tokens per minute on one row, hours idle on the
        next. A column whose unit changes per row cannot be compared down its own
@@ -89,9 +133,12 @@ function calmRow(d, x){
        each with one unit: what this request is producing, and how long the
        session has been sitting still. Both are empty where they do not apply,
        and an empty cell reads as "not applicable" where a wrong unit does not. */
-    rate: st === "work" ? (rate ? rate.toLocaleString() + " /m" : "—") : "",
-    rateTip: st === "work"
-      ? (rate ? rate.toLocaleString() + " tokens per minute" : "this harness reports no token rate")
+    rate: showRate ? (rateIsKnown ? rate.toLocaleString() + " /m" : "—") : "",
+    rateTip: showRate
+      ? (rateIsKnown
+          ? rate.toLocaleString() + " tokens per minute, averaged over the last " +
+            fmtDur(rateWindowSec(d))
+          : "this harness reports no token rate")
       : "",
     quiet: st === "needs" ? fmtDur(waitSec) : (st === "idle" ? fmtDur(ageSec) : ""),
     quietTip: st === "needs" ? "blocked on you for " + fmtDur(waitSec)
@@ -123,9 +170,84 @@ function calmFilter(all){
 const bySid = (a, b) => (a.sid < b.sid ? -1 : (a.sid > b.sid ? 1 : 0));
 const byAge = (a, b) => a.sortAge - b.sortAge || bySid(a, b);
 const byRank = (a, b) => a.rank - b.rank || byAge(a, b);
+/* Fastest known rate first. Only ever applied to working rows whose rate is
+   known: see the burn branch below for where the others go, which is not "the
+   bottom". */
+const byBurn = (a, b) => b.burn - a.burn || bySid(a, b);
 
-/* Returns display entries: {row} for a session, {divider} for a repo heading. */
-function calmEntries(shown){
+/* Returns display entries: {row} for a session, {divider} for a group heading. */
+function calmEntries(shown, d){
+  if(calmSort === "burn"){
+    /* The one ordering that ranks on a value which ticks, and so the one that
+       can move a row under the reader between polls. Accepted here and nowhere
+       else: the reader picked this order to ask which session is burning
+       fastest, and an answer that cannot change is not an answer to that
+       question. It is never the default, and the trailing mean it ranks on moves
+       slowly enough that a swap reflects a real change in output rather than the
+       poll jitter that `sortAge` exists to absorb.
+
+       Only the rows that are working AND active are ranked — `running`, the
+       predicate burnLeaders() takes, read rather than restated — and for the
+       reason it gives: a session that stopped two minutes ago still carries a
+       non-zero trailing mean, and putting that row at the top under "fastest
+       first" sends the reader to an agent doing nothing. Reading the `work`
+       bucket instead looked like that scope and was not: it ranked a session
+       whose state still says working but which has not written inside the
+       display window, so the two views did still name different sessions
+       fastest on one payload — the second fault this scope exists to prevent.
+       A stopped row keeps a real `burn` — its harness did measure that mean —
+       so it leaves the ranking on state here rather than by nulling the field,
+       which would file it under the divider that says nobody measured it.
+
+       Being comparable is not the same as there being something to compare.
+       burnRacers() is the regular view's own rule for that, read rather than
+       restated: a set of candidates whose fastest is generating nothing holds one
+       number between them, so ordering them descending presents an arbitrary
+       sequence as a ranking and puts a row at the top of "fastest first" that is
+       producing nothing at all. Those rows are neither ranked nor scattered among
+       the groups for rows nobody measured — their zeroes ARE measurements, and the
+       cells show them — so they take a divider of their own, in the place the
+       ranking would have had. It only ever appears with the ranked group empty:
+       one positive rate anywhere in the set is a race, and then every candidate is
+       in it.
+
+       Nothing the ordering cannot rank is sorted to the bottom of the descending
+       list. That would present those rows as the slowest sessions on the board,
+       and the reader cannot see that the placement rests on a number which does
+       not exist, or on one which does but describes a session that has stopped.
+       Each set sits under its own divider instead, which says which it is.
+
+       Measured-but-not-running goes below unmeasured-but-running: a row the
+       ordering could not read is still nearer the question than a row that cannot
+       be generating at all. That last label says "now" because its group holds two
+       kinds of row and one of them displays as working: the rows whose state is
+       not working, and the rows whose state says working but whose harness has
+       not written inside the display window. Which is the whole reason the
+       ranking left them out, so the divider had better not deny it.
+
+       The leading divider carries the window this ordering ranked on. "Fastest"
+       invites reading as this instant, and the arithmetic is a trailing mean, so
+       the ordering states its own terms where it cannot be missed. */
+    const measured = shown.filter(r => r.running && r.burn != null);
+    const racing = burnRacers(measured, r => r.burn);
+    const ranked = racing.slice().sort(byBurn);
+    const flat = racing.length ? [] : measured.slice().sort(byRank);
+    const mute = shown.filter(r => r.running && r.burn == null).sort(byRank);
+    const still = shown.filter(r => !r.running).sort(byRank);
+    const group = (label, rows) => ({divider: {label, count: rows.length,
+                                               flagged: rows.filter(r => r.flag).length}});
+    const out = [];
+    for(const [rows, label] of [
+        [ranked, "fastest first · " + fmtDur(rateWindowSec(d)) + " mean"],
+        [flat, "all measured at zero · no ranking to make"],
+        [mute, "no rate reported · cannot be ranked"],
+        [still, "not working now · not in the ranking"]]){
+      if(!rows.length) continue;
+      out.push(group(label, rows));
+      for(const r of rows) out.push({row: r});
+    }
+    return out;
+  }
   if(calmSort === "recent"){
     return shown.slice().sort(byAge).map(r => ({row: r}));
   }
@@ -155,7 +277,7 @@ function calmEffectiveFocus(order){
 }
 
 function calmOrder(d){
-  return calmEntries(calmFilter(d.sessions.map(x => calmRow(d, x))))
+  return calmEntries(calmFilter(d.sessions.map(x => calmRow(d, x))), d)
     .filter(e => e.row).map(e => e.row);
 }
 
@@ -399,10 +521,32 @@ function calmRowHTML(r, focusSid){
     (open ? calmExpansion(r) : "") + `</div>`;
 }
 
+/* Whether the footer's total is a figure or a floor. The ledger dashes the rows
+   nobody measured one at a time; the footer is where a reader takes the board's
+   output as a single number, and that is the number which must not be left to
+   imply completeness — a harness whose collector raised published no row for the
+   ledger to dash, so the footer is the only place its absence can be said.
+
+   Which holes make a floor, and the words for them, are rateFloor()'s: one
+   function for both views, so the two modes cannot word the same total
+   differently or find different amounts of the board missing. Calm spends one
+   footer item on it rather than the tile's second line — the `≥` carries the
+   qualification where the eye already is, and the item beside it says what is
+   missing, naming the harnesses in its tooltip. */
+function calmRateFloor(d){
+  const floor = rateFloor(d);
+  return {
+    mark: floor.mark,
+    note: floor.line
+      ? `<span title="${esc(floor.tip)}">${esc(floor.line)}</span>`
+      : ""
+  };
+}
+
 function calmLedger(d){
   const all = d.sessions.map(x => calmRow(d, x));
   const shown = calmFilter(all);
-  const entries = calmEntries(shown);
+  const entries = calmEntries(shown, d);
   const focusSid = calmEffectiveFocus(entries.filter(e => e.row).map(e => e.row));
   const count = st => all.filter(r => r.st === st).length;
   const chip = (st, label, dot) =>
@@ -413,9 +557,9 @@ function calmLedger(d){
     chip("needs", "needs you", `<span class="cm-dot" style="background:var(--alert)"></span>`) +
     chip("work", "working", `<span class="cm-dot" style="background:var(--accent)"></span>`) +
     chip("idle", "idle", `<span class="cm-dot hollow"></span>`);
-  const sorts = ["attention", "recent", "repo"].map(k =>
+  const sorts = CALM_SORTS.map(([k, label]) =>
     `<button type="button" class="cm-segb${calmSort === k ? " on" : ""}" data-calm="sort"` +
-    ` data-arg="${k}" aria-pressed="${calmSort === k}">${k}</button>`).join("");
+    ` data-arg="${k}" aria-pressed="${calmSort === k}">${label}</button>`).join("");
   const flagged = all.filter(r => r.flag).length;
   const clear = (calmFlagOnly || calmStateOnly)
     ? `<button type="button" class="cm-clear" data-calm="clear">clear</button>` : "";
@@ -443,6 +587,7 @@ function calmLedger(d){
   }
 
   const found = (d.harnesses || []).filter(h => h.discovered);
+  const floor = calmRateFloor(d);
   const strip = (d.harnesses || []).map(h => badge(h.key, h.discovered && !h.error, h.label,
     h.error ? " — collector error" : (h.discovered ? "" : " — no data"))).join("");
   return `<div class="cm-frame">` +
@@ -472,7 +617,8 @@ function calmLedger(d){
        filter-aware. Repeating it down here was a second number for one fact. */
     `<div class="cm-foot"><span>${found.length} ` +
     `${found.length === 1 ? "harness" : "harnesses"} · ` +
-    `${(d.summary.rate_per_min || 0).toLocaleString()} tok/min</span>` +
+    `${floor.mark}${(d.summary.rate_per_min || 0).toLocaleString()} tok/min</span>` +
+    floor.note +
     `<span class="cm-fstrip">${strip}</span><span class="cm-sp"></span>` +
     `<span class="cm-keys">` +
     CALM_FLAG_LEGEND.map(f => `<span><span class="cm-legend-f"` +

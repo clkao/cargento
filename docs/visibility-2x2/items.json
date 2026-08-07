@@ -96,12 +96,13 @@
     "All 57 items were re-scored by three blind lenses across two rounds, 171 independent scores. The author's originals are gone by request; what remains is the vetted consensus.",
     "The audit found the author's bias was on the WRONG AXIS from what anyone suspected. Access inflation was small: +4.4 inside the differentiated quadrant against -3.1 outside. Impact inflation was large and consistent at +10.3, repeating at +6.6 in the second round even after the rubric was corrected. Of the ten items that fell out of the quadrant, eight fell on impact alone and none on access alone. The author was not pushing items sideways into the corner; they were overstating how much anyone would DO with the information.",
     "Two mechanical biases were verified against the raw data rather than taken on trust. The axis realignment was a one-way ratchet: 43 of 57 items moved up by an average of +38.1 points and only 13 moved down, which is a new prior wearing a new definition's clothes. And flagged favourites carried a measurable premium, averaging impact 73.5 against 61.0 for unflagged items, concentrated on impact because that is the axis with no external check.",
-    "The largest structural finding is redundancy. Twenty-one strict subset relationships were found across the board: C5 within C2, B3 and B5 within B4, D6 within D5, A1 and A2 and A5 within A9, E1 within E2 and E3, F1 within F6. The board reads as 57 features and is nearer 47 once duplicates fold in. Redundancy penalties are held as metadata rather than subtracted from impact, because they only bite once the primary ships. Nine of those subsets score HIGHER than the item containing them, including E4 over E5 and C5 over C2, which inverts the usual reading: the narrow slice is the thing to build and the broad version is the thing to defer.",
+    "The largest structural finding is redundancy. Twenty-one strict subset relationships were found across the board: C5 within C2, B3 and B5 within B4, D6 within D5, A1 and A2 and A5 within A9, E1 within E2 and E3, F1 within F6. The board reads as 57 features and is nearer 47 once duplicates fold in. Redundancy penalties are held as metadata rather than subtracted from impact, because they only bite once the primary ships. Nine of those subsets score HIGHER than the item containing them, including E4 over E5 and C5 over C2, which inverts the usual reading: the narrow slice is the thing to build and the broad version is the thing to defer. [Dated: this census is the audit's finding, and decisions have moved under it. A9 was cut on 2026-08-06, so the five relations recorded within it — A1, A2, A5, A6 and G1 — describe an item that will not be built; their redundantWith blocks are gone from the items, and A1 and A2 have since shipped. No score moved either way, because the penalties were always metadata. The live field is subsetOf, which is what 'primaries only' filters on and which ten items still carry; audit/g2-redundancy.jsonl holds the census itself, and each item's own verdict and decisionNote hold what has happened since.]",
     "Detector risk is now priced separately. Ten items score high on access precisely because no tool anywhere computes the number, which is not access being withheld but a number that does not exist. Their value rests on a heuristic being accurate. C2 takes the largest discount among the strong items at -30, which is the honest cost of the fact that a false all-clear sends someone away from a wedged agent.",
     "Two action items were badly misread as information. D7 was scored 72 for access when it is a sort order that already ships behind a toggle, so its do-access is 12. E7 was scored 62 when it is a sentence the user types, so its do-access is 15. Both corrections are large enough to move them off the board's high-value list.",
     "D1, the disputed placement, is settled and the board was closer than the author. Consensus access is 52 against the author's 65, because tmux list-panes and capture-pane let a competent developer sweep every session in one pass. The author's own principle was too broad: the fleet is a loop, and only correlation over TIME is genuinely beyond reach. Impact came in at 65, above the author's 52, so the error ran in both directions.",
     "E4, ended with uncommitted work, was promoted on a strong twice-confirmed finding. It is the one place the pane sweep has no answer, because an ended session has no pane and no process. That is the general test for future items: does answering it require a session that no longer exists?",
-    "The impact>=70 line is fragile and should not be presented as a hard binary. Twenty items sit between 63 and 75 on impact (twelve of them on the high-access side where the line alone decides the quadrant), and a five-point move in the threshold roughly doubles the quadrant count. The band is drawn on the map for that reason."
+    "The impact>=70 line is fragile and should not be presented as a hard binary. Twenty items sit between 63 and 75 on impact (twelve of them on the high-access side where the line alone decides the quadrant), and a five-point move in the threshold roughly doubles the quadrant count. The band is drawn on the map for that reason.",
+    "How to read these notes: they are the audit's own record, written when it ran, and they are not rewritten as the board moves. Counts and item lists in them describe the board of that date. Where a later decision contradicts one, the item carries the current state in its verdict, decisionNote and subsetNote fields, and the note here is only how the board got there."
   ],
   "items": [
     {
@@ -110,23 +111,18 @@
       "outcome": "avoid force-pause",
       "archetype": "capacity",
       "impact": 65,
-      "build": 25,
-      "state": "new",
+      "build": 0,
+      "state": "shipped",
       "column": "usage",
-      "release": "r2",
+      "release": "done",
       "origin": "workshop",
       "flag": true,
-      "note": "From the workshop board, and the most-cited pain on it: force-paused mid-job, restart by hand after the reset. Under the realigned axis it is the closest thing here to a commodity, at access 24, because /usage is one command away and a Barista-style status line puts it on screen unprompted. That is not an argument to cut it. It is the prerequisite for A2, A3, A4, A5, A7, A8, A9 and E7, so treat it as plumbing rather than a feature, and never ship it alone: on its own it spends a security amendment to save the user a glance at a status line.",
-      "needs": "See DEC-1. The data is real, five_hour.utilization and resets_at, but it arrives from an authenticated API call rather than a local file. Direction is to amend the promise. The live question is which of the three shapes we amend it into.",
+      "note": "From the workshop board, and the most-cited pain on it: force-paused mid-job, restart by hand after the reset. Under the realigned axis it is the closest thing here to a commodity, at access 24, because /usage is one command away and a Barista-style status line puts it on screen unprompted. That is not an argument to cut it. It is the prerequisite for A2, A3, A4, A5, A7, A8, A9 and E7, so treat it as plumbing rather than a feature, and never ship it alone: on its own it spends a security amendment to save the user a glance at a status line. [Shipped since, so the sequencing advice above is a record of the argument rather than a live instruction.]",
+      "needs": "Done. DEC-1 resolved on 2026-08-04 and the numbers now arrive three ways: the server fetches Claude's (and Cursor's) with the vendor's own token, Codex's are read from the rate-limit snapshots it already writes to disk, and Antigravity pushes its own in as a receipt. A vendor with no quota authority of its own still shows nothing.",
       "access": 24,
       "kind": "information",
       "detectorRisk": 0,
       "riskAdjustedImpact": 65,
-      "redundantWith": {
-        "primary": "A9",
-        "penalty": 50,
-        "remains": "The exact percentage and the reset clock, for a user who wants to reason instead of obeying a light: 'red, but it resets in 11 minutes, so I will wait rather than switch model'. That is real and small. A1 remains a mandatory input to A9, A2, A5, A7 and E7, so the penalty is against counting it as a user-facing feature, not against building it. Its own note already says to ship it as plumbing and never alone; at access 24 [stale '12' corrected to the panel median] it is the most commodity item here, and A9 is where its impact [the author's pre-panel 88; panel median for A9 is 68] actually gets realised."
-      },
       "scoreBasis": "panel median of 3 blind lenses",
       "quadrant": "furniture",
       "scoreConfidence": "medium"
@@ -137,25 +133,17 @@
       "outcome": "plan the week, not the hour",
       "archetype": "capacity",
       "impact": 60,
-      "build": 15,
-      "state": "new",
+      "build": 0,
+      "state": "shipped",
       "column": "usage",
-      "release": "r2",
+      "release": "done",
       "origin": "workshop",
       "note": "The 5h window governs the next job. The weekly window governs whether to start a big one at all on a Thursday.",
-      "needs": "Same source and same decision as A1.",
-      "requires": [
-        "A1"
-      ],
+      "needs": "Done. The weekly window ships wherever the 5-hour one does, and a Codex plan that publishes only the weekly one publishes without it.",
       "access": 26,
       "kind": "information",
       "detectorRisk": 0,
       "riskAdjustedImpact": 60,
-      "redundantWith": {
-        "primary": "A9",
-        "penalty": 38,
-        "remains": "The multi-day horizon a start/stop light cannot express: whether to begin a large job on a Thursday at all. A9 can only encode that by becoming time-scoped, at which point it has absorbed A2. What survives independently is the weekly reset date as a planning fact."
-      },
       "scoreBasis": "panel median of 3 blind lenses",
       "quadrant": "furniture",
       "scoreConfidence": "high"
@@ -237,11 +225,6 @@
       "riskAdjustedImpact": 46,
       "inferred": "Forward consumption rate, extrapolated from recent token or request throughput to a time-of-exhaustion. The series is non-stationary and bursty: an agent that just went idle carries a stale high rate, a compaction or a large file read spikes it, and the burn over the next hour depends mostly on what the user chooses to launch next, which is not in the data at all.",
       "detectorConfidence": "medium",
-      "redundantWith": {
-        "primary": "A9",
-        "penalty": 30,
-        "remains": "Time-to-wall as a quantity rather than a verdict, which is what you scope the next prompt against ('22 minutes left, so ask for the small refactor') and what E7 triggers on. A9 collapses it to green/amber/red and loses the number. This is the largest surviving residue in the cluster, and the reason A5 rather than A1 is the item that earns DEC-1."
-      },
       "scoreBasis": "panel median of 3 blind lenses",
       "quadrant": "differentiated",
       "scoreConfidence": "low"
@@ -271,12 +254,7 @@
       "subsetOf": [
         "A9"
       ],
-      "subsetNote": "A6 subset of A9's question - both answer 'should I start', A6 adding a task-size estimate that needs H1 and stays speculative.",
-      "redundantWith": {
-        "primary": "A9",
-        "penalty": 30,
-        "remains": "The demand side of the same comparison: A9 knows the ceiling but not the size of the job you are about to start. That is a genuine gap, and also the half nobody computes well; it needs H1 plus shape-matching against past sessions and stays speculative even then. Once A9 exists, A6 is a refinement of A9's threshold, not a separate decision."
-      },
+      "subsetNote": "A6 subset of A9's question - both answer 'should I start', A6 adding a task-size estimate that needs H1 and stays speculative. [A9 is cut as of 2026-08-06, so this relation is historical. A6 is still hidden by 'primaries only' while the field stands.]",
       "scoreBasis": "panel median of 3 blind lenses",
       "quadrant": "costly, low reward",
       "scoreConfidence": "medium"
@@ -305,7 +283,9 @@
       "detectorConfidence": "low",
       "scoreBasis": "panel median of 3 blind lenses",
       "quadrant": "differentiated",
-      "scoreConfidence": "medium"
+      "scoreConfidence": "medium",
+      "verdict": "cut",
+      "decisionNote": "Closed as infeasible in favour of A10, 2026-08-06. The detector line above is the reason: local output-token share is not share of the quota pool, and no reweighting fixes the consumers Cargento cannot see. A10 answers the same question from numbers Cargento already has, which is what its preferredOver already recorded."
     },
     {
       "id": "A10",
@@ -388,7 +368,9 @@
       "detectorConfidence": "medium",
       "scoreBasis": "panel median of 3 blind lenses",
       "quadrant": "costly, low reward",
-      "scoreConfidence": "low"
+      "scoreConfidence": "low",
+      "verdict": "cut",
+      "decisionNote": "Killed by the owner, 2026-08-06. A9 was the redundancy primary for A1, A2, A5, A6 and G1, and those five penalties are lifted with it. No score moves: the penalties were held as metadata and never subtracted from impact, which is what the reviewNotes say and what audit/verify-scores.py computes."
     },
     {
       "id": "B1",
@@ -1515,11 +1497,6 @@
         "A5"
       ],
       "subsetNote": "G1 subset of A5 - the rate without a ceiling versus the rate projected against one; A5 is G1 plus the number that makes it a decision.",
-      "redundantWith": {
-        "primary": "A9",
-        "penalty": 18,
-        "remains": "Decoration once a projection exists. Its own note concedes a rate with no ceiling supports no decision, and the ceiling arriving is exactly what A5 and A9 do with it. What is left is the shape of the rate over time, which is diagnostic colour on a row rather than a decision."
-      },
       "scoreBasis": "panel median of 3 blind lenses",
       "quadrant": "costly, low reward",
       "scoreConfidence": "high"
