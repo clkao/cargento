@@ -13,9 +13,15 @@ it was dead. Three independent mechanisms can put a Claude row into Needs input:
 
 | Path | Source | Covers |
 |---|---|---|
-| Transcript | a pending question found by reading the session's records | `AskUserQuestion`, `ExitPlanMode` |
-| Event overlay | the plugin-bundled `PermissionRequest` hook | any tool permission gate, including a subagent's |
+| Transcript | a pending question found by reading the session's records | `AskUserQuestion`, `ExitPlanMode`, and only when the record has reached disk. See N-4 |
+| Event overlay | the plugin-bundled `PermissionRequest` hook | `ExitPlanMode` observed directly (N-4). `AskUserQuestion` seen once in the wild, on the DRC-4097 incident row, which carried `acquisition: event`. Any other tool gate, and a subagent's, is **inferred** from the hook being tool-scoped and has not been seen |
 | Notification | the user-installed `Notification` hook, posted to the loopback API | MCP elicitation dialogs, worker permission and network requests |
+
+The first two rows overlap, which is easy to miss and was missed here. `AskUserQuestion` and
+`ExitPlanMode` are gated tools, so `PermissionRequest` fires for them like any other tool call, and
+the event overlay carries them independently of whether the transcript ever shows them. An earlier
+draft of this table listed those two under the transcript row alone, which read as though the event
+path did not cover them. It does, and N-4 is the measurement.
 
 The event overlay is the one that carries ordinary permission prompts, and its patch is written over
 whatever the collector decided, so the collector's own ordering cannot suppress it. That is why the
@@ -32,9 +38,15 @@ test, then a standing hook. The busy test was two conditions joined by `or`, and
 alike.
 
 Fresh activity in the session's own transcript lapses on its own. An open prompt leaves that
-transcript quiet, because the `tool_use` record is written before the prompt is raised and the
-`tool_result` only after it is answered, so a genuinely blocked session falls out of the window
-within `working_threshold_sec` and its hook surfaces. Late, but not lost.
+transcript quiet, so a genuinely blocked session falls out of the window within
+`working_threshold_sec` and its hook surfaces. Late, but not lost.
+
+An earlier draft of this paragraph gave a mechanism for the quiet: that the `tool_use` record is
+written before the prompt is raised and the `tool_result` only after it is answered. N-4 measured
+that and it is not reliably true, since the record is sometimes not written at all while the gate
+stands. The conclusion survives the correction because it only needs the transcript to be quiet, and
+a record that was never written leaves it quieter still. The mechanism was wrong, the window still
+lapses.
 
 A live subagent never lapses. One running subagent held the row for as long as the workflow ran, so
 a fan-out, the shape most likely to be holding a prompt in the first place, could not show one at
@@ -84,6 +96,63 @@ unrecognised. That is the safe direction on an upgrade.
   band by dropping the notification entirely, and it trades a wrong colour for a missing prompt. The
   ingress and the precedence test want opposite defaults, which is why they are two decisions and not
   one.
+
+## N-4: every path is probabilistic, so the docs rank them instead of trusting one
+
+N-1 sorted the three paths by what they cover. This section sorts them by how often they actually
+fire, which is a different question and was answered later, by holding real sessions at real gates
+and reading both the transcript and `/api/data` while the question was still on screen.
+
+| Path | Live gates seen on it | Breakdown |
+|---|---|---|
+| Transcript (`pending_input_tool`) | 3 of 6 | `ExitPlanMode` 2/4, `AskUserQuestion` 1/2 |
+| Event overlay (`PermissionRequest`) | 4 of 5 | all `ExitPlanMode`; one miss read `working` with `acquisition: event` |
+
+**These are observations, not a capture, and they are not auditable.** Claude Code 2.1.226 on macOS,
+2026-08-12, driven interactively under `tmux` against a scratch workspace, reading the transcript and
+`/api/data` while the pane still showed the gate. Nothing was recorded to `captures/`, so a reader
+cannot re-derive these counts from this repository, and the directory's own rule is that a claim
+marked measured should be able to show its measurement. This one cannot. Treat the table as a field
+note. Turning it into evidence is DRC-4135.
+
+The samples are also far too small to rank anything. Five and six trials, unevenly composed, with
+some drawn from the same session, support exactly one conclusion: **both paths missed at least once,
+so neither is a guarantee.** That both counts point the same way is a hint about which to prefer, not
+a measured ordering, and the ranking `SKILL.md` gives readers is a judgement built on that hint plus
+the mechanism, not a statistic.
+
+The transcript case is the strange one. Claude Code does not write the `tool_use` record for an
+input tool on a fixed schedule. Two consecutive questions in a single session, same version, same
+prompt shape, behaved differently: the first had its record on disk with no matching `tool_result`
+while the gate stood, and the second had no record at all after five minutes of waiting. That is not
+a slow flush, it is a flush that had not been triggered. So the branch is neither dead nor live, it
+is opportunistic, and it is documented that way rather than removed. Removing it would cost the one
+population that has nothing else: a user running without the bundled hooks, for whom this is the only
+needs-input source there is.
+
+The event path's single miss is recorded as DRC-4134 and its cause is **not established**. All the
+observation shows is `state: working` with `acquisition: event`, which proves some overlay patched
+the row and nothing more. A `PermissionRequest` that never fired, never forwarded, or never
+associated would look identical from outside, and so would a later working overlay retiring a wait
+that did arrive.
+
+Only the last of those resembles DRC-4095, and even there the resemblance is not a defect claim:
+DRC-4095's fix makes a later working overlay retire an earlier wait **on purpose**, and its tests
+pin that. So this is a miss in need of a mechanism, not a known bug of a known family. Attributing
+it to one before tracing the overlay sequence is the same error this section is about.
+
+### The methodology this cost us
+
+A single live read is one coin toss, not a measurement. The first `ExitPlanMode` observation showed
+the record present and detected, and stopping there would have produced a confident write-up saying
+the transcript branch works. Three more trials made it 2 of 4. The same trap ran the other way on the
+event path: one trial showed `working` at a live gate, which looked exactly like a released-version
+regression worth an emergency release, and the next two showed `needs_input` and killed that reading.
+
+The original report on this behavior measured it once and concluded the branch was dead. This
+investigation measured it once and nearly concluded it was live. Both readings came from honest live
+reads. Anything in this area needs n greater than one before it goes in writing, and the desk read
+and the timestamp replay that the original report warned about are not the only ways to get it wrong.
 
 ## What is still not measured
 
