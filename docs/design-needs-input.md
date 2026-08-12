@@ -240,6 +240,96 @@ Three notes on its shape, each of which was a choice:
   for whoever had the log level raised before the fault. Nothing rotates the log either, so a
   standing gate would write the same rows every few seconds for as long as it stood.
 
+## N-6: the server records its own contradictions, because nobody else will
+
+N-5 gave a person a way to read the ledger. It assumed the person knows to look, and that
+assumption does not survive contact with the product: the dashboard exists so that nobody opens
+every session, so a row wrongly reading Working is a row nobody visits. The one instance behind
+DRC-4134 was found because somebody was deliberately holding a gate open under `tmux` while reading
+the API. That is not a detector, it is a person, and it stops the moment they stop.
+
+Nor is it recoverable afterwards. Overlays expire, the ledger is memory, and an hour later there is
+nothing to read.
+
+So the server records the disagreement itself. `Application._apply_overlays` already holds both
+halves at the moment they conflict: the row a collector produced, and the patch the ledger reduced
+to. When the collector says `needs_input` and the patch says `working` or `idle`, that is one source
+of truth overruling another about the single fact the product exists to report, and it is written to
+a bounded ring on `RuntimeState` with the ledger attached. `/api/overlays` serves it alongside the
+live ledger, in the same response, because a dispute is read against the ledger and two requests
+would be two instants.
+
+The ring is a ring, unlike the ledger and pending caps, which refuse rather than evict. Those hold
+live alerts, where dropping the oldest could drop a standing prompt. A dispute is evidence: losing
+the oldest costs a sample, and refusing new ones would stop recording exactly when the fault got
+worse. The running total is separate and never resets, so a machine can still report that this
+happened sixty times after the ring has turned over four times.
+
+### Reading what it collected
+
+`GET /api/overlays` carries `dispute_total`, a count of episodes since the process started, and
+`disputes`, the last `dispute_log_max` of them. For each record:
+
+1. Walk its own `overlays` against the four-reading table above. The record carries `own_activity`,
+   `last_activity` and the `activity_grace_sec` it was read against, so the first two readings are
+   decidable from the record alone, without the live process and without `/api/data`.
+2. For the second two, diff its `drop_counters` against the record before it. The live counters
+   cannot do this job hours later, because they are cumulative and a single read cannot be
+   bracketed; two consecutive records can, because each carries its own copy. Two things to know
+   before reading that diff: the first record in the ring has no neighbour, so its counters are the
+   totals since the process started rather than a delta, and the counters are process-wide, so the
+   window between two records covers every session rather than the one the records are about.
+3. `repeats` and `last_seen_at` say how long the episode stood, and what that means depends on which
+   state overruled the wait. On an `idle` record it is the whole answer, since an idle overlay has no
+   deadline and a long one is a stale overlay pinning a live wait. On a `working` record it can never
+   exceed the working TTL, because a refreshed working overlay carries a new arrival sequence and
+   therefore opens a new record. The signature to look for there is not one long record but a chain
+   of consecutive records for the same session, each a fresh working overlay over the same standing
+   wait.
+
+### It is one direction, and it is Claude-only
+
+Two scope limits, both easy to read past.
+
+Zero disputes is not evidence of zero faults. This catches a contradiction the collector can see,
+which means the collector has to have found the wait. Where a fault starves both paths at once, a
+hook that never fired leaves the event path empty and the collector's own notification state unset,
+so both halves say Working, they agree, and nothing is recorded. That case is real and is the fourth
+reading in N-5.
+
+Only the Claude collector ever produces a `needs_input` row, so no other harness can raise a dispute.
+That is correct rather than a gap, since no other harness has a needs-input signal at all, but a
+reader should not take a zero on a Codex machine as a measurement.
+
+### Only one direction counts
+
+A collector Idle row that an overlay promotes to Working is the ordinary path, and counting it would
+bury the case worth finding under every ordinary one. So would a collector `needs_input` that an
+overlay agrees with.
+
+Both `working` and `idle` count as overruling a wait. Idle is as wrong as Working for a session
+holding a question, and the idle dwell makes it the likelier of the two to arrive late.
+
+### It records, it does not decide
+
+The patch is applied either way, and the row still reads whatever the reducer said.
+
+The tempting change is to let the collector's `needs_input` win, on the fail-visible principle N-3
+applies to unrecognised notification types. It is not made here, and the reason is that DRC-4095 and
+DRC-4097 are this same disagreement resolved the other way: a wait that should have been retired and
+was not. Their fix is exactly that a later working overlay retires an earlier wait, and their tests
+pin it. The two directions cannot both be loosened.
+
+Which way to move is a question about how often each side is right, and nobody has that number. This
+produces half of it: how often an overlay overrules a collected wait. The other half, how often an
+overlay wait wrongly stands over a session that is generating, is deliberately not recorded here,
+because that shape is the ordinary event-ahead-of-scan path at every permission prompt and counting
+it would bury this one. It is DRC-4095 and DRC-4097 territory and would need its own detector.
+
+Half a number is still the half that was missing, and it is the half this milestone is about.
+Deciding first and measuring afterwards is how DRC-4134 got a mechanism that turned out to be
+impossible.
+
 ## What is still not measured
 
 `notification_type` is present on every Notification payload, and its value list was read from the

@@ -378,6 +378,44 @@ def parse(
     )
 
 
+def overlay_rows(overlays: Iterable[Overlay], *, now: float) -> list[dict[str, Any]]:
+    """Reportable overlays in `arrival_seq` order, for the ledger and a dispute.
+
+    Sorted here rather than by either caller, because a ledger holds one overlay
+    per kind and re-recording a kind leaves it in its original dict slot: a wait
+    at seq 2 outranked by a working overlay at seq 3 comes back working-first.
+    That is the one case a reader most needs to see in order, since comparing the
+    two sequences is how N-5's second reading is told from its first.
+    """
+    return [
+        overlay_row(overlay, now=now)
+        for overlay in sorted(overlays, key=lambda overlay: overlay.arrival_seq)
+    ]
+
+
+def overlay_row(overlay: Overlay, *, now: float) -> dict[str, Any]:
+    """One overlay as reportable fields, for `/api/overlays` and dispute records.
+
+    Here rather than in either caller so the two never drift: a dispute is read
+    against the live ledger, and a field that means one thing in one and another
+    in the other would be worse than not recording it.
+
+    `time_gate_open` is `applies`, renamed because on the wire `applies` reads as
+    "this overlay won", which is a different and later question.
+    """
+    return {
+        "harness": overlay.harness,
+        "sid": overlay.sid,
+        "kind": overlay.kind,
+        "arrival_seq": overlay.arrival_seq,
+        "at": overlay.at,
+        "effective_at": overlay.effective_at,
+        "expires_at": overlay.expires_at,
+        "subagent_id": overlay.subagent_id,
+        "time_gate_open": overlay.applies(now=now),
+    }
+
+
 def overlay_for(event: Event, *, config: RuntimeConfig) -> Overlay | None:
     """The semantic claim an event makes, or None if it only means "look again".
 

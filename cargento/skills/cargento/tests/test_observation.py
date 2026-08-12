@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from collections import deque
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -729,6 +730,320 @@ class WorkerLifecycleTest(ObservationTestCase):
             self.assertTrue(collected.wait(timeout=3), "the coordinator did not wake on the event")
         finally:
             coordinator.stop(timeout=5)
+
+
+class StateDisputeTest(unittest.TestCase):
+    """When an overlay overrules a collector that had found a wait. DRC-4139."""
+
+    def setUp(self) -> None:
+        self.state = support.reset_runtime()
+
+    class Source:
+        def __init__(
+            self, overlays: list[events.Overlay], counters: dict[str, int] | None = None
+        ) -> None:
+            self.overlays = overlays
+            self.counters = counters or {}
+
+        def overlays_for(self, harness: str, sid: str) -> list[events.Overlay]:
+            return self.overlays if (harness, sid) == ("claude", PREFIX) else []
+
+        def note_rows(self, keys: set[tuple[str, str]]) -> None:
+            pass
+
+        def drop_counters(self) -> dict[str, int]:
+            return dict(self.counters)
+
+    def _apply(self, collected: str, kinds: list[str], **row: Any) -> dict[str, Any]:
+        """One row through the real patch path, with a hand-set collector state."""
+        overlays = [
+            events.Overlay(
+                harness="claude",
+                sid=PREFIX,
+                arrival_seq=seq,
+                kind=kind,
+                at=support.SERVER_STARTED - 10,
+            )
+            for seq, kind in enumerate(kinds, start=1)
+        ]
+        session: dict[str, Any] = {
+            "harness": "claude",
+            "sid": PREFIX,
+            "state": collected,
+            "state_detail": "open question (ExitPlanMode), waiting 2m",
+            "title": "a prompt the user typed",
+            **row,
+        }
+        app = support.build_app()
+        app.overlays = self.Source(overlays)
+        app._apply_overlays([session], now=support.SERVER_STARTED)
+        return session
+
+    def test_an_overlay_overruling_a_collected_wait_is_recorded(self) -> None:
+        self._apply("needs_input", [events.OVERLAY_WORKING])
+        self.assertEqual(1, self.state.dispute_total)
+        record = self.state.disputes[0]
+        self.assertEqual(("claude", PREFIX), (record["harness"], record["sid"]))
+        self.assertEqual(
+            ("needs_input", "working"), (record["collector_state"], record["overlay_state"])
+        )
+
+    def test_the_record_carries_the_ledger_that_produced_it(self) -> None:
+        # Without the overlays a record says a disagreement happened and nothing
+        # about which of the four readings in N-5 it was.
+        self._apply("needs_input", [events.OVERLAY_WORKING])
+        overlays = self.state.disputes[0]["overlays"]
+        self.assertEqual([events.OVERLAY_WORKING], [row["kind"] for row in overlays])
+        self.assertEqual([1], [row["arrival_seq"] for row in overlays])
+        self.assertIn("time_gate_open", overlays[0])
+
+    def test_the_recorded_ledger_is_in_arrival_order_like_the_live_one(self) -> None:
+        # A ledger holds one overlay per kind, so re-recording a kind leaves it
+        # in its original dict slot and `overlays_for` hands back a wait at seq 2
+        # after a working overlay at seq 3. That pair is exactly what tells N-5's
+        # second reading from its first, so a record in the other order from the
+        # live ledger is worse than no record.
+        out_of_order = [
+            events.Overlay(
+                harness="claude", sid=PREFIX, arrival_seq=3, kind=events.OVERLAY_WORKING, at=1.0
+            ),
+            events.Overlay(
+                harness="claude", sid=PREFIX, arrival_seq=2, kind=events.OVERLAY_NEEDS_INPUT, at=1.0
+            ),
+        ]
+        session: dict[str, Any] = {"harness": "claude", "sid": PREFIX, "state": "needs_input"}
+        app = support.build_app()
+        app.overlays = self.Source(out_of_order)
+        app._apply_overlays([session], now=support.SERVER_STARTED)
+        self.assertEqual([2, 3], [row["arrival_seq"] for row in self.state.disputes[0]["overlays"]])
+
+    def test_the_record_carries_the_activity_the_guards_read(self) -> None:
+        # The grace reading is only reconstructible with these two, and they are
+        # gone from the row by the time anybody looks.
+        self._apply(
+            "needs_input", [events.OVERLAY_WORKING], own_activity=1234.0, last_activity=5678.0
+        )
+        record = self.state.disputes[0]
+        self.assertEqual((1234.0, 5678.0), (record["own_activity"], record["last_activity"]))
+
+    def test_the_record_holds_no_session_content(self) -> None:
+        self._apply("needs_input", [events.OVERLAY_WORKING])
+        flattened = json.dumps(self.state.disputes[0])
+        self.assertNotIn("a prompt the user typed", flattened)
+        self.assertNotIn("ExitPlanMode", flattened)
+
+    def test_promoting_an_idle_row_to_working_is_not_a_dispute(self) -> None:
+        # The ordinary path. Counting it would bury the case this exists to find.
+        self._apply("idle", [events.OVERLAY_WORKING])
+        self.assertEqual(0, self.state.dispute_total)
+        self.assertEqual([], list(self.state.disputes))
+
+    def test_an_overlay_agreeing_with_a_collected_wait_is_not_a_dispute(self) -> None:
+        self._apply("needs_input", [events.OVERLAY_NEEDS_INPUT])
+        self.assertEqual(0, self.state.dispute_total)
+
+    def test_an_overlay_retiring_a_wait_to_idle_is_recorded_too(self) -> None:
+        # Idle is as wrong as Working for a session holding a question, and the
+        # dwell makes it the likelier of the two to arrive late.
+        self._apply("needs_input", [events.OVERLAY_IDLE])
+        self.assertEqual("idle", self.state.disputes[0]["overlay_state"])
+
+    def test_the_patch_is_applied_either_way(self) -> None:
+        # Recording is not deciding. Changing the outcome here is the follow-up,
+        # and it needs the counts this produces.
+        session = self._apply("needs_input", [events.OVERLAY_WORKING])
+        self.assertEqual("working", session["state"])
+        self.assertEqual(1, self.state.dispute_total)
+
+    def test_a_standing_disagreement_is_one_record_however_often_it_is_collected(self) -> None:
+        # Collections run at the memo floor, so a 90-second disagreement was
+        # writing dozens of records: the ring filled with one episode and
+        # `dispute_total` counted polls rather than faults.
+        overlays = [
+            events.Overlay(
+                harness="claude",
+                sid=PREFIX,
+                arrival_seq=1,
+                kind=events.OVERLAY_WORKING,
+                at=support.SERVER_STARTED - 10,
+            )
+        ]
+        app = support.build_app()
+        app.overlays = self.Source(overlays)
+        for tick in range(12):
+            session: dict[str, Any] = {"harness": "claude", "sid": PREFIX, "state": "needs_input"}
+            app._apply_overlays([session], now=support.SERVER_STARTED + tick)
+        self.assertEqual(1, self.state.dispute_total)
+        self.assertEqual(1, len(self.state.disputes))
+        record = self.state.disputes[0]
+        self.assertEqual(11, record["repeats"], "the repeats count is how long it stood")
+        self.assertEqual(support.SERVER_STARTED, record["at"])
+        self.assertEqual(support.SERVER_STARTED + 11, record["last_seen_at"])
+
+    def test_a_new_overlay_arriving_starts_a_new_episode(self) -> None:
+        # The shape changed, so this is a second fault rather than the same one
+        # seen again, and merging them would hide it.
+        app = support.build_app()
+        for seq in (1, 2):
+            app.overlays = self.Source(
+                [
+                    events.Overlay(
+                        harness="claude",
+                        sid=PREFIX,
+                        arrival_seq=seq,
+                        kind=events.OVERLAY_WORKING,
+                        at=support.SERVER_STARTED,
+                    )
+                ]
+            )
+            session: dict[str, Any] = {"harness": "claude", "sid": PREFIX, "state": "needs_input"}
+            app._apply_overlays([session], now=support.SERVER_STARTED)
+        self.assertEqual(2, self.state.dispute_total)
+
+    def test_a_churning_fan_out_underneath_a_standing_wait_is_still_one_episode(self) -> None:
+        # Subagent overlays patch no state, so a child transition changes the
+        # disagreement not at all, but each is remembered with a fresh sequence.
+        # Counting them split one wait into a record per child, on exactly the
+        # sessions DRC-4121 established are likeliest to be holding a prompt.
+        working = events.Overlay(
+            harness="claude",
+            sid=PREFIX,
+            arrival_seq=1,
+            kind=events.OVERLAY_WORKING,
+            at=support.SERVER_STARTED,
+        )
+        children: list[events.Overlay] = []
+        app = support.build_app()
+        for child in range(6):
+            children.append(
+                events.Overlay(
+                    harness="claude",
+                    sid=PREFIX,
+                    arrival_seq=2 + child,
+                    kind=events.OVERLAY_SUBAGENT,
+                    at=support.SERVER_STARTED,
+                    subagent_id=f"child-{child}",
+                )
+            )
+            app.overlays = self.Source([working, *children])
+            session: dict[str, Any] = {"harness": "claude", "sid": PREFIX, "state": "needs_input"}
+            app._apply_overlays([session], now=support.SERVER_STARTED)
+        self.assertEqual(1, self.state.dispute_total)
+        self.assertEqual(5, self.state.disputes[0]["repeats"])
+
+    def test_an_episode_for_a_session_that_vanished_does_not_stay_open(self) -> None:
+        # A row that ages out reaches neither branch, so its episode would be
+        # held open forever, pinning a record the ring may already have evicted.
+        app = support.build_app()
+        app.overlays = self.Source(
+            [
+                events.Overlay(
+                    harness="claude",
+                    sid=PREFIX,
+                    arrival_seq=1,
+                    kind=events.OVERLAY_WORKING,
+                    at=support.SERVER_STARTED,
+                )
+            ]
+        )
+        session: dict[str, Any] = {"harness": "claude", "sid": PREFIX, "state": "needs_input"}
+        app._apply_overlays([session], now=support.SERVER_STARTED)
+        self.assertEqual(1, len(self.state.dispute_episodes))
+        app._apply_overlays([], now=support.SERVER_STARTED)
+        self.assertEqual({}, self.state.dispute_episodes)
+
+    def test_agreement_closes_the_episode_so_the_next_one_is_its_own_record(self) -> None:
+        app = support.build_app()
+        overlays = [
+            events.Overlay(
+                harness="claude",
+                sid=PREFIX,
+                arrival_seq=1,
+                kind=events.OVERLAY_WORKING,
+                at=support.SERVER_STARTED,
+            )
+        ]
+        app.overlays = self.Source(overlays)
+        for collected in ("needs_input", "working", "needs_input"):
+            session: dict[str, Any] = {"harness": "claude", "sid": PREFIX, "state": collected}
+            app._apply_overlays([session], now=support.SERVER_STARTED)
+        self.assertEqual(2, self.state.dispute_total)
+
+    def test_an_emptied_ledger_closes_the_episode_too(self) -> None:
+        # `_note_dispute` is not reached at all when a row has no overlays, so
+        # the close has to happen on that branch or the episode never ends.
+        app = support.build_app()
+        session: dict[str, Any] = {"harness": "claude", "sid": PREFIX, "state": "needs_input"}
+        app.overlays = self.Source(
+            [
+                events.Overlay(
+                    harness="claude",
+                    sid=PREFIX,
+                    arrival_seq=1,
+                    kind=events.OVERLAY_WORKING,
+                    at=support.SERVER_STARTED,
+                )
+            ]
+        )
+        app._apply_overlays([dict(session)], now=support.SERVER_STARTED)
+        app.overlays = self.Source([])
+        app._apply_overlays([dict(session)], now=support.SERVER_STARTED)
+        self.assertEqual({}, self.state.dispute_episodes)
+
+    def test_the_record_carries_the_drop_counters_and_the_grace_it_was_read_against(self) -> None:
+        # Readings 3 and 4 in N-5 are a counter comparison, and the live counters
+        # are cumulative: a record read tomorrow can only bracket itself against
+        # its neighbours if it carries its own copy. The grace is here for the
+        # same reason, since a build can move the constant.
+        app = support.build_app()
+        app.overlays = self.Source(
+            [
+                events.Overlay(
+                    harness="claude",
+                    sid=PREFIX,
+                    arrival_seq=1,
+                    kind=events.OVERLAY_WORKING,
+                    at=support.SERVER_STARTED,
+                )
+            ],
+            counters={"reject.unmappable-id": 4, "pending.expired": 1},
+        )
+        session: dict[str, Any] = {"harness": "claude", "sid": PREFIX, "state": "needs_input"}
+        app._apply_overlays([session], now=support.SERVER_STARTED)
+        record = self.state.disputes[0]
+        self.assertEqual({"reject.unmappable-id": 4, "pending.expired": 1}, record["drop_counters"])
+        self.assertEqual(
+            support.cfg().overlay_wait_activity_grace_sec, record["activity_grace_sec"]
+        )
+
+    def test_the_ring_is_bounded_by_config_rather_than_by_luck(self) -> None:
+        # Without the maxlen wiring in __post_init__ the ring is unbounded, and
+        # every other test here still passes.
+        self.assertEqual(support.cfg().dispute_log_max, self.state.disputes.maxlen)
+
+    def test_the_ring_is_bounded_while_the_total_keeps_counting(self) -> None:
+        # A machine should be able to report "this happened 60 times" long after
+        # the ring has turned over. Six separate episodes, not one seen six
+        # times: each overlay carries its own arrival sequence, which is what
+        # makes it a new fault rather than the same one still standing.
+        self.state.disputes = deque(maxlen=4)
+        app = support.build_app()
+        for seq in range(1, 7):
+            app.overlays = self.Source(
+                [
+                    events.Overlay(
+                        harness="claude",
+                        sid=PREFIX,
+                        arrival_seq=seq,
+                        kind=events.OVERLAY_WORKING,
+                        at=support.SERVER_STARTED,
+                    )
+                ]
+            )
+            session: dict[str, Any] = {"harness": "claude", "sid": PREFIX, "state": "needs_input"}
+            app._apply_overlays([session], now=support.SERVER_STARTED)
+        self.assertEqual(4, len(self.state.disputes))
+        self.assertEqual(6, self.state.dispute_total)
 
 
 class ApplicationOverlayTest(unittest.TestCase):

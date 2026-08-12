@@ -14,6 +14,8 @@ from . import quota, sessions
 from . import snapshot as runtime_snapshot
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from .config import RuntimeConfig
     from .events import Overlay
     from .sessions import Session
@@ -23,16 +25,23 @@ if TYPE_CHECKING:
 class OverlaySource(Protocol):
     """The narrow view of the coordinator that a collection needs.
 
-    Two methods rather than one, because the traffic runs both ways. A collection
-    reads the overlays for each row it produced, and then reports back which rows
-    exist at all, which is how an overlay for a session no collection has yet seen
-    resolves or expires. Stated as a Protocol so `aggregate` stays below
-    `observation` and the dependency does not invert.
+    The first two run the traffic both ways. A collection reads the overlays for
+    each row it produced, and then reports back which rows exist at all, which is
+    how an overlay for a session no collection has yet seen resolves or expires.
+    Stated as a Protocol so `aggregate` stays below `observation` and the
+    dependency does not invert.
+
+    `drop_counters` is neither: it is read only when a dispute is recorded, and
+    it is here because an envelope that arrived and was dropped leaves no overlay
+    to find. Without it a record cannot separate that from one never posted,
+    which is two of the four readings in docs/design-needs-input.md (N-5).
     """
 
     def overlays_for(self, harness: str, sid: str) -> list[Overlay]: ...
 
     def note_rows(self, keys: set[tuple[str, str]]) -> None: ...
+
+    def drop_counters(self) -> dict[str, int]: ...
 
 
 Collection: TypeAlias = dict[str, Any]
@@ -333,25 +342,118 @@ class Application:
             harness, sid = str(session["harness"]), str(session["sid"])
             overlays = source.overlays_for(harness, sid)
             if overlays:
-                runtime_events.apply_patch(
-                    session,
-                    runtime_events.reduce_overlays(
-                        overlays,
-                        now=now,
-                        # The row's own reading of when the session last wrote,
-                        # which is the only evidence that outlives a wait no hook
-                        # ever closes. Collectors that do not report it send 0,
-                        # and the wait then stands.
-                        own_activity=float(session.get("own_activity") or 0.0),
-                        # The whole-tree reading, subagents included, which is
-                        # what retires a stop no `turn_started` ever follows. A
-                        # parked parent with a running child is working, so idle
-                        # cannot key on `own_activity` the way a wait does.
-                        session_activity=float(session.get("last_activity") or 0.0),
-                        activity_grace_sec=self.config.overlay_wait_activity_grace_sec,
-                    ),
+                patch = runtime_events.reduce_overlays(
+                    overlays,
+                    now=now,
+                    # The row's own reading of when the session last wrote,
+                    # which is the only evidence that outlives a wait no hook
+                    # ever closes. Collectors that do not report it send 0,
+                    # and the wait then stands.
+                    own_activity=float(session.get("own_activity") or 0.0),
+                    # The whole-tree reading, subagents included, which is
+                    # what retires a stop no `turn_started` ever follows. A
+                    # parked parent with a running child is working, so idle
+                    # cannot key on `own_activity` the way a wait does.
+                    session_activity=float(session.get("last_activity") or 0.0),
+                    activity_grace_sec=self.config.overlay_wait_activity_grace_sec,
                 )
-        source.note_rows({(str(s["harness"]), str(s["sid"])) for s in out_sessions})
+                self._note_dispute(session, patch, overlays, now=now)
+                runtime_events.apply_patch(session, patch)
+            else:
+                # No ledger for this row means nothing can be disagreeing with it.
+                self._clear_dispute(harness, sid)
+        collected = {(str(s["harness"]), str(s["sid"])) for s in out_sessions}
+        source.note_rows(collected)
+        # A session that vanishes mid-dispute reaches neither branch above, so
+        # its episode would be held open forever, pinning a record the ring has
+        # already evicted.
+        with self.state.dispute_lock:
+            for key in [k for k in self.state.dispute_episodes if k not in collected]:
+                del self.state.dispute_episodes[key]
+
+    def _note_dispute(
+        self,
+        session: Session,
+        patch: Mapping[str, Any],
+        overlays: list[Overlay],
+        *,
+        now: float,
+    ) -> None:
+        """Record an overlay overruling a collector that had found a wait.
+
+        Only that direction. A collector Idle row an overlay promotes to Working
+        is the ordinary path and says nothing, so counting it would bury the case
+        this exists to find. See docs/design-needs-input.md (N-6).
+
+        One record per episode, not per collection. A disagreement stands until
+        something changes it, and collections run at the memo floor, so recording
+        each one made `dispute_total` count polls and let a single 90-second
+        episode fill the ring on its own. An episode keeps its shape while the
+        two states and the newest arrival sequence hold; anything else is a new
+        fault and gets its own record.
+
+        Records rather than decides: the patch is applied either way. Which side
+        is right is not knowable here, and DRC-4095 and DRC-4097 are the same
+        disagreement resolved the other way round.
+        """
+        key = (str(session["harness"]), str(session["sid"]))
+        patched = patch.get("state")
+        if session.get("state") != "needs_input" or patched not in {"working", "idle"}:
+            self._clear_dispute(*key)
+            return
+        # Subagent overlays are excluded from the shape deliberately. They patch
+        # no state, so a child starting or stopping changes the disagreement not
+        # at all, but each is remembered under its own slot with a fresh
+        # sequence. Counting them split one standing wait into a record per child
+        # transition, on fan-outs, which DRC-4121 established are the sessions
+        # most likely to be holding a prompt in the first place.
+        shape = (
+            "needs_input",
+            str(patched),
+            max(
+                (o.arrival_seq for o in overlays if o.kind != runtime_events.OVERLAY_SUBAGENT),
+                default=-1,
+            ),
+        )
+        # Read before the lock, not inside it: `drop_counters` takes the
+        # coordinator's lock, and nesting one under the other would make an
+        # ordering load-bearing that nothing else in the file relies on.
+        counters = self.overlays.drop_counters() if self.overlays else {}
+        with self.state.dispute_lock:
+            open_episode = self.state.dispute_episodes.get(key)
+            if open_episode is not None and open_episode[0] == shape:
+                record = open_episode[1]
+                record["last_seen_at"] = now
+                record["repeats"] = int(record["repeats"]) + 1
+                return
+            record = {
+                "at": now,
+                "last_seen_at": now,
+                "repeats": 0,
+                "harness": key[0],
+                "sid": key[1],
+                "collector_state": "needs_input",
+                "overlay_state": patched,
+                "own_activity": float(session.get("own_activity") or 0.0),
+                "last_activity": float(session.get("last_activity") or 0.0),
+                # The guard's own constant, so a record stays readable against a
+                # build whose constant has since moved.
+                "activity_grace_sec": self.config.overlay_wait_activity_grace_sec,
+                "overlays": runtime_events.overlay_rows(overlays, now=now),
+                # Reading 3 against reading 4 in N-5, an envelope dropped versus
+                # never posted, is a counter comparison. The live counters are
+                # cumulative, so a record read tomorrow can only bracket itself
+                # against its neighbours if it carries its own copy.
+                "drop_counters": counters,
+            }
+            self.state.dispute_total += 1
+            self.state.disputes.append(record)
+            self.state.dispute_episodes[key] = (shape, record)
+
+    def _clear_dispute(self, harness: str, sid: str) -> None:
+        """Close a session's open episode, so the next one is a new record."""
+        with self.state.dispute_lock:
+            self.state.dispute_episodes.pop((harness, sid), None)
 
     def request_usage_fetch(self) -> bool:
         """Maybe start a background quota fetch; the gates live in `quota`.

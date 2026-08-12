@@ -350,19 +350,9 @@ class Observation:
             # from it, so they have to be one instant.
             now = self.clock()
             rows = [
-                {
-                    "harness": harness,
-                    "sid": sid,
-                    "kind": overlay.kind,
-                    "arrival_seq": overlay.arrival_seq,
-                    "at": overlay.at,
-                    "effective_at": overlay.effective_at,
-                    "expires_at": overlay.expires_at,
-                    "subagent_id": overlay.subagent_id,
-                    "time_gate_open": overlay.applies(now=now),
-                }
-                for (harness, sid), ledger in sorted(self._overlays.items())
-                for overlay in sorted(ledger.values(), key=lambda o: o.arrival_seq)
+                row
+                for _key, ledger in sorted(self._overlays.items())
+                for row in runtime_events.overlay_rows(ledger.values(), now=now)
             ]
             pending = sorted(f"{harness}/{sid}" for harness, sid in self._pending)
             counters = dict(self.counters)
@@ -374,6 +364,19 @@ class Observation:
             "pending_rows": pending,
             "counters": counters,
         }
+
+    def drop_counters(self) -> dict[str, int]:
+        """The counters that mean an envelope arrived and left no overlay.
+
+        The whole set would work and would also carry `event.*`, which moves on
+        every hook and would swamp the comparison a dispute record is kept for.
+        """
+        with self._lock:
+            return {
+                name: count
+                for name, count in self.counters.items()
+                if name.startswith(("reject.", "overlay.", "pending.")) or name == "retired"
+            }
 
     def note_rows(self, keys: set[SessionKey]) -> None:
         """Tell the ledger which rows a collection actually produced.

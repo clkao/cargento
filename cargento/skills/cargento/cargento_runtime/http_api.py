@@ -371,6 +371,10 @@ class _RequestHandler(BaseHTTPRequestHandler):
         503 rather than 404 with no coordinator, because under `--no-events` the
         route exists and the ledger does not, and a 404 would read as a build too
         old to have the route.
+
+        Disputes ride along rather than getting a route of their own: they are
+        read against the ledger that produced them, and two requests to compare
+        them would be two instants.
         """
         if not self._local_ok():
             self.send_error(403)
@@ -379,7 +383,16 @@ class _RequestHandler(BaseHTTPRequestHandler):
         if observation is None:
             self.send_error(503, "no event coordinator on this server")
             return
-        self._send(json.dumps(observation.ledger_report()).encode(), "application/json")
+        report = observation.ledger_report()
+        state = self.server.application.state
+        with state.dispute_lock:
+            report["dispute_total"] = state.dispute_total
+            # Copied, not referenced: an open episode's record is updated in
+            # place under that lock, and serializing the live dict outside it
+            # could publish a fresh `repeats` beside a stale `last_seen_at`.
+            # Shallow is enough; the nested values are written once.
+            report["disputes"] = [dict(record) for record in state.disputes]
+        self._send(json.dumps(report).encode(), "application/json")
 
     def _stream(self) -> None:
         """The SSE revision stream.
