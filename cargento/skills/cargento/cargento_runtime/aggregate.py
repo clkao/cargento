@@ -6,7 +6,7 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Final, Protocol, TypeAlias
 
 from . import events as runtime_events
 from . import io as runtime_io
@@ -20,6 +20,32 @@ if TYPE_CHECKING:
     from .events import Overlay
     from .sessions import Session
     from .state import RuntimeState
+
+
+_STATE_RANK: Final = {"needs_input": 0, "working": 1, "idle": 2}
+
+
+def row_order(session: Session) -> tuple[int, float, str]:
+    """Where a row sits in the published payload: state, then wait, then id.
+
+    Session id as the last tiebreaker (not last_activity) so rows don't reshuffle
+    on every refresh while sessions are generating.
+
+    The middle key is the gate queue: blocked rows arrive longest-blocked first,
+    because session id is an arbitrary order to be stopped in and the gate that
+    has held someone up longest is the one still costing something. It ranks on
+    the timestamp rather than on the elapsed wait so that the order cannot churn
+    as every row in it waits longer.
+
+    `last_activity` stands in where a wait carries no `blocked_since`: only
+    Claude's collector and the event overlays set that field, and a harness
+    without it must still take a place in the queue rather than sorting to the
+    front on a zero.
+    """
+    wait = 0.0
+    if session["state"] == "needs_input":
+        wait = float(session.get("blocked_since") or session.get("last_activity") or 0)
+    return (_STATE_RANK.get(session["state"], 3), wait, str(session["sid"]))
 
 
 def _keep_wait_detail(session: Session, patch: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -302,10 +328,7 @@ class Application:
         # from the patched rows for the same reason.
         self._apply_overlays(out_sessions, now=now)
         sessions.assign_display_ids(config, out_sessions)
-        state_rank = {"needs_input": 0, "working": 1, "idle": 2}
-        # Session id as tiebreaker (not last_activity) so rows don't reshuffle
-        # on every refresh while sessions are generating.
-        out_sessions.sort(key=lambda x: (state_rank.get(x["state"], 3), x["sid"]))
+        out_sessions.sort(key=row_order)
         active_sessions = [x for x in out_sessions if x["active"]]
         total_tasks = sum(x["total"] for x in out_sessions)
         total_done = sum(x["done"] for x in out_sessions)

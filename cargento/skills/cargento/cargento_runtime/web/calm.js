@@ -119,8 +119,22 @@ function calmRow(d, x){
        "nothing in the last 24 hours". */
     provider: x.provider || null, model: x.model || null,
     consumption: x.consumption || null, active: !!x.active,
-    st, title, doing: humanTool(x.state_detail), doingRaw: x.state_detail,
+    st,
+    title,
+    /* An empty `doing` cell already means "not applicable" in this ledger — it is
+       what a row that is not working leaves in `rate`. On a blocked row the same
+       blank means "nobody could read what it wants", so it says which. Shorter
+       than the band's wording because this column truncates. */
+    doing: humanTool(x.state_detail) ||
+      (st === "needs" ? "not readable" : ""),
+    doingUnread: st === "needs" && !humanTool(x.state_detail),
+    doingRaw: x.state_detail ||
+      (st === "needs"
+        ? "Blocked on you, but nothing this session has written says what it is asking for."
+        : null),
     ageSec, waitSec, turn, flag, tone, why,
+    /* What byWait ranks on, unclamped, beside the `waitSec` that renders. */
+    blockedAt: x.blocked_since || x.last_activity || 0,
     sortAge: st === "work" ? 0 : ageSec,   /* see byAge — a working row's age is noise */
     rail: CALM_RAIL[st] || CALM_RAIL.idle,
     /* The prompt is only worth quoting when the title is not already it. */
@@ -193,7 +207,20 @@ function calmFilter(all){
    makes server-side for the same reason. */
 const bySid = (a, b) => (a.sid < b.sid ? -1 : (a.sid > b.sid ? 1 : 0));
 const byAge = (a, b) => a.sortAge - b.sortAge || bySid(a, b);
-const byRank = (a, b) => a.rank - b.rank || byAge(a, b);
+/* Longest-blocked first: the queue order, ranked on the same raw field
+   aggregate.py sorts the payload by. Not on `waitSec`, which is the rendered
+   elapsed time and floors at 0 — two rows carrying implausibly future stamps
+   would both clamp to zero here and fall to the id, while the server still
+   ordered them by the stamps, and the two views would name a different gate at
+   the head. A fixed timestamp is also what keeps the order stable across a
+   poll, which an elapsed time is not. */
+const byWait = (a, b) => a.blockedAt - b.blockedAt || bySid(a, b);
+/* Newest-first is right for a row you are watching and wrong for one that is
+   waiting on you: it puts the gate you just saw open above the one that has held
+   you up for an hour. `recent` keeps genuine newest-first for every state,
+   because it takes byAge directly. */
+const byRank = (a, b) => a.rank - b.rank ||
+  (a.st === "needs" && b.st === "needs" ? byWait(a, b) : byAge(a, b));
 /* Fastest known rate first. Only ever applied to working rows whose rate is
    known: see the burn branch below for where the others go, which is not "the
    bottom". */
@@ -389,6 +416,32 @@ document.addEventListener("click", e => {
   calmAction(act, el.getAttribute("data-arg"));
 });
 
+/* One key into the queue from anywhere on the board, in either mode. Calm has no
+   gate band, so there it does the equivalent with the controls it already has:
+   narrow to the blocked rows and park the cursor on the head. Both land the
+   reader on the same session, because both walk gateQueue(). */
+function gateJump(){
+  if(!lastData) return;
+  const queue = gateQueue(lastData);
+  if(!queue.length) return;
+  if(displayMode === "calm"){
+    /* The ordering too, not just the filter. Narrowing to the blocked rows under
+       `recent` renders the queue exactly backwards with the cursor on the last
+       row, and under `fastest` files them beneath "not working now". `g` names a
+       queue, so it has to leave the reader in the queue's order. */
+    calmSort = "attention";
+    calmStateOnly = "needs";
+    calmOpenKey = null;
+    calmCursorKey = sessKey(queue[0]);
+    calmRevealFocus = true;
+    calmResetScroll = true;
+  } else {
+    gateCursorKey = sessKey(queue[0]);
+    gateRevealCursor = true;
+  }
+  render(lastData);
+}
+
 document.addEventListener("keydown", e => {
   /* The stopped panel is terminal, and a shortcut must not act on it, swallow
      the key, or outlive it. The render() guard stops the paint but not the side
@@ -417,10 +470,30 @@ document.addEventListener("keydown", e => {
   if(disarmStop() && lastData) render(lastData);
   /* `c` works in both modes — it is the way back out of calm. */
   if(k === "c"){ stop(); setDisplayMode(displayMode === "calm" ? "regular" : "calm"); return; }
-  if(displayMode !== "calm" || !lastData) return;
+  /* And so does `g` — the queue is reachable from whichever mode you are in. */
+  if(k === "g"){ stop(); gateJump(); return; }
+  if(!lastData) return;
   /* A focused button already answers Enter and Space itself. */
   if((k === "Enter" || k === " ") && e.target && e.target.closest &&
      e.target.closest("a[href],button,select,textarea,input,[tabindex]")) return;
+  /* `j`/`k` and nothing else. Calm binds the arrows and Space as well, and can:
+     its ledger scrolls inside its own frame, under its own cursor. The regular
+     view is an ordinary long page, so preventDefault on those would take away
+     paging and line-scrolling — and take them away only while something is
+     blocked, since the guard below returns early on an empty queue. Scroll keys
+     that work or not depending on the payload are worse than no bindings. */
+  if(displayMode !== "calm"){
+    const queue = gateQueue(lastData);
+    if(!queue.length) return;
+    if(k === "j"){ stop(); gateMove(1); }
+    else if(k === "k"){ stop(); gateMove(-1); }
+    else if(k === "Enter"){
+      stop();
+      const key = gateFocusKey(queue);
+      if(key) calmAction("copy", key);
+    }
+    return;
+  }
   if(k === "j" || k === "ArrowDown"){ stop(); calmMove(1); }
   else if(k === "k" || k === "ArrowUp"){ stop(); calmMove(-1); }
   else if(k === "Enter" || k === " "){
@@ -544,7 +617,8 @@ function calmRowHTML(r, focusSid, d){
     `<span class="cm-where" title="${esc(r.project + " · " + r.session)}">` +
     `<span class="cm-proj">${esc(r.project)}</span>` +
     `<span class="cm-sess">· ${esc(r.session)}</span></span>` +
-    `<span class="cm-doing" title="${esc(r.doingRaw)}">${esc(r.doing)}</span>` +
+    `<span class="cm-doing${r.doingUnread ? " unread" : ""}"` +
+    ` title="${esc(r.doingRaw)}">${esc(r.doing)}</span>` +
     `<span>${flag}</span>` +
     `<span class="cm-rate"><span class="cm-metric" style="color:var(--ink2)"` +
     ` title="${esc(r.rateTip)}">${esc(r.rate)}</span>${bar}</span>` +
@@ -661,6 +735,7 @@ function calmLedger(d){
       ` style="color:${CALM_TONE[f.tone].ink}">◆</span>${esc(f.label)}</span>`).join("") +
     `</span><span class="cm-sp"></span>` +
     `<span class="cm-keys"><span>j k move</span><span>⏎ expand</span><span>f flagged</span>` +
+    `<span>g gates</span>` +
     (usagePresent(d) ? `<span>u usage</span>` : "") +
     `<span>c mode</span><span>esc clear</span></span></div></div>`;
 }

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from cargento_runtime import cli, events, http_api, lifecycle, observation
+from cargento_runtime import aggregate, cli, events, http_api, lifecycle, observation
 from cargento_runtime import io as runtime_io
 
 from . import support
@@ -797,6 +797,70 @@ class WaitDetailTest(unittest.TestCase):
     def test_a_row_with_no_detail_of_its_own_is_unchanged(self) -> None:
         session = self._apply(events.OVERLAY_NEEDS_INPUT, "needs_input", None)
         self.assertIsNone(session["state_detail"])
+
+
+class RowOrderTest(unittest.TestCase):
+    """The order rows are published in — the gate queue's spine. DRC-4018."""
+
+    @staticmethod
+    def _row(sid: str, state: str, **extra: Any) -> dict[str, Any]:
+        return {"sid": sid, "state": state, "last_activity": 1000, **extra}
+
+    def _sorted(self, rows: list[dict[str, Any]]) -> list[str]:
+        return [r["sid"] for r in sorted(rows, key=aggregate.row_order)]
+
+    def test_blocked_rows_come_out_longest_blocked_first(self) -> None:
+        # Session id is an arbitrary order to be stopped in. The gate that has
+        # held someone up longest is the one still costing something, so it leads
+        # — and the ids here run the other way, so the sort cannot pass by
+        # accident.
+        rows = [
+            self._row("aaa", "needs_input", blocked_since=900),
+            self._row("bbb", "needs_input", blocked_since=100),
+            self._row("ccc", "needs_input", blocked_since=500),
+        ]
+        self.assertEqual(["bbb", "ccc", "aaa"], self._sorted(rows))
+
+    def test_the_states_keep_their_ranks_and_working_rows_keep_the_id_order(self) -> None:
+        # Blocked above working above idle is unchanged, and nothing but the
+        # blocked group gained a key: ranking working rows is D7's question.
+        rows = [
+            self._row("w2", "working", blocked_since=1),
+            self._row("i1", "idle"),
+            self._row("w1", "working", blocked_since=999),
+            self._row("n1", "needs_input", blocked_since=500),
+            self._row("unknown", "something_else"),
+        ]
+        self.assertEqual(["n1", "w1", "w2", "i1", "unknown"], self._sorted(rows))
+
+    def test_two_gates_blocked_at_the_same_instant_fall_through_to_the_id(self) -> None:
+        rows = [
+            self._row("bbb", "needs_input", blocked_since=500),
+            self._row("aaa", "needs_input", blocked_since=500),
+        ]
+        self.assertEqual(["aaa", "bbb"], self._sorted(rows))
+
+    def test_a_gate_with_no_blocked_since_is_ranked_by_its_last_activity(self) -> None:
+        # Only Claude's collector and the event overlays set `blocked_since`, so
+        # a harness that reports a wait without one must still take a place in
+        # the queue rather than sorting to the front on a zero.
+        rows = [
+            self._row("has", "needs_input", blocked_since=100),
+            self._row("none", "needs_input", last_activity=50),
+            self._row("null", "needs_input", blocked_since=None, last_activity=900),
+        ]
+        self.assertEqual(["none", "has", "null"], self._sorted(rows))
+
+    def test_the_queue_ranks_on_the_timestamp_itself_not_an_elapsed_wait(self) -> None:
+        # The property that keeps the queue from reshuffling under a reader as
+        # every row in it waits longer. Asserted on the key rather than on a
+        # sorted order, because any monotonic function of `blocked_since` sorts
+        # the same and only the raw value is stable across refreshes.
+        row = self._row("aaa", "needs_input", blocked_since=1_700_000_042.5)
+        self.assertEqual(1_700_000_042.5, aggregate.row_order(row)[1])
+        # And nothing in the key can vary while the row does not: two calls
+        # separated by real time agree.
+        self.assertEqual(aggregate.row_order(row), aggregate.row_order(dict(row)))
 
 
 class StateDisputeTest(unittest.TestCase):

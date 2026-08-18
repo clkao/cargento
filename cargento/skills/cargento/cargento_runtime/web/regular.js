@@ -536,15 +536,68 @@ function workingCard(d, sess){
     turnBlock(sess.turn) + subs + sdBlock(sess) + taskBlock(sess) + `</div>`;
 }
 
-function needRow(d, sess){
+/* Resolved, not written back: a cursor whose gate has left the queue falls to
+   the head, which is what advances the pass when you answer the row you are
+   standing on. See docs/design-needs-input.md for why the page tracks no
+   handled state of its own. */
+function gateFocusKey(queue){
+  if(gateCursorKey && queue.some(x => sessKey(x) === gateCursorKey)) return gateCursorKey;
+  return queue.length ? sessKey(queue[0]) : null;
+}
+
+function gateMove(step){
+  if(!lastData) return;
+  const queue = gateQueue(lastData);
+  if(!queue.length) return;
+  const keys = queue.map(sessKey);
+  const i = keys.indexOf(gateFocusKey(queue));
+  gateCursorKey = keys[Math.max(0, Math.min(keys.length - 1, (i < 0 ? 0 : i + step)))];
+  gateRevealCursor = true;
+  render(lastData);
+}
+
+/* Flagged rather than unconditional: scrolling the band into view on every poll
+   would drag the page around under a reader who is looking somewhere else. */
+function restoreGateCursor(){
+  if(!gateRevealCursor) return;
+  gateRevealCursor = false;
+  const app = document.getElementById("app");
+  const row = (app && app.querySelector) ? app.querySelector(".need.cursor") : null;
+  if(row && row.scrollIntoView) row.scrollIntoView({block: "nearest"});
+}
+
+/* `focusKey` is what gateFocusKey() resolved, not the raw cursor: Enter acts on
+   the head of the queue before anything has been pressed, so the head has to
+   show that it is the target. A selection the keyboard honours and the page does
+   not draw is a hidden one. */
+function needRow(d, sess, pos, focusKey){
   const blocked = fmtDur(d.generated - (sess.blocked_since || sess.last_activity));
-  return `<div class="need"><div style="min-width:0">` +
+  const key = sessKey(sess);
+  /* An empty div here is the same blank a row with nothing to add would leave,
+     so the row that cannot be triaged was the row that looked ordinary. The text
+     reaches disk only sometimes: docs/design-needs-input.md. */
+  const detail = humanTool(sess.state_detail);
+  const detailHtml = detail
+    ? `<div class="need-detail" title="${esc(sess.state_detail)}">${esc(detail)}</div>`
+    : `<div class="need-detail none" title="This session is blocked on you, but nothing` +
+      ` it has written says what it is asking for. Open it to read the prompt.">` +
+      `what it wants is not readable here</div>`;
+  const copied = calmCopyNote && calmCopyNote.key === key;
+  return `<div class="need${focusKey === key ? " cursor" : ""}">` +
+    `<span class="need-n">${pos}</span><div class="need-main">` +
     `<div class="need-meta">${badge(sess.harness, true)}${esc(sess.project)} · ${esc(sess.session)}` +
     `${authorityMeta(sess)}${consumptionMeta(d, sess)}</div>` +
     `<div class="need-title">${esc(sess.title || sess.last_prompt || sess.project)}</div>` +
-    `<div class="need-detail" title="${esc(sess.state_detail)}">` +
-    `${esc(humanTool(sess.state_detail))}</div></div>` +
-    `<div style="flex:none"><div class="blocked-k">blocked</div><div class="blocked-v">${esc(blocked)}</div></div></div>`;
+    detailHtml + `</div>` +
+    /* `data-calm` is the page's single action channel, not a calm-mode one — the
+       document listener that routes it is global — so this row reaches the same
+       clipboard implementation rather than a second one that would report
+       success differently. */
+    `<div class="need-act"><div class="blocked-k">blocked</div>` +
+    `<div class="blocked-v">${esc(blocked)}</div>` +
+    `<button type="button" class="need-copy" data-calm="copy"` +
+    ` data-arg="${esc(key)}" title="copy this session's id">` +
+    `${copied ? esc(calmCopyNote.text) : "copy id"}</button></div></div>`;
 }
 
 function idleRow(d, sess){

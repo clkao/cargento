@@ -14,7 +14,11 @@ function render(d){
   lastData = d;
   syncNotifications(d);
   const app = document.getElementById("app");
-  const needs = d.sessions.filter(x => x.active && x.state === "needs_input");
+  const needs = gateQueue(d);
+  /* An answered queue leaves its cursor behind otherwise, and the same session
+     blocking again later would inherit it — landing the cursor mid-queue on a
+     board whose head is a gate that has waited longer. */
+  if(!needs.length) gateCursorKey = null;
   if(!app){
     document.title = (needs.length > 0 ? `(${needs.length}!) ` : "") + "Cargento";
     return;
@@ -37,6 +41,11 @@ function render(d){
     return;
   }
   const sparkFocused = !!(document.activeElement && document.activeElement.id === "spark-main");
+  /* The band's `copy id` is a [data-calm] control like calm's, and this view
+     rebuilds #app the same way, so it needs the same focus hand-off: without it,
+     activating the button from the keyboard drops focus to <body> and the next
+     Tab restarts at the top of the document. */
+  const actionFocused = calmFocusKey();
   // Capture pointer position before render so we can restore it afterward, even if
   // pointermove fires during the render operation.
   const savedPointer = sparkPointer ? {x: sparkPointer.x, y: sparkPointer.y} : null;
@@ -59,10 +68,17 @@ function render(d){
       `<span>${s.total_done}/${s.total_tasks} tracked tasks done</span>`
     : `<span>no active session uses tracked tasks</span>`;
 
+  /* The keys are advertised here because the regular view has no legend footer
+     to put them in, and `j k step` only when there is more than one row to step
+     between — a hint for a movement that cannot move is noise. */
+  const hint = (needs.length > 1 ? "j k step · " : "") + "⏎ copy id";
+  const gateFocus = gateFocusKey(needs);
   const bandHtml = needs.length
     ? `<div class="band"><div class="band-head"><span class="band-dot"></span>` +
-      `<span class="band-k">Needs your input</span></div>` +
-      needs.map(n => needRow(d, n)).join("") + `</div>`
+      `<span class="band-k">Needs your input</span>` +
+      `<span class="band-n">${needs.length} waiting</span>` +
+      `<span class="band-rule"></span><span class="band-keys">${hint}</span></div>` +
+      needs.map((n, i) => needRow(d, n, i + 1, gateFocus)).join("") + `</div>`
     : "";
 
   let workingHtml = "";
@@ -108,7 +124,9 @@ function render(d){
   renderInProgress = false;
 
   restoreSparkState(sparkFocused, savedPointer);
+  calmRestoreFocus(actionFocused);
   restoreStopFocus();
+  restoreGateCursor();
   document.title = (needs.length > 0 ? `(${needs.length}!) ` : "") + "Cargento";
 }
 
