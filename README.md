@@ -41,8 +41,15 @@ on-disk state a fresh agent reproduces — never a grep over this README or a sk
 
 ## File Naming
 
-Each task lives as a flat markdown file `{slug}.md`. Slugs are lowercase, hyphens, no
-spaces. Example: `pi-agent-spacedock-state.md`.
+Each task lives in **folder form** `{slug}/index.md` so ideation can park a mock
+(a static HTML/JS sketch, a screenshot, a wireframe) alongside the entity file as a
+sibling artifact. Slugs are lowercase, hyphens, no spaces. Example:
+`session-view-spacedock-visibility/index.md` with
+`session-view-spacedock-visibility/mock.html`.
+
+A backend-only task (a collector wiring, a parser change) with no user-facing surface
+uses folder form too for uniformity, with no mock sibling — its `index.md` is the only
+file. Folder form is the default for this workflow; flat `{slug}.md` is not used.
 
 ## Schema
 
@@ -84,11 +91,11 @@ A task enters backlog when it is first proposed: a seed description, no design w
 The captain greenlights a task for design: flesh out the problem, propose an approach, define acceptance criteria as entity-level end-state properties with `Verified by:` clauses, and write a test plan that matches the AC's level of abstraction.
 
 - **Inputs:** The backlog seed, the Cargento runtime architecture (`docs/design-runtime-architecture.md`), the relevant collector (`cargento_runtime/collectors/*.py`), and the frontend sources under `cargento_runtime/web/`.
-- **Outputs:** A chosen approach with the simplest rejected alternative named and why it cannot deliver the value; risk evidence exercising the riskiest mechanism first (or `no spike needed: {proven mechanisms}`); expected surface + tolerance; acceptance criteria each with an external `Verified by:` clause and the concrete change that would make it fail; a test plan.
-- **Good:** ACs measure end value (what the dashboard shows or a user can do) and at least one AC measures against a baseline that can move the wrong way; the riskiest path (a transcript parse, a new view's render, a collector's session classification) is exercised end-to-end before the gate.
-- **Bad:** ACs whose only proof is review of the task's own prose; a "no spike needed" recorded against an unverified runtime handoff; an approach that touches the shipped skill body (`cargento/skills/cargento/SKILL.md`) without flagging the portability rules.
+- **Outputs:** A chosen approach with the simplest rejected alternative named and why it cannot deliver the value; risk evidence exercising the riskiest mechanism first (or `no spike needed: {proven mechanisms}`); expected surface + tolerance; acceptance criteria each with an external `Verified by:` clause and the concrete change that would make it fail; a test plan; and — **when the task has a user-facing surface** (a view, a card, a rendered panel) — a **mock** at `{slug}/mock.*` rendering the target dashboard shape (a static HTML/JS sketch, a screenshot, or a wireframe) the captain can react to before implementation builds the real thing. A backend-only task records `no mock: {not a user-facing surface}` in its body instead.
+- **Good:** ACs measure end value (what the dashboard shows or a user can do) and at least one AC measures against a baseline that can move the wrong way; the riskiest path (a transcript parse, a new view's render, a collector's session classification) is exercised end-to-end before the gate; the mock renders the target shape concretely enough that the captain can say what is wrong with it — a static sketch is enough, do not build the real component at ideation.
+- **Bad:** ACs whose only proof is review of the task's own prose; a "no spike needed" recorded against an unverified runtime handoff; an approach that touches the shipped skill body (`cargento/skills/cargento/SKILL.md`) without flagging the portability rules; a mock that is a prose description of a UI instead of something the captain can look at.
 
-- **Gate content:** Show the selected approach, risk evidence, expected files and lines with tolerance, semantic changes, and proposed proof for each acceptance criterion.
+- **Gate content:** Show the selected approach, risk evidence, expected files and lines with tolerance, semantic changes, the mock (when the task has a user-facing surface), and proposed proof for each acceptance criterion.
 
 ### `implementation`
 
@@ -141,6 +148,8 @@ Materiality and task ownership are independent. Owned Material is eligible for a
 The FO/ensign operating contract already governs generic stage semantics and proof discipline: prefer the cheapest check that can fail — a shipped guard's run, an existing mechanical check, a one-off falsifiable exercise recorded in the report, then the captain's judgment — with new standing enforcement as the last resort rather than the default; prove by exercising rather than re-reading; and reject any AC whose only proof is a review of its own prose. Tasks in this workflow inherit these rules from the contract their FO loads at boot; the rules below add only the Cargento dev-shape specifics.
 
 - **Repo-mutation worktree layer.** `implementation` and `validation` run in a worktree against the Cargento codebase, and `validation` is `fresh` so an independent agent checks the AC. PR state lives on the `pr` field, managed by the `pr-merge` mod — there is no `pr_open` or `awaiting_merge` stage.
+- **Mock at ideation for user-facing surfaces.** This workflow is frontend-heavy: a task with a user-facing surface (a view, a card, a rendered panel) carries a mock at `{slug}/mock.*` from ideation onward, so the captain reviews the target shape before implementation builds it and validation checks the built thing against the mock. The mock is a sibling artifact in the entity's folder, committed with the entity body; it is not the deliverable. A backend-only task records `no mock: {reason}` instead.
+- **Direct captain↔ensign communication.** Frontend iteration is fast and visual: a mock review, a design clarification, a mid-build course correction all benefit from the captain talking to the ensign directly rather than routing every word through the FO. On Pi the captain may `intercom` the live ensign (the `«addressable-worker»` boundary) during `ideation` and `implementation` for mock review and design dialogue. The FO still owns dispatch, gate preparation, and the gate verdict — direct comms speeds design iteration, it does not bypass a gate, advance state, or mutate scope; a design fork or a scope change the captain and ensign reach goes back through the FO so it lands in the entity body and the gate record.
 - **No prose-grep over instruction files.** A string match over an instruction file the model reads (this README, `SKILL.md`, a skill, `AGENTS.md`) never proves a behavioral claim. To settle a case, ask whether the expected value comes from outside the file under test; if it does not, the check is a tautology and is banned. A grep whose output is pasted into the validation report is legitimate external evidence for that run; the same grep committed as a test is banned.
 - **Evidence must be able to fail.** Each AC's cited evidence names the concrete change that would flip it — the falsifying edit. An author who cannot name what would make the evidence fail has not shown it can fail, and the criterion does not count.
 - **Opt-in proof disciplines (copy into the `validation` stage when commissioning).** Adopt the ones the mission needs by folding them into the `validation` stage's Outputs and Bad lists:
@@ -166,6 +175,11 @@ spacedock status --workflow-dir spacedock/flow --next
 ```
 
 ## Task Template
+
+Each task is a folder `{slug}/index.md`. When the task has a user-facing surface,
+ideation adds a mock sibling `{slug}/mock.*` (a static HTML/JS sketch, a
+screenshot, or a wireframe) committed alongside `index.md`; a backend-only task
+records `no mock: {reason}` in the body instead. The body below lives in `index.md`.
 
 ```yaml
 ---
