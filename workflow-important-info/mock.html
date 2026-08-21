@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mock — per-workflow important-info on the Spacedock strip</title>
+<style>
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#111; color:#ddd; margin:24px; }
+  .legend { color:#888; font-size:12px; margin-bottom:16px; max-width:760px; line-height:1.5; }
+  h2 { color:#9cf; font-size:14px; margin:24px 0 8px; font-weight:600; }
+  .sd { border:1px solid #333; border-radius:6px; padding:8px 10px; max-width:760px; margin-bottom:6px; }
+  .sd-k { color:#7ad; font-weight:600; }
+  .sd-role { color:#777; margin-left:8px; }
+  .sd-row { display:flex; align-items:center; gap:6px; padding:3px 0; border-top:1px dashed #222; }
+  .sd-ent { color:#cde; min-width:120px; }
+  .sd-live { color:#fb0; }
+  .sd-cyc { color:#a8d; font-size:11px; }
+  .sd-spine { color:#555; }
+  .sd-cur { color:#fb0; font-weight:600; }
+  .sd-st { color:#666; }
+  .sd-arr { color:#444; }
+  .sd-info { margin-left:8px; }
+  .sd-info-k { color:#888; font-size:11px; }
+  .sd-info-v { color:#9cf; }
+  .sd-info-v.gate-approve { color:#7d7; }
+  .note { color:#666; font-size:11px; font-style:italic; }
+</style>
+</head>
+<body>
+
+<div class="legend">
+  Target shape for the Spacedock strip when a workflow declares a
+  <code>display:</code> field list in its README frontmatter. Each entity row
+  renders the declared fields beside the stage spine. Row 1 shows a workflow
+  <em>with</em> a declaration (<code>display: [title, stage, pr,
+  gate-decision]</code>); row 2 shows a workflow <em>without</em> one, rendering
+  the default set (<code>slug</code>, <code>stage</code>, <code>cycle</code>)
+  unchanged from today.
+</div>
+
+<h2>Workflow "dev" — declares display: [title, stage, pr, gate-decision]</h2>
+<div class="sd">
+  <div><span class="sd-k">spacedock dev</span><span class="sd-role">first officer</span></div>
+
+  <div class="sd-row">
+    <span class="sd-ent sd-live" title="fix-quota-cache-stall">fix-quota-c…</span>
+    <span class="sd-cyc">r2</span>
+    <span class="sd-spine">
+      <span class="sd-st">backlog</span><span class="sd-arr">→</span>
+      <span class="sd-cur">implementation</span><span class="sd-arr">→</span>
+      <span class="sd-st">validation</span><span class="sd-arr">→</span>
+      <span class="sd-st">done</span>
+    </span>
+    <span class="sd-info">
+      <span class="sd-info-k">title</span> <span class="sd-info-v">Fix quota cache stall</span>
+      <span class="sd-info-k">pr</span> <span class="sd-info-v">#1573</span>
+      <span class="sd-info-k">gate</span> <span class="sd-info-v gate-approve">approve</span>
+    </span>
+  </div>
+
+  <div class="sd-row">
+    <span class="sd-ent" title="release-0.3.0-cut">release-0.3.0-cut</span>
+    <span class="sd-spine">
+      <span class="sd-st">backlog</span><span class="sd-arr">→</span>
+      <span class="sd-cur">ideation</span><span class="sd-arr">→</span>
+      <span class="sd-st">implementation</span><span class="sd-arr">→</span>
+      <span class="sd-st">done</span>
+    </span>
+    <span class="sd-info">
+      <span class="sd-info-k">title</span> <span class="sd-info-v">Release 0.3.0 cut</span>
+      <span class="sd-info-k">pr</span> <span class="sd-info-v">—</span>
+      <span class="sd-info-k">gate</span> <span class="sd-info-v">—</span>
+    </span>
+  </div>
+</div>
+
+<h2>Workflow "research" — no display: declaration (default set, unchanged)</h2>
+<div class="sd">
+  <div><span class="sd-k">spacedock research</span><span class="sd-role">first officer</span></div>
+
+  <div class="sd-row">
+    <span class="sd-ent sd-live" title="latency-budget-repro">latency-budg…</span>
+    <span class="sd-cyc">v3</span>
+    <span class="sd-spine">
+      <span class="sd-st">intake</span><span class="sd-arr">→</span>
+      <span class="sd-cur">experiment</span><span class="sd-arr">→</span>
+      <span class="sd-st">writeup</span>
+    </span>
+  </div>
+
+  <div class="sd-row">
+    <span class="sd-ent" title="vector-index-revisit">vector-index…</span>
+    <span class="sd-spine">
+      <span class="sd-st">intake</span><span class="sd-arr">→</span>
+      <span class="sd-st">experiment</span><span class="sd-arr">→</span>
+      <span class="sd-cur">writeup</span>
+    </span>
+  </div>
+</div>
+
+<p class="note">
+  Em-dash (<code>—</code>) renders when a declared field is absent on an entity
+  (no <code>pr</code>, no gate yet) — the column stays present so the row's
+  anatomy is stable across entities of the same workflow.
+</p>
+
+</body>
+</html>
