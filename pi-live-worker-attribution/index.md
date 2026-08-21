@@ -1,6 +1,6 @@
 ---
 title: Pi live-worker attribution — feed live ensign names to session_workflows
-status: ideation
+status: implementation
 source: captain directive — source of truth is the live ensigns
 id: rj497exc44z5es90d7a2bg49
 gates:
@@ -45,7 +45,7 @@ gates:
                 reason: conn granted. Spike confirmed 21 dispatches parseable from FO transcript. attribute_worker extension in scope. Advancing to implementation.
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
 started: 2026-08-21T08:42:31Z
 ---
 
