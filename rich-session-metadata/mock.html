@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cargento — Rich Session Metadata (mock)</title>
+<style>
+  :root {
+    --bg: #0d0f12;
+    --panel: #15181d;
+    --line: #23272e;
+    --line2: #2e333b;
+    --ink: #e8eaed;
+    --ink2: #aab0b8;
+    --ink3: #6c727a;
+    --accent: #5b9bf5;
+    --accent-ink: #c6dafc;
+    --warn: #f0b429;
+    --alert: #f0506e;
+    --green: #4caf7d;
+    --purple: #9b8cf5;
+    --blue: #5b9bf5;
+    --orange: #e88c50;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink);
+    padding: 16px; font-size: 13px; line-height: 1.5;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  .modebar {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 12px; font-size: 12px; color: var(--ink3);
+  }
+  .modebar-k { font-weight: 600; }
+  .modeseg { display: inline-flex; border: 1px solid var(--line2); border-radius: 6px; overflow: hidden; }
+  .modebtn {
+    background: none; border: none; color: var(--ink3);
+    padding: 4px 12px; cursor: pointer; font-size: 12px; font-family: inherit;
+  }
+  .modebtn.on { background: var(--accent); color: #fff; }
+
+  .sess-head {
+    display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px;
+  }
+  .sess-head .harness { font-weight: 700; font-size: 14px; }
+  .sess-head .sid { font-family: monospace; color: var(--ink3); font-size: 12px; }
+  .sess-head .role {
+    font-size: 11px; color: var(--accent-ink);
+    background: color-mix(in oklab, var(--accent) 18%, transparent);
+    padding: 1px 8px; border-radius: 10px;
+    border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  }
+  .goal {
+    background: color-mix(in oklab, var(--accent) 8%, transparent);
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px; margin-bottom: 16px; border-radius: 0 4px 4px 0;
+    font-size: 14px; color: var(--ink);
+  }
+  .goal-k { font-size: 11px; color: var(--ink3); text-transform: uppercase; letter-spacing: 0.5px; margin-right: 8px; }
+
+  /* ── rich entity cards ───────────────────────────────── */
+  .wf { margin-bottom: 20px; }
+  .wf-name {
+    font-size: 12px; font-weight: 600; color: var(--ink2);
+    margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.4px;
+  }
+  .section-k {
+    font-size: 11px; color: var(--ink3); text-transform: uppercase;
+    letter-spacing: 0.4px; margin: 12px 0 6px;
+  }
+
+  .ent-card {
+    background: var(--panel); border: 1px solid var(--line2);
+    border-radius: 6px; padding: 10px 14px; margin-bottom: 6px;
+  }
+  .ent-card.live {
+    border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+    background: color-mix(in oklab, var(--accent) 6%, var(--panel));
+  }
+  .ent-card.dimmed { opacity: 0.55; }
+
+  .ent-top {
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  }
+  .ent-slug {
+    font-family: monospace; font-size: 13px; font-weight: 600; color: var(--ink);
+  }
+  .ent-card.dimmed .ent-slug { font-weight: 400; color: var(--ink2); }
+  .ent-stage {
+    font-size: 11px; color: var(--ink3); text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .ent-stage[data-s="backlog"] { color: var(--ink3); }
+  .ent-stage[data-s="ideation"] { color: var(--blue); }
+  .ent-stage[data-s="implementation"] { color: var(--orange); }
+  .ent-stage[data-s="validation"] { color: var(--purple); }
+  .ent-stage[data-s="done"] { color: var(--green); }
+
+  .ent-decision {
+    display: inline-block; font-size: 10px; font-weight: 600;
+    padding: 1px 7px; border-radius: 10px; text-transform: uppercase;
+    letter-spacing: 0.3px; margin-left: auto;
+  }
+  .ent-decision[data-d="approve"] {
+    background: color-mix(in oklab, var(--green) 20%, transparent);
+    color: var(--green); border: 1px solid color-mix(in oklab, var(--green) 40%, transparent);
+  }
+  .ent-decision[data-d="revise"] {
+    background: color-mix(in oklab, var(--warn) 20%, transparent);
+    color: var(--warn); border: 1px solid color-mix(in oklab, var(--warn) 40%, transparent);
+  }
+  .ent-decision[data-d="hold"] {
+    background: color-mix(in oklab, var(--alert) 20%, transparent);
+    color: var(--alert); border: 1px solid color-mix(in oklab, var(--alert) 40%, transparent);
+  }
+
+  .ent-meta {
+    display: flex; align-items: baseline; gap: 10px; margin-top: 4px;
+    font-size: 11px; color: var(--ink3); flex-wrap: wrap;
+  }
+  .ent-progress { color: var(--ink2); }
+  .ent-ago { font-family: monospace; font-size: 10px; }
+  .ent-reason {
+    margin-top: 4px; font-size: 11px; color: var(--ink3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .ent-spine {
+    display: flex; align-items: center; gap: 4px; margin-top: 6px;
+    font-size: 11px; flex-wrap: wrap;
+  }
+  .sp-st { color: var(--ink3); }
+  .sp-cur {
+    color: var(--ink); font-weight: 600; padding: 1px 7px; border-radius: 10px;
+    background: color-mix(in oklab, var(--accent) 16%, transparent);
+    border: 1px solid color-mix(in oklab, var(--accent) 34%, transparent);
+  }
+  .sp-arr { color: var(--ink3); font-size: 10px; }
+  .sp-gap { color: var(--ink3); }
+
+  .ent-cyc {
+    font-family: monospace; font-size: 10px; color: var(--ink3);
+    padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line2);
+  }
+  .ent-live-dot { color: var(--accent); font-size: 10px; margin-right: 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="modebar">
+    <span class="modebar-k">display</span>
+    <div class="modeseg">
+      <button class="modebtn">regular</button>
+      <button class="modebtn">calm</button>
+      <button class="modebtn on">session</button>
+    </div>
+  </div>
+
+  <!-- ── variant A: FO session with live workers ─────── -->
+
+  <div class="sess-head">
+    <span class="harness">claude</span>
+    <span class="sid">a3f1b2c4</span>
+    <span class="role">first officer</span>
+  </div>
+
+  <div class="goal">
+    <span class="goal-k">goal</span>Ship rich session metadata in the session view
+  </div>
+
+  <div class="wf">
+    <div class="wf-name">dev</div>
+
+    <div class="section-k">touched by this session</div>
+
+    <div class="ent-card live">
+      <div class="ent-top">
+        <span class="ent-live-dot">●</span>
+        <span class="ent-slug">rich-session-metadata</span>
+        <span class="ent-cyc">r1</span>
+        <span class="ent-stage" data-s="ideation">ideation</span>
+        <span class="ent-decision" data-d="approve">approve</span>
+      </div>
+      <div class="ent-meta">
+        <span class="ent-progress">advanced to ideation</span>
+        <span class="ent-ago">39m ago</span>
+        <span>by agent:first-officer</span>
+      </div>
+      <div class="ent-reason">FO autonomous approval (conn granted: you have the conn to push to the forked repo and open PR; reinforced: when you have the conn, you should still do gate attempt and record your autonomous approval as resolution). Backlog seed names a user-facing end value and a concrete dashboard surface; proof-needed well-scoped. Advancing to ideation.</div>
+      <div class="ent-spine">
+        <span class="sp-st">backlog</span><span class="sp-arr">→</span>
+        <span class="sp-cur">ideation</span><span class="sp-arr">→</span>
+        <span class="sp-st">implementation</span><span class="sp-arr">→</span>
+        <span class="sp-st">validation</span><span class="sp-arr">→</span>
+        <span class="sp-st">done</span>
+      </div>
+    </div>
+
+    <div class="ent-card live">
+      <div class="ent-top">
+        <span class="ent-live-dot">●</span>
+        <span class="ent-slug">fix-spacedock-freshness-gate</span>
+        <span class="ent-cyc">r1</span>
+        <span class="ent-stage" data-s="implementation">implementation</span>
+        <span class="ent-decision" data-d="approve">approve</span>
+      </div>
+      <div class="ent-meta">
+        <span class="ent-progress">advanced to implementation</span>
+        <span class="ent-ago">12m ago</span>
+        <span>by agent:first-officer</span>
+      </div>
+      <div class="ent-reason">conn granted: you have the conn to push to the forked repo and open PR; reinforced: when you have the conn, you should still do gate attempt and record your autonomous approval as resolution. Ideation is sound: drop the mtime gate (the 4 other gates suffice)…</div>
+      <div class="ent-spine">
+        <span class="sp-st">backlog</span><span class="sp-arr">→</span>
+        <span class="sp-st">ideation</span><span class="sp-arr">→</span>
+        <span class="sp-cur">implementation</span><span class="sp-arr">→</span>
+        <span class="sp-st">validation</span><span class="sp-arr">→</span>
+        <span class="sp-st">done</span>
+      </div>
+    </div>
+
+    <div class="section-k">not touched by this session</div>
+
+    <div class="ent-card dimmed">
+      <div class="ent-top">
+        <span class="ent-slug">cli-host-flag</span>
+        <span class="ent-stage" data-s="validation">validation</span>
+        <span class="ent-decision" data-d="approve">approve</span>
+      </div>
+      <div class="ent-meta">
+        <span class="ent-progress">advanced to done</span>
+        <span class="ent-ago">2h ago</span>
+        <span>by person:captain</span>
+      </div>
+      <div class="ent-reason">Captain approved validation via Subspace (binding resolution, decision approve, no annotations)…</div>
+      <div class="ent-spine">
+        <span class="sp-st">backlog</span><span class="sp-arr">→</span>
+        <span class="sp-st">ideation</span><span class="sp-arr">→</span>
+        <span class="sp-st">implementation</span><span class="sp-arr">→</span>
+        <span class="sp-cur">validation</span><span class="sp-arr">→</span>
+        <span class="sp-st">done</span>
+      </div>
+    </div>
+
+    <div class="ent-card dimmed">
+      <div class="ent-top">
+        <span class="ent-slug">project-view-overview</span>
+        <span class="ent-stage" data-s="ideation">ideation</span>
+        <span class="ent-decision" data-d="approve">approve</span>
+      </div>
+      <div class="ent-meta">
+        <span class="ent-progress">advanced to ideation</span>
+        <span class="ent-ago">39m ago</span>
+        <span>by agent:first-officer</span>
+      </div>
+      <div class="ent-reason">FO autonomous approval. Backlog seed names a user-facing end value and a concrete dashboard surface…</div>
+      <div class="ent-spine">
+        <span class="sp-st">backlog</span><span class="sp-arr">→</span>
+        <span class="sp-cur">ideation</span><span class="sp-arr">→</span>
+        <span class="sp-st">implementation</span><span class="sp-arr">→</span>
+        <span class="sp-st">validation</span><span class="sp-arr">→</span>
+        <span class="sp-st">done</span>
+      </div>
+    </div>
+
+    <div class="ent-card dimmed">
+      <div class="ent-top">
+        <span class="ent-slug">observer-agent-pattern</span>
+        <span class="ent-stage" data-s="validation">validation</span>
+        <span class="ent-decision" data-d="revise">revise</span>
+      </div>
+      <div class="ent-meta">
+        <span class="ent-progress">held at validation</span>
+        <span class="ent-ago">4h ago</span>
+        <span>by person:captain</span>
+      </div>
+      <div class="ent-reason">Captain returned for rework: the observer spike does not cover the 0-token negative case. Address the no-goal sentinel before re-gate…</div>
+      <div class="ent-spine">
+        <span class="sp-st">backlog</span><span class="sp-arr">→</span>
+        <span class="sp-st">ideation</span><span class="sp-arr">→</span>
+        <span class="sp-st">implementation</span><span class="sp-arr">→</span>
+        <span class="sp-cur">validation</span><span class="sp-arr">→</span>
+        <span class="sp-st">done</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── variant B: FO session with no live workers ──── -->
+
+  <hr style="border:none;border-top:1px dashed var(--line2);margin:24px 0;">
+
+  <div class="sess-head">
+    <span class="harness">claude</span>
+    <span class="sid">e7d2f9a1</span>
+    <span class="role">first officer</span>
+  </div>
+
+  <div class="wf">
+    <div class="wf-name">dev</div>
+
+    <div class="section-k">not touched by this session</div>
+
+    <div class="ent-card dimmed">
+      <div class="ent-top">
+        <span class="ent-slug">group-sessions-by-project</span>
+        <span class="ent-stage" data-s="ideation">ideation</span>
+        <span class="ent-decision" data-d="approve">approve</span>
+      </div>
+      <div class="ent-meta">
+        <span class="ent-progress">advanced to ideation</span>
+        <span class="ent-ago">39m ago</span>
+        <span>by agent:first-officer</span>
+      </div>
+      <div class="ent-reason">FO autonomous approval. Backlog seed names a user-facing end value and a concrete dashboard surface…</div>
+      <div class="ent-spine">
+        <span class="sp-st">backlog</span><span class="sp-arr">→</span>
+        <span class="sp-cur">ideation</span><span class="sp-arr">→</span>
+        <span class="sp-st">implementation</span><span class="sp-arr">→</span>
+        <span class="sp-st">validation</span><span class="sp-arr">→</span>
+        <span class="sp-st">done</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
