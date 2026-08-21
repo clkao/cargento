@@ -3,6 +3,18 @@ title: Bind the dashboard to a configurable host (--host 0.0.0.0 for remote acce
 status: backlog
 source: captain seed
 id: bkjcbqac4d34rtsn7a0vy1kz
+gates:
+    version: 1
+    records:
+        - id: gate:bkjcbqac4d34rtsn7a0vy1kz:backlog
+          stage: backlog
+          attempts:
+            - id: gate-attempt:bkjcbqac4d34rtsn7a0vy1kz-backlog-1
+              briefing:
+                id: briefing:bkjcbqac4d34rtsn7a0vy1kz:backlog:attempt-1:revision-1
+                digest: sha256:0dbf75cf3dd168a3eee148a1013492d4f8b78282793f7a7fec9fe335cf202fe4
+                request-digest: sha256:81479a38bb71ead4823692ca3f47b91fd2f9aa6a11d0ed2c0f95b8f4fce889c1
+                room-ref: ./review/backlog/briefing-1
 ---
 
 An operator running the Cargento dashboard on a shared or remote machine cannot

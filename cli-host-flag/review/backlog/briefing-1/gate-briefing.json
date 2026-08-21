@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:bkjcbqac4d34rtsn7a0vy1kz:backlog:attempt-1:revision-1",
+  "question": "Approve the cli-host-flag backlog seed — add a --host CLI flag (default 127.0.0.1, accepting 0.0.0.0) so the dashboard can bind all interfaces for remote access — to advance to ideation?",
+  "artifacts": [
+    {
+      "id": "artifact:bkjcbqac4d34rtsn7a0vy1kz:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/b8bbee5a09a04ba4c2211e88b1c738c32726848a/cli-host-flag/index.md",
+      "rev": "sha256:90bc7d8ba211c04d0d9f9e8529f26b7aac044db3fa0bffd68772eedf5a84fd52",
+      "mediaType": "text/markdown",
+      "summary": "Add a --host CLI flag so an operator can bind the dashboard to 0.0.0.0 and reach it from another machine, not just localhost. Today cli.py hardcodes 127.0.0.1 at the bind tuple with no --host flag. End value: remote access to the dashboard. Excludes IPv6 and auth. Proof to decide design: confirm the bind tuple is the only hardcoded 127.0.0.1 and reconcile with normalize_host's loopback-only request validation."
+    }
+  ]
+}
