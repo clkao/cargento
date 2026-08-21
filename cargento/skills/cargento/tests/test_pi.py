@@ -6,9 +6,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from cargento_runtime import records as runtime_records
 from cargento_runtime import sessions as runtime_sessions
+from cargento_runtime import spacedock
 from cargento_runtime import transcripts as runtime_transcripts
 from cargento_runtime.collectors import pi as pi_collector
 
@@ -972,6 +974,101 @@ class PiCollectorTest(PiScanTestCase):
         # dropped from the published row altogether.
         self.assertIsNone(rows[0]["spacedock"])
 
+    def test_pi_fo_long_session_boot_past_scan_window(self) -> None:
+        # A Pi first officer with a long transcript where the boot envelope is
+        # past the 512KB head scan window still shows its workflow strip.
+        # Pi transcript lines are large (system prompts, tool results), so 14
+        # messages of ~40KB each push the envelope to ~588KB, past 512KB.
+        # Falsifying edit: remove the fallback full-file read from
+        # ``transcript_boot`` — the head scan returns [], ``spacedock`` is None.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wf = root / "wf"
+            wf.mkdir()
+            (wf / "README.md").write_text(
+                "---\n"
+                "commissioned-by: spacedock@1.0.0\n"
+                "stages:\n"
+                "  states:\n"
+                "    - name: intake\n"
+                "      initial: true\n"
+                "    - name: review\n"
+                "    - name: posted\n"
+                "      terminal: true\n"
+                "---\n",
+                encoding="utf-8",
+            )
+            entity_state = wf / ".spacedock-state"
+            entity_state.mkdir()
+            entity_file = entity_state / "drc-1.md"
+            entity_file.write_text("---\nstatus: review\n---\n\n# entity\n", encoding="utf-8")
+            os.utime(entity_file, (self.NOW, self.NOW))
+            envelope = json.dumps(
+                {
+                    "command": "boot",
+                    "definition_dir": str(wf),
+                    "entity_dir": str(entity_state),
+                    "dispatchable": [],
+                }
+            )
+            records: list[dict[str, Any]] = [
+                self._header("fo"),
+                self._message("p", None, self.NOW - 60, "user", "Start workflow"),
+            ]
+            # Large filler messages to push the boot envelope past the
+            # 512KB head scan window.
+            records.extend(
+                self._message(
+                    f"filler-{i}",
+                    "p",
+                    self.NOW - 50 + i,
+                    "assistant",
+                    "x" * 40_000,
+                )
+                for i in range(14)
+            )
+            records.append(
+                self._message(
+                    "call",
+                    "p",
+                    self.NOW - 15,
+                    "assistant",
+                    [{"type": "toolCall", "name": "bash"}],
+                )
+            )
+            records.append(
+                self._message(
+                    "boot",
+                    "call",
+                    self.NOW - 10,
+                    "toolResult",
+                    [{"type": "text", "text": "=== BOOT ===\n" + envelope}],
+                )
+            )
+            sessions_dir = root / "sessions"
+            sessions_dir.mkdir()
+            session_path = sessions_dir / "fo.jsonl"
+            session_path.write_text(
+                "\n".join(json.dumps(r) for r in records) + "\n",
+                encoding="utf-8",
+            )
+            os.utime(session_path, (self.NOW, self.NOW))
+            with store_patch(PI_SESSIONS_DIR=str(sessions_dir)):
+                config, state = runtime()
+                self.assertGreater(
+                    session_path.stat().st_size,
+                    config.spacedock_boot_scan_bytes,
+                    "test fixture must push the envelope past the scan window",
+                )
+                rows = pi_collector.collect(config, state, self.NOW, 24, True)
+
+        by_sid = {row["sid"]: row for row in rows}
+        self.assertIn("fo", by_sid)
+        sd = by_sid["fo"]["spacedock"]
+        assert sd is not None
+        self.assertEqual("first-officer", sd["role"])
+        self.assertGreater(len(sd["workflows"]), 0)
+
 
 class TurnTrackingTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -1004,4 +1101,129 @@ class TurnTrackingTest(unittest.TestCase):
         self.assertEqual(
             runtime_records.parse_ts("2026-07-29T11:11:00Z"),
             scan["turn"]["turn_start"],
+        )
+
+
+class TranscriptBootTest(unittest.TestCase):
+    """``transcript_boot`` head scan and fallback: fast path, no-sticky-negative."""
+
+    @staticmethod
+    def _envelope(definition_dir: str = "/tmp/wf") -> str:
+        return json.dumps(
+            {
+                "command": "boot",
+                "definition_dir": definition_dir,
+                "entity_dir": definition_dir + "/.spacedock-state",
+                "dispatchable": [],
+            }
+        )
+
+    @staticmethod
+    def _boot_record(envelope: str) -> dict[str, Any]:
+        return {
+            "type": "message",
+            "id": "boot",
+            "parentId": None,
+            "timestamp": "2026-07-29T11:00:01Z",
+            "message": {
+                "role": "toolResult",
+                "content": [{"type": "text", "text": "=== BOOT ===\n" + envelope}],
+            },
+        }
+
+    @staticmethod
+    def _filler(entry_id: str, size: int = 40_000) -> dict[str, Any]:
+        return {
+            "type": "message",
+            "id": entry_id,
+            "parentId": None,
+            "timestamp": "2026-07-29T11:00:00Z",
+            "message": {"role": "user", "content": "x" * size},
+        }
+
+    def test_transcript_boot_fallback_finds_envelope(self) -> None:
+        # The boot envelope is past the head scan window. The fallback
+        # full-file read finds it. Falsifying edit: remove the fallback read.
+        config, state = make_runtime()
+        records = [self._filler(f"f-{i}") for i in range(14)]
+        records.append(self._boot_record(self._envelope()))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "long.jsonl"
+            path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+            self.assertGreater(path.stat().st_size, config.spacedock_boot_scan_bytes)
+            result = spacedock.transcript_boot(config, state, str(path))
+        self.assertEqual(1, len(result))
+        self.assertEqual("boot", result[0]["command"])
+
+    def test_transcript_boot_head_scan_still_works(self) -> None:
+        # The boot envelope is within the head scan window. No regression.
+        # Falsifying edit: skip the head scan entirely.
+        config, state = make_runtime()
+        records = [
+            {"type": "session", "version": 3, "id": "s1", "cwd": "/w/proj"},
+            self._boot_record(self._envelope()),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "short.jsonl"
+            path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+            self.assertLess(path.stat().st_size, config.spacedock_boot_scan_bytes)
+            result = spacedock.transcript_boot(config, state, str(path))
+        self.assertEqual(1, len(result))
+        self.assertEqual("boot", result[0]["command"])
+
+    def test_transcript_boot_head_scan_caches_without_fallback(self) -> None:
+        # A short transcript (envelope within the scan window) does not trigger
+        # a full-file read on the second call — the head-scan cache returns the
+        # result. Falsifying edit: always do a full-file read regardless of
+        # head-scan result — the second call re-reads and ``boot_records`` is
+        # called again.
+        config, state = make_runtime()
+        records = [
+            {"type": "session", "version": 3, "id": "s1", "cwd": "/w/proj"},
+            self._boot_record(self._envelope()),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "short.jsonl"
+            path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+            with mock.patch(
+                "cargento_runtime.spacedock.boot_records",
+                wraps=spacedock.boot_records,
+            ) as spy:
+                result1 = spacedock.transcript_boot(config, state, str(path))
+                calls_after_first = spy.call_count
+                result2 = spacedock.transcript_boot(config, state, str(path))
+                calls_after_second = spy.call_count
+        self.assertEqual(1, len(result1))
+        self.assertEqual(result1, result2)
+        self.assertEqual(
+            calls_after_first,
+            calls_after_second,
+            "second call re-read the file instead of using the head-scan cache",
+        )
+
+    def test_transcript_boot_fallback_cached(self) -> None:
+        # The fallback result is cached; a second call does not re-read the full
+        # file. Falsifying edit: don't cache the fallback result — the second
+        # call re-reads the full file and ``boot_records`` is called again.
+        config, state = make_runtime()
+        records = [self._filler(f"f-{i}") for i in range(14)]
+        records.append(self._boot_record(self._envelope()))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "long.jsonl"
+            path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+            self.assertGreater(path.stat().st_size, config.spacedock_boot_scan_bytes)
+            with mock.patch(
+                "cargento_runtime.spacedock.boot_records",
+                wraps=spacedock.boot_records,
+            ) as spy:
+                result1 = spacedock.transcript_boot(config, state, str(path))
+                calls_after_first = spy.call_count
+                result2 = spacedock.transcript_boot(config, state, str(path))
+                calls_after_second = spy.call_count
+        self.assertEqual(1, len(result1))
+        self.assertEqual(result1, result2)
+        self.assertEqual(
+            calls_after_first,
+            calls_after_second,
+            "second call re-read the full file instead of using the fallback cache",
         )

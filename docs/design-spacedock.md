@@ -100,7 +100,11 @@ so presence is good evidence, and it needs no new source.
 
 It costs two things, both accepted rather than overlooked. Every Pi session pays a bounded transcript
 head scan on refresh, where Claude pays a cached lookup and stops; the scan is capped at
-`spacedock_boot_scan_bytes` and cached on `(path, size)`, so a settled transcript costs one `stat`.
+`spacedock_boot_scan_bytes` and cached on `(path, min(size, scan_bytes))`, so a settled transcript
+costs one `stat` plus the head read. When the head scan misses on a file larger than the scan window —
+the long-session case, where large Pi transcript lines push the envelope past the head — a full-file
+fallback read runs once and is cached on `(path, size)`, so a growing file re-checks but a stable file
+does not.
 And classification now depends on tool output rather than a launch-time declaration, which is a
 weaker signal: tool output is whatever a tool printed. The guards that matter sit downstream and are
 unchanged, so a crafted envelope still has to survive path canonicalisation, the symlink and
