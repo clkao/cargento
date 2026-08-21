@@ -296,3 +296,24 @@ Selected the Cargento-side analyzer as the observer's home (reuses the collector
 ### Summary
 
 Reworked the ideation per captain revise: the observer now ships its own user-facing surface (the observer panel — a compact card rendering goal + stage + block from the sidecar), not just a backend-only analyzer. Created a mock at observer-agent-pattern/mock.html with four variants (active, no-goal, model-failure fallback, idle). Added AC-4 measuring the user-facing end value (what the operator sees in the panel). Updated the boundary with the sibling session-view task: sibling owns the dispatch tree + frontmatter goal; this task owns the observer panel (live semantic state). Kept the existing three ACs and the no-fabrication spike evidence. Named the simplest rejected alternative for the surface (defer all rendering to the sibling — rejected because it leaves the observer backend-only with no user impact).
+
+## Stage Report: implementation
+
+- DONE: Change satisfies the ideation ACs: analyzer derives goal+stage+block (AC1)
+  `observer.analyze()` derives the goal from the most recent concrete user directive, the stage from the entity dir's frontmatter `status`, and the block from a bounded scan of recent assistant text for block indicators. Falsified by editing the fixture's recent directive to a different objective and observing the goal not track it (test_observer.py: test_positive_case_derives_goal_stage_and_block).
+- DONE: no-goal sentinel (AC2)
+  A session whose only user message is a generic skill-load opener with no assistant output short-circuits to "no goal derived" without calling the model. The short-circuit bypasses the model entirely: a fabricating model cannot override the sentinel. Falsified by removing the deterministic short-circuit (test_observer.py: test_no_goal_session_yields_sentinel_not_hallucination, test_no_goal_sentinel_not_overridden_by_model).
+- DONE: read-only invariant (AC3)
+  The analyzer opens the target transcript and entity dir read-only and writes only to its own sidecar (under config.state_dir, outside the target tree). Test runs the analyzer against a read-only mount (chmod -w), asserts the sidecar is produced and no file under the target tree was modified. Falsified by any write into the target tree (test_observer.py: test_read_only_invariant).
+- DONE: observer panel renders user-facing output (AC4)
+  `renderObserverPanel(sidecar)` renders the goal text, stage badge, and block text from the sidecar alone. A no-goal sidecar renders the sentinel, not a fabricated goal. Falsified by editing the sidecar's goal to a different string and observing the panel not update, or by adding a hardcoded fallback goal (test_observer.py: test_panel_renders_goal_stage_and_block, test_panel_renders_no_goal_sentinel_not_fabricated_goal, test_panel_updates_when_sidecar_changes, test_panel_no_hardcoded_fallback_goal).
+- DONE: Tests written first and watched fail for the right reason
+  Five test classes covering the five test-plan cases: negative-case (no-goal derivation), positive-case (goal + stage + block), read-only-mount, model-failure-degradation, panel-render. All 9 tests pass; each asserts a specific falsifiable claim.
+- DONE: Observer panel renders from the sidecar alone (goal + stage + block; no-goal sentinel; no hardcoded fallback)
+  `renderObserverPanel` takes a sidecar JSON and returns HTML containing the goal, stage badge, and block. A `no goal derived` sidecar renders the sentinel with a distinct `observer-sentinel` class, never a hardcoded fallback.
+- DONE: Pre-PR suite run green: ruff check, ruff format --check, mypy, lint_embedded.py, validate_plugins.py, coverage
+  All pass: ruff check (0 errors), ruff format --check (111 files formatted), mypy --strict (0 issues in 82 files), lint_embedded.py (clean), validate_plugins.py (1 skill validated), coverage 88.6% (threshold 73). 1186 unit tests pass + 157 script tests.
+
+### Summary
+
+Implemented the observer agent pattern as a new `observer.py` analyzer module in `cargento_runtime`, a new `observer.js` panel in `web/`, and a new `/api/observe` route in `http_api.py`. The analyzer reads the target session's transcript head (opening directive + bounded recent window) and the workflow entity dir read-only, derives goal + current stage + one open block deterministically, and writes a sidecar to its own store. The no-goal short-circuit bypasses the model for generic-opener-only sessions; a model failure degrades to the deterministic fallback. The panel renders the sidecar's goal + stage + block without the dispatch tree. Three config fields added (observer_head_bytes, observer_goal_cap_chars, observer_block_cap_chars). Import graph and runtime file inventory updated. Byte oracles in test_page.py and test_lifecycle.py updated for the new JS part.
