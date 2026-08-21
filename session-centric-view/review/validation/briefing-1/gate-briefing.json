@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:0c3re8kepj1984gnaenr5a7f:validation:attempt-1:revision-1",
+  "question": "Approve session-centric-view validation — to proceed to done (merge)?",
+  "artifacts": [
+    {
+      "id": "artifact:0c3re8kepj1984gnaenr5a7f:validation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/3ce1e81700460bbe9bb1a8846841082a731789d2/session-centric-view/index.md",
+      "rev": "sha256:5a4240dac930ee68ae9c94466d461e28fcad9b94b848b1a40a790dd27637a226",
+      "mediaType": "text/markdown",
+      "summary": "Session card renders in session view (verified: sessionCardCore in page, sessionCard calls it). 'other workflow entities' label replaces 'NOT TOUCHED'. Entities carry decision/timestamp/info. dispatch_history computed but not yet published to API — filed as follow-up."
+    }
+  ]
+}

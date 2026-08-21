@@ -26,6 +26,15 @@ gates:
               application:
                 target-stage: ideation
                 state: consumed
+        - id: gate:0c3re8kepj1984gnaenr5a7f:validation
+          stage: validation
+          attempts:
+            - id: gate-attempt:0c3re8kepj1984gnaenr5a7f-validation-1
+              briefing:
+                id: briefing:0c3re8kepj1984gnaenr5a7f:validation:attempt-1:revision-1
+                digest: sha256:50b005b46a4aa9666320dda98e9fc6ce885c5497c048ee3918ac9bf64fff243a
+                request-digest: sha256:75d412db405d9af4f3671465e80982f386fc3c66b9f09d27d2f04ce1093b2aaa
+                room-ref: ./review/validation/briefing-1
 started: 2026-08-21T14:15:39Z
 worktree: .worktrees/spacedock-ensign-session-centric-view
 ---
