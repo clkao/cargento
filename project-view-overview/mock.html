@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cargento — Project View (mock)</title>
+<style>
+  :root {
+    --bg: #0d0f12;
+    --panel: #15181d;
+    --panel2: #1a1e24;
+    --line: #23272e;
+    --line2: #2e333b;
+    --ink: #e8eaed;
+    --ink2: #aab0b8;
+    --ink3: #6c727a;
+    --accent: #5b9bf5;
+    --accent-ink: #c6dafc;
+    --warn: #f0b429;
+    --alert: #f0506e;
+    --green: #4caf7d;
+    --purple: #9b8cf5;
+    --blue: #5b9bf5;
+    --orange: #e88c50;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink);
+    padding: 16px; font-size: 13px; line-height: 1.5;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+
+  /* ── mode bar ─────────────────────────────────────────── */
+  .modebar {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 16px; font-size: 12px; color: var(--ink3);
+  }
+  .modebar-k { font-weight: 600; }
+  .modeseg { display: inline-flex; border: 1px solid var(--line2); border-radius: 6px; overflow: hidden; }
+  .modebtn {
+    background: none; border: none; color: var(--ink3);
+    padding: 4px 12px; cursor: pointer; font-size: 12px; font-family: inherit;
+  }
+  .modebtn.on { background: var(--accent); color: #fff; }
+  .modebar-split { width: 1px; height: 20px; background: var(--line2); }
+  .stopbtn {
+    background: none; border: 1px solid var(--line2); color: var(--ink3);
+    padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  .live-dot {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; color: var(--ink3);
+  }
+  .live-dot::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green); box-shadow: 0 0 4px var(--green);
+  }
+
+  /* ── project panel ───────────────────────────────────── */
+  .proj {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .proj-head {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .proj-name {
+    font-size: 15px; font-weight: 700; color: var(--ink);
+  }
+  .proj-summary {
+    font-size: 11px; color: var(--ink3);
+  }
+  .proj-summary .sep { margin: 0 6px; opacity: 0.5; }
+  .proj-summary .live-count { color: var(--accent); }
+  .proj-summary .gate-count { color: var(--warn); }
+
+  /* ── workflow section ────────────────────────────────── */
+  .wf { padding: 12px 16px; }
+  .wf + .wf { border-top: 1px solid var(--line); }
+  .wf-name {
+    font-size: 12px; font-weight: 600; color: var(--ink2);
+    margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+  }
+
+  /* ── stage tree (vertical) ───────────────────────────── */
+  .tree { position: relative; padding-left: 0; }
+  .stage-col {
+    display: flex; align-items: flex-start; gap: 0; margin-bottom: 2px;
+  }
+  .stage-label {
+    width: 100px; flex-shrink: 0; text-align: right; padding-right: 16px;
+    font-size: 11px; color: var(--ink3); text-transform: uppercase; letter-spacing: 0.3px;
+    padding-top: 7px;
+  }
+  .stage-nodes { flex: 1; border-left: 2px solid var(--line2); padding-left: 16px; min-height: 36px; }
+  .stage-col.terminal .stage-nodes { border-left-color: var(--green); }
+  .stage-col.initial .stage-nodes { border-left-color: var(--ink3); }
+  .stage-col.active .stage-nodes { border-left-color: var(--accent); }
+  .stage-col.gate .stage-label { color: var(--warn); }
+
+  .ent {
+    display: flex; align-items: center; gap: 8px;
+    margin: 3px 0; padding: 6px 10px; border-radius: 5px; font-size: 12px;
+    border: 1px solid var(--line2); background: var(--panel2);
+  }
+  .ent.live {
+    border-color: var(--accent);
+    background: color-mix(in oklab, var(--accent) 14%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 30%, transparent);
+  }
+  .ent-slug { font-family: monospace; font-size: 11px; }
+  .ent-cyc { color: var(--ink3); font-size: 10px; }
+  .ent-driver {
+    font-size: 10px; color: var(--ink3);
+    margin-left: auto; white-space: nowrap;
+  }
+  .ent-driver .drv-harness {
+    font-weight: 600; color: var(--ink2);
+  }
+  .ent-driver .drv-id {
+    font-family: monospace; color: var(--ink3);
+  }
+  .ent.live .ent-driver .drv-harness { color: var(--accent-ink); }
+  .ent.live::before {
+    content: "●"; color: var(--accent); font-size: 10px; flex-shrink: 0;
+  }
+  .ent:not(.live)::before {
+    content: "○"; color: var(--ink3); font-size: 10px; flex-shrink: 0;
+  }
+  .ent[data-stage="backlog"] { border-left: 3px solid var(--ink3); }
+  .ent[data-stage="ideation"] { border-left: 3px solid var(--blue); }
+  .ent[data-stage="implementation"] { border-left: 3px solid var(--orange); }
+  .ent[data-stage="validation"] { border-left: 3px solid var(--purple); }
+  .ent[data-stage="done"] { border-left: 3px solid var(--green); opacity: 0.65; }
+
+  .empty-stage { color: var(--ink3); font-size: 11px; font-style: italic; padding-top: 6px; }
+
+  /* ── non-spacedock project ───────────────────────────── */
+  .ns-sessions {
+    padding: 10px 16px;
+  }
+  .ns-sess {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 0; font-size: 12px; color: var(--ink2);
+    border-bottom: 1px solid var(--line);
+  }
+  .ns-sess:last-child { border-bottom: none; }
+  .ns-sess .ns-harness { font-weight: 600; color: var(--ink); }
+  .ns-sess .ns-id { font-family: monospace; font-size: 11px; color: var(--ink3); }
+  .ns-sess .ns-state { font-size: 11px; color: var(--ink3); margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- mode bar with the fourth button -->
+  <div class="modebar">
+    <span class="modebar-k">display</span>
+    <div class="modeseg">
+      <button class="modebtn">regular</button>
+      <button class="modebtn">calm</button>
+      <button class="modebtn">project</button>
+    </div>
+    <span class="modebar-split"></span>
+    <button class="stopbtn">stop</button>
+    <span style="flex:1"></span>
+    <span class="live-dot">live · 12:34:56</span>
+  </div>
+
+  <!-- ── project: cargento (FO session + dispatched workers) ── -->
+
+  <div class="proj">
+    <div class="proj-head">
+      <span class="proj-name">cargento</span>
+      <span class="proj-summary">
+        <span>8 entities</span>
+        <span class="sep">·</span>
+        <span class="live-count">3 live</span>
+        <span class="sep">·</span>
+        <span class="gate-count">2 at gate</span>
+      </span>
+    </div>
+
+    <!-- workflow: dev -->
+    <div class="wf">
+      <div class="wf-name">dev</div>
+      <div class="tree">
+        <div class="stage-col initial gate">
+          <div class="stage-label">backlog</div>
+          <div class="stage-nodes">
+            <div class="ent" data-stage="backlog">
+              <span class="ent-slug">fix-dark-mode-toggle</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">a3f1b2c4</span></span>
+            </div>
+            <div class="ent" data-stage="backlog">
+              <span class="ent-slug">add-export-csv</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">a3f1b2c4</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="stage-col gate">
+          <div class="stage-label">ideation</div>
+          <div class="stage-nodes">
+            <div class="ent live" data-stage="ideation">
+              <span class="ent-slug">project-view-overview</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">a3f1b2c4</span></span>
+            </div>
+            <div class="ent live" data-stage="ideation">
+              <span class="ent-slug">group-sessions-by-project</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">a3f1b2c4</span></span>
+            </div>
+            <div class="ent live" data-stage="ideation">
+              <span class="ent-slug">workflow-important-info</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">a3f1b2c4</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="stage-col active">
+          <div class="stage-label">implementation</div>
+          <div class="stage-nodes">
+            <div class="ent" data-stage="implementation">
+              <span class="ent-slug">cli-host-flag</span>
+              <span class="ent-cyc">r1</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">a3f1b2c4</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="stage-col gate">
+          <div class="stage-label">validation</div>
+          <div class="stage-nodes">
+            <div class="ent" data-stage="validation">
+              <span class="ent-slug">session-view-spacedock-visibility</span>
+              <span class="ent-cyc">c2</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">a3f1b2c4</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="stage-col terminal">
+          <div class="stage-label">done</div>
+          <div class="stage-nodes">
+            <div class="ent" data-stage="done">
+              <span class="ent-slug">page-split-refactor</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">a3f1b2c4</span></span>
+            </div>
+            <div class="ent" data-stage="done">
+              <span class="ent-slug">sse-stream-handler</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">a3f1b2c4</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── project: subspace-ssh (no Spacedock workflow) ── -->
+
+  <div class="proj">
+    <div class="proj-head">
+      <span class="proj-name">subspace-ssh</span>
+      <span class="proj-summary">
+        <span>2 sessions</span>
+        <span class="sep">·</span>
+        <span>no Spacedock workflow</span>
+      </span>
+    </div>
+    <div class="ns-sessions">
+      <div class="ns-sess">
+        <span class="ns-harness">claude</span>
+        <span class="ns-id">e7d2f9a1</span>
+        <span class="ns-state">working · running Bash</span>
+      </div>
+      <div class="ns-sess">
+        <span class="ns-harness">codex</span>
+        <span class="ns-id">b2c8d3e0</span>
+        <span class="ns-state">idle · awaiting your message</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── project: spacedock (FO + ensign, multiple workflows) ── -->
+
+  <div class="proj">
+    <div class="proj-head">
+      <span class="proj-name">spacedock</span>
+      <span class="proj-summary">
+        <span>5 entities</span>
+        <span class="sep">·</span>
+        <span class="live-count">2 live</span>
+        <span class="sep">·</span>
+        <span class="gate-count">1 at gate</span>
+      </span>
+    </div>
+
+    <!-- workflow: dev -->
+    <div class="wf">
+      <div class="wf-name">dev</div>
+      <div class="tree">
+        <div class="stage-col initial gate">
+          <div class="stage-label">backlog</div>
+          <div class="stage-nodes">
+            <div class="ent" data-stage="backlog">
+              <span class="ent-slug">migrate-state-store</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">f1a2b3c4</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="stage-col active">
+          <div class="stage-label">implementation</div>
+          <div class="stage-nodes">
+            <div class="ent live" data-stage="implementation">
+              <span class="ent-slug">port-probe-hardening</span>
+              <span class="ent-cyc">r1</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">f1a2b3c4</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="stage-col terminal">
+          <div class="stage-label">done</div>
+          <div class="stage-nodes">
+            <div class="ent" data-stage="done">
+              <span class="ent-slug">bind-error-messages</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">f1a2b3c4</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- workflow: docs -->
+    <div class="wf">
+      <div class="wf-name">docs</div>
+      <div class="tree">
+        <div class="stage-col gate">
+          <div class="stage-label">ideation</div>
+          <div class="stage-nodes">
+            <div class="ent live" data-stage="ideation">
+              <span class="ent-slug">api-reference-refresh</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">f1a2b3c4</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="stage-col terminal">
+          <div class="stage-label">done</div>
+          <div class="stage-nodes">
+            <div class="ent" data-stage="done">
+              <span class="ent-slug">getting-started-rewrite</span>
+              <span class="ent-driver"><span class="drv-harness">pi</span> <span class="drv-id">f1a2b3c4</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
