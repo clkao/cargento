@@ -15,6 +15,17 @@ gates:
                 digest: sha256:dcc36568f0e286ebec8cd255fb4e498078cc37ae00d8e4e30277bd769226699a
                 request-digest: sha256:58bd5b698c28c45a4c3f880b662a9c7b7934ec4911dce85aff57207fc42b62f9
                 room-ref: ./review/backlog/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:tzrvnebvdb10fddfr40szvtm:backlog:1
+                briefing: briefing:tzrvnebvdb10fddfr40szvtm:backlog:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T07:28:23.355151244Z"
+                decision: approve
+                reason: 'FO autonomous approval (conn granted: ''you have the conn to push to the forked repo and open PR''; reinforced: ''when you have the conn, you should still do gate attempt and record your autonomous approval as resolution''). Backlog seed names a user-facing end value and a concrete dashboard surface; proof-needed well-scoped. Advancing to ideation.'
+              application:
+                target-stage: ideation
+                state: pending
 ---
 
 A long-running first-officer session that has been driving a workflow for hours
