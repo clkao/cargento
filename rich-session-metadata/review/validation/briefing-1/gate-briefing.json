@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:z4tjfzz9y4dz1vvaz588mc81:validation:attempt-1:revision-1",
+  "question": "Approve rich-session-metadata validation — to proceed to done (merge)?",
+  "artifacts": [
+    {
+      "id": "artifact:z4tjfzz9y4dz1vvaz588mc81:validation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/36e274a077b3697606266fe23f532822612a4fb1/rich-session-metadata/index.md",
+      "rev": "sha256:7c91bdd81f2f074f2d897c6c7d8d9c9957ec622ee278ac24587d9de984a9f332",
+      "mediaType": "text/markdown",
+      "summary": "Implementation verified: entity_gate_summary + sdBlock, 1182 tests green (independently confirmed), commit landed."
+    }
+  ]
+}
