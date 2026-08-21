@@ -260,6 +260,7 @@ def base_session(harness: str, sid: Any, project: str) -> Session:
         "consumption": None,
         "title": None,
         "last_prompt": "",
+        "last_response": "",
         "state": "idle",
         "state_detail": "awaiting your message",
         "active": False,
