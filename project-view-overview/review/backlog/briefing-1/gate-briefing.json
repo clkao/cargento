@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:5semdnyk5x3w5gh8vkjxfqxw:backlog:attempt-1:revision-1",
+  "question": "Approve the project-view-overview backlog seed to advance to ideation?",
+  "artifacts": [
+    {
+      "id": "artifact:5semdnyk5x3w5gh8vkjxfqxw:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/ac060fbd1c5db2fd4296e16e528c5eee87c430c3/project-view-overview/index.md",
+      "rev": "sha256:0f60c3000304a94afc5d79258b054e0900789dadf00d5473028cd133c0c464db",
+      "mediaType": "text/markdown",
+      "summary": "Backlog seed for project-view-overview (filed from captain dogfood feedback). See entity body for end value, included/excluded scope, and proof needed."
+    }
+  ]
+}

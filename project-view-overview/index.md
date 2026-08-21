@@ -3,6 +3,18 @@ title: Project view — multi-session entity state overview across sessions
 status: backlog
 source: captain dogfood feedback
 id: 5semdnyk5x3w5gh8vkjxfqxw
+gates:
+    version: 1
+    records:
+        - id: gate:5semdnyk5x3w5gh8vkjxfqxw:backlog
+          stage: backlog
+          attempts:
+            - id: gate-attempt:5semdnyk5x3w5gh8vkjxfqxw-backlog-1
+              briefing:
+                id: briefing:5semdnyk5x3w5gh8vkjxfqxw:backlog:attempt-1:revision-1
+                digest: sha256:8648661b2b61037f98090c248689c5ebbd7ac16bf3d4262032b4914d7fc3c5a8
+                request-digest: sha256:6342b6256f817feb0f7c335a522c0524157bc1a620d502b7a29d962adf063cb1
+                room-ref: ./review/backlog/briefing-1
 ---
 
 In a project with multiple sessions (e.g. cargento has this FO session plus two
