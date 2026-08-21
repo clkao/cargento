@@ -49,6 +49,17 @@ gates:
                 digest: sha256:bc8f0bf4f2116ffa5a0a844e42f1e17b96cba293a4dfd0f9601b25c4a5bfebff
                 request-digest: sha256:a6bd24d134604a2996bf99b25d0cd1c162560ac5c2223abe60d9a08be5fe256d
                 room-ref: ./observer-agent-pattern/review/ideation/briefing-2
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:9t63gp52zec23rh0k9t160ft:ideation:2
+                briefing: briefing:9t63gp52zec23rh0k9t160ft:ideation:attempt-2:revision-1
+                by: person:captain
+                at: "2026-08-21T04:08:11.572940334Z"
+                decision: approve
+                reason: 'Captain approved the reworked ideation via Subspace (binding resolution, decision approve, no annotations). Attempt 2 addresses the prior revise: observer panel as user-facing surface, mock with 4 variants, AC-4 measuring user-facing end value.'
+              application:
+                target-stage: implementation
+                state: pending
 started: 2026-08-20T18:30:00Z
 ---
 
