@@ -1,6 +1,6 @@
 ---
 title: Observer agent pattern beside an active session
-status: implementation
+status: validation
 source: captain seed
 id: 9t63gp52zec23rh0k9t160ft
 gates:
