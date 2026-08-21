@@ -35,6 +35,17 @@ gates:
                 digest: sha256:6ead16355700602ecf8cf09afd873955f762cd10d165b475798ef0a349597721
                 request-digest: sha256:4433ff36e940f3649452880c300defeb2a9d256a2ad9993d8e659e35cb46fb53
                 room-ref: ./review/ideation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:bkjcbqac4d34rtsn7a0vy1kz:ideation:1
+                briefing: briefing:bkjcbqac4d34rtsn7a0vy1kz:ideation:attempt-1:revision-1
+                by: person:captain
+                at: "2026-08-21T04:34:09.990551638Z"
+                decision: approve
+                reason: 'Captain approved via Subspace (binding resolution, decision approve). Captain''s appended question ''estimate net loc change?'' answered from the ideation body: ~15-25 lines across three files (cli.py ~4, lifecycle.py ~2, http_api.py ~6-12) plus tests.'
+              application:
+                target-stage: implementation
+                state: pending
 started: 2026-08-21T04:12:22Z
 ---
 
