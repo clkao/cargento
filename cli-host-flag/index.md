@@ -68,6 +68,8 @@ gates:
                 state: pending
 started: 2026-08-21T04:12:22Z
 worktree: .worktrees/spacedock-ensign-cli-host-flag
+mod-block: merge:pr-merge
+pr: spacedock-dev/cargento#130
 ---
 
 An operator running the Cargento dashboard on a shared or remote machine cannot
