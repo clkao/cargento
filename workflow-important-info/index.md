@@ -35,6 +35,17 @@ gates:
                 digest: sha256:c1e9694377962409ca2708823c0c0db440f001af459ad9e04145b442dcc9c91f
                 request-digest: sha256:374780fc8785a8f55ff68fec0f45428bc964862ee5ccd227e927b845594101ee
                 room-ref: ./review/ideation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:et7hb2x9k6kts3cr56mnf2k8:ideation:1
+                briefing: briefing:et7hb2x9k6kts3cr56mnf2k8:ideation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T08:27:22.083945148Z"
+                decision: approve
+                reason: 'conn granted: ''you have the conn to push to the forked repo and open PR'' (re-granted post-compaction: ''you have unlimited tokens... you have the conn to push to the forked repo and open PR''). Subspace approved all 4 gates: ''you have the conn, why are you still asking?''. Ideation sound: display: key in README frontmatter read where read_workflow already reads, default [slug,stage,cycle] safe; gate-derived scan spiked; 4 ACs with falsifying edits. Advancing to implementation.'
+              application:
+                target-stage: implementation
+                state: pending
 started: 2026-08-21T08:07:17Z
 ---
 
