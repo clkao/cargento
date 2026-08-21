@@ -183,3 +183,34 @@ Added a `toolResult` role branch to `spacedock.tool_result_text` (additive — C
 ### Summary
 
 Independently reproduced both ACs and their falsifying edits from the validation lane: AC-1 (Pi FO strip) fails when the `toolResult` branch is removed; AC-2 (non-FO no strip) fails when spacedock is set unconditionally. The `toolResult` branch is proven additive — Claude `tool_result` content blocks extract unchanged, conversation `text` blocks stay excluded. Pre-PR suite fully green (ruff, mypy, lint_embedded, validate_plugins, coverage 89.2%). Diff is purely additive, in-scope. Recommendation: PASSED — delivery can proceed to `done`.
+
+## Review-finding disposition
+
+Reviewed the reviewer's three commits (`f7e61c2` docs, `4e83b79` fix+tests, `917dd56` platform guard). Pushed back where warranted; nothing reverted.
+
+### f7e61c2 — docs(spacedock): record that Pi first officers get strips too — PASSED, keep
+
+Docs-only. SKILL.md, COMPATIBILITY.md, SECURITY.md, and `design-spacedock.md` (new S-5) were stale against shipped behaviour — the PR's own test proves Pi detection exists. The classifier docstring rewording ("which only a first officer runs" → presence-proves) is accurate: a tool output is whatever a tool printed, so presence is inferred, not declared. SECURITY.md's guard-list note is harness-neutral and unchanged in substance. Correct; nothing to push back on.
+
+### 4e83b79 — fix(spacedock): refuse an unencodable envelope path, and pin the guards — PASSED, keep
+
+**Material defect (surrogate path).** A lone surrogate survives JSON decoding; every downstream guard is `except OSError`, but `os.fsencode` raises `UnicodeEncodeError`, a `ValueError`, so it escapes `aggregate`'s per-harness failure boundary and blanks every row for that harness until the session leaves the freshness window. Pre-existing for Claude FOs; this PR widens the trigger to any Pi session. The fix is at the shared guard (`_usable_dir` fsencode probe) plus a per-row `spacedock_or_none` wrapper in `pi.py` so a bad envelope costs one strip, not the harness. Confirmed green: `test_an_unencodable_envelope_path_is_refused` passes; `read_workflow("/\ud800")` now returns `None` rather than raising.
+
+**Five test pins — all confirmed green and load-bearing.**
+1. `test_pi_conversation_text_cannot_nominate_a_path` (the negative twin — the most important). Confirmed load-bearing: widening the role gate from `toolResult` to accept `user` makes the test fail (returns one record instead of `[]`). This is the proof that conversation text cannot nominate a path via the new branch.
+2. `test_a_tool_result_text_block_that_is_not_a_string_is_skipped` — pins `isinstance(text, str)`; a non-string `text` would reach `str.find` and raise `AttributeError`. Green.
+3. `test_pi_fo_session_renders_spacedock_strip` entity assertion tightened from membership to equality, so a wrong worker list cannot silently flip `stage`/`live`. Green.
+4. `test_pi_non_fo_session_has_no_spacedock` uses subscript `rows[0]["spacedock"]` not `.get()`, so deleting the key from `collect()` fails the test. Green.
+5. `test_an_unencodable_envelope_path_is_refused` pins the fsencode probe. Green.
+
+**Two comment corrections — both accurate.** The docstring change from "read additively" to "read exclusively" is correct: the `toolResult` branch returns on its own blocks and never falls through; probed, a `toolResult` role carrying Claude-style `tool_result` blocks yields zero envelopes. The allowlist comment explains why the edge exists. Nothing to push back on.
+
+### 917dd56 — fix(spacedock): make the hostile-path guard platform-independent — PASSED, keep
+
+`f7e61c2`'s own test broke the Windows platform-tests job: Windows uses `surrogatepass` (PEP 529) and encodes lone surrogates happily, where POSIX `surrogateescape` cannot. The fsencode probe is therefore POSIX-only and deliberately not the only defence: `read_workflow` and `entity_files` now catch `ValueError` beside `OSError`, which is what actually keeps a hostile path from escaping whatever the platform thinks of its encoding. The test splits into a cross-platform invariant (nothing escapes the reader) and a POSIX-only refusal skipped on `nt` with the reason recorded — matching how the suite already handles permission bits and symlinks. Both defences are pinned (dropping the probe fails POSIX; narrowing the except raises under a Windows-like accept). Necessary and correct; the alternative (test-only fix) would have left the real question unanswered. Confirmed green.
+
+### Rework deliverables (this pass)
+
+- **Capture (Item 1):** `docs/captures/pi/boot-envelope-fosession-linux.jsonl` records the shape of a real Pi FO session transcript: `toolResult` is a message **role** (223 records) whose `content` is a list of `{type: "text"}` blocks, the sibling `toolCall` is a block **type** inside `assistant` messages, and the boot envelope (`definition_dir`/`entity_dir` field names) appears in a `toolResult` text block. Provenance row added to `docs/captures/README.md`. Field names and the tool-call-to-tool-result gap only; no transcript text, no paths, no ids — on the precedent the Antigravity and usage-endpoint captures set.
+- **Pre-PR suite (rework lane):** ruff check, ruff format --check (110 files), mypy (80 files), lint_embedded, validate_plugins, bump_version --current (0.12.0), coverage 89.2% (threshold 73%). 1188 + script tests OK.
+- **Version-guard:** none of the branch's own commits (`4f3fbc0`, `f7e61c2`, `4e83b79`, `917dd56`) touch a version field; the only version diff since merge-base is the merged-in main release commit `bad9d2b` (v0.12.0), which is not this PR's work.
