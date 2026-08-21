@@ -586,3 +586,13 @@
   .session .sv-disp .sv-dec{display:flex;align-items:center;gap:6px}
   .session .sv-other-sep{margin-top:6px;padding-top:4px;border-top:1px dashed var(--line2);margin-bottom:3px}
   .session .sv-other-sep .sd-k{font-family:var(--mono);font-size:var(--fs-xs);color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
+  .session .sv-needs-banner{display:flex;align-items:center;gap:8px;padding:10px 14px;margin:0 16px 12px;border:1px solid color-mix(in oklab,var(--accent) 36%,transparent);border-radius:10px;background:color-mix(in oklab,var(--accent) 8%,transparent)}
+  .session .sv-needs-icon{font-size:var(--fs-lg);color:var(--accent-ink);line-height:1}
+  .session .sv-needs-text{font-size:var(--fs-sm);font-weight:600;color:var(--ink)}
+  .session .sv-needs-text strong{color:var(--accent-ink)}
+  .session .sv-last-instr{display:flex;align-items:baseline;gap:8px;padding:0 16px;margin-bottom:8px}
+  .session .sv-last-instr-k{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);flex:none}
+  .session .sv-last-instr-v{font-size:var(--fs-sm);color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .session .sv-goal-line{display:flex;align-items:baseline;gap:8px;padding:0 16px;margin-bottom:10px}
+  .session .sv-goal-k{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);flex:none}
+  .session .sv-goal-v{font-size:var(--fs-sm);color:var(--accent-ink);font-weight:600}

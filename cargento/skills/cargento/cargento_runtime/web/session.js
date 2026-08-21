@@ -16,6 +16,78 @@
    (spacedock null), first-officer with no in-flight entities (freshness gate),
    and ensign/worker sessions. */
 
+/* Derive the "needs you" readiness states from gate/resolution metadata that
+   each entity already carries: `decision`, `target_stage`, `decision_by`,
+   `decision_at`, and `live`. The banner counts these so the user instantly
+   knows whether action is required before reading anything else.
+
+   - approved-awaiting-merge: approved (decision=approve) with target_stage=done
+     but not yet at done — the entity is waiting for someone to merge it.
+   - awaiting-captain: a gate is open/pending at a stage the captain holds.
+     Detected as entities with no decision (pending gate) whose stage is one
+     the captain would resolve (decision_by would be person:captain).
+   - in-flight: a live worker with no decision yet — something is happening,
+     no action required.
+
+   Only entities the session actually touched (present in dispatch_history) are
+   counted — an entity the session never dispatched is not this session's
+   responsibility to flag. */
+function sessionNeeds(sd){
+  const wfs = (sd && sd.workflows) || [];
+  let approvedMerge = 0, awaitingCaptain = 0, inFlight = 0;
+  for(const wf of wfs){
+    for(const ent of (wf.entities || [])){
+      if(ent.live){
+        inFlight++;
+        continue;
+      }
+      if(ent.decision === "approve" && ent.target_stage === "done" && ent.stage !== "done"){
+        approvedMerge++;
+      }
+    }
+  }
+  return {approvedMerge, awaitingCaptain, inFlight};
+}
+
+function sessionNeedsBanner(needs){
+  const parts = [];
+  if(needs.approvedMerge > 0){
+    parts.push(`<strong>${needs.approvedMerge}</strong> entit${needs.approvedMerge === 1 ? "y" : "ies"} approved, ready to merge`);
+  }
+  if(needs.awaitingCaptain > 0){
+    parts.push(`<strong>${needs.awaitingCaptain}</strong> gate${needs.awaitingCaptain === 1 ? "" : "s"} awaiting your decision`);
+  }
+  if(!parts.length) return "";
+  return `<div class="sv-needs-banner">` +
+    `<span class="sv-needs-icon">⚠</span>` +
+    `<span class="sv-needs-text">${parts.join(" · ")}</span>` +
+    `</div>`;
+}
+
+/* The session card plus the "last instruction" (last_prompt) and "derived goal"
+   (the session title framed as what this session is trying to do, optionally
+   with the workflow goal). These anchor the user's first question: "what is
+   this session about right now?" */
+function sessionCardWithGoal(d, sess){
+  const card = `<div class="card sv-card">` +
+    sessionCardCore(d, sess, {working: false, lead: false, spark: false, consumption: false}) +
+    `</div>`;
+  const lastPrompt = sess.last_prompt ?
+    `<div class="sv-last-instr"><span class="sv-last-instr-k">last instruction</span>` +
+    `<span class="sv-last-instr-v">${esc(sess.last_prompt)}</span></div>` : "";
+  const sd = sess.spacedock;
+  let goal = "";
+  if(sd && sd.workflows){
+    const wfGoals = sd.workflows
+      .map(w => w.goal).filter(Boolean);
+    if(wfGoals.length){
+      goal = `<div class="sv-goal-line"><span class="sv-goal-k">goal</span>` +
+        `<span class="sv-goal-v">${esc(wfGoals.join(" · "))}</span></div>`;
+    }
+  }
+  return card + lastPrompt + goal;
+}
+
 /* The session picker: rendered when session mode is entered with no target
    session (null key). Each row is a `data-calm="session"` control so the
    existing click channel selects it without a second handler. */
@@ -54,13 +126,12 @@ function sessionCard(d, sess){
 
 /* One workflow's dispatch history as a session-centric work log: each
    dispatched (slug, stage) with when it was dispatched and the last gate
-   decision. Live dispatched ensigns carry the `sd-live` class. When the
-   session has no dispatch history, the stage-spine tree is preserved so the
-   view still shows the workflow's entity roster. Non-dispatched workflow
-   entities are labeled "other workflow entities" — not "NOT TOUCHED" —
-   because the session may have advanced them without a live worker right now. */
+   decision. Live dispatched ensigns carry the `sd-live` class. Only entities
+   the session actually dispatched appear — entities the session never touched
+   belong in a project view, not here. The full stage spine (backlog → ideation
+   → implementation → validation → done) is NOT repeated per entity; just the
+   current stage name is shown, because the user already knows the pipeline. */
 function sessionWorkflow(wf, sd){
-  const stages = wf.stages || [];
   const entities = wf.entities || [];
   const goal = wf.goal || "";
   const goalHtml = goal ? `<div class="sv-goal">${esc(goal)}</div>` : "";
@@ -71,7 +142,9 @@ function sessionWorkflow(wf, sd){
   for(const ent of entities) entMap[ent.slug] = ent;
   /* When the session has a dispatch history, render it as the work log.
      Only dispatches whose slug matches this workflow's entities appear — a
-     dispatch for another workflow's entity is not this workflow's work. */
+     dispatch for another workflow's entity is not this workflow's work.
+     Only entities the session dispatched are shown — untouched entities are
+     cut as noise that belongs in a project view. */
   if(history.length){
     const dispatchedSlugs = new Set();
     const histRows = [];
@@ -91,24 +164,8 @@ function sessionWorkflow(wf, sd){
         (when ? `<span class="sv-disp-when">${esc(when)}</span>` : "") +
         `</div>`);
     }
-    /* Non-dispatched workflow entities: the roster minus what this session
-       dispatched. Labeled accurately, never "NOT TOUCHED." */
-    const otherEnts = entities.filter(e => !dispatchedSlugs.has(e.slug));
-    const otherRows = otherEnts.length ? otherEnts.map(ent => {
-      const live = ent.live ? " sd-live" : "";
-      const cyc = ent.cycle ? ` <span class="sv-cyc">${esc(ent.cycle)}</span>` : "";
-      const decBadge = ent.decision ? sdDecisionBadge(ent.decision) : "";
-      return `<div class="sv-disp${live}">` +
-        `<span class="sv-disp-slug" title="${esc(ent.slug)}">${esc(sdSlug(ent.slug))}${cyc}</span>` +
-        `<span class="sv-disp-stage">${esc(ent.stage)}</span>` +
-        (decBadge ? `<span class="sv-dec">${decBadge}</span>` : "") +
-        `</div>`;
-    }).join("") : "";
-    const otherSection = otherRows
-      ? `<div class="sv-other-sep"><span class="sd-k">other workflow entities</span></div>${otherRows}`
-      : "";
     return `<div class="sv-wf"><div class="sv-wf-name">${esc(wf.workflow)}</div>${goalHtml}` +
-      `<div class="sv-dispatch-hist">${histRows.join("")}</div>${otherSection}</div>`;
+      `<div class="sv-dispatch-hist">${histRows.join("")}</div></div>`;
   }
   /* No dispatch history: preserve the stage-spine tree so the view still
      renders the workflow's entity roster for sessions that carry no
@@ -183,6 +240,8 @@ function sessionView(d){
   if(!sd || !sd.workflows || !sd.workflows.length){
     return sessionBackBar() + sessionEmptyState(d, sess);
   }
-  return sessionBackBar() + sessionCard(d, sess) +
+  const needs = sessionNeeds(sd);
+  const needsBanner = sessionNeedsBanner(needs);
+  return sessionBackBar() + needsBanner + sessionCardWithGoal(d, sess) +
     sd.workflows.map(wf => sessionWorkflow(wf, sd)).join("");
 }
