@@ -3,6 +3,18 @@ title: Group and filter the session list by project
 status: backlog
 source: captain dogfood feedback
 id: zp7z36m3am49jyqrp685nhz9
+gates:
+    version: 1
+    records:
+        - id: gate:zp7z36m3am49jyqrp685nhz9:backlog
+          stage: backlog
+          attempts:
+            - id: gate-attempt:zp7z36m3am49jyqrp685nhz9-backlog-1
+              briefing:
+                id: briefing:zp7z36m3am49jyqrp685nhz9:backlog:attempt-1:revision-1
+                digest: sha256:68fa4cb3effa8122696f1f000bcff806ca965d6db554fb50c212d8c506fbaf78
+                request-digest: sha256:39c3dfaaa1ea1469b26014559e550636b79beaa0e91b4357348dc82039367df0
+                room-ref: ./review/backlog/briefing-1
 ---
 
 With 18 sessions across cargento, subspace-ssh, subspace-v0, tycho, spacedock,

@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:zp7z36m3am49jyqrp685nhz9:backlog:attempt-1:revision-1",
+  "question": "Approve the group-sessions-by-project backlog seed to advance to ideation?",
+  "artifacts": [
+    {
+      "id": "artifact:zp7z36m3am49jyqrp685nhz9:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/d7691b69a5cf4cdd46cdd0d4c1a37ce1cd803f26/group-sessions-by-project/index.md",
+      "rev": "sha256:b98e74c3eef31fa1f394322adf11dd4e2991efc8c52d41e4f90ad1f9cf870e87",
+      "mediaType": "text/markdown",
+      "summary": "Backlog seed for group-sessions-by-project (filed from captain dogfood feedback). See entity body for end value, included/excluded scope, and proof needed."
+    }
+  ]
+}
