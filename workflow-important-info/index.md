@@ -26,6 +26,7 @@ gates:
               application:
                 target-stage: ideation
                 state: consumed
+started: 2026-08-21T08:07:17Z
 ---
 
 Each project/workflow can define what important information is to be displayed
