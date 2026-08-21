@@ -40,8 +40,9 @@ writes to harness stores, or the hook client reaching a non-loopback destination
 ## Project reads (Spacedock stage strips)
 
 One feature reads paths that are not under a store root. When a session declares itself a Spacedock
-first officer, Cargento reads YAML frontmatter, and only frontmatter, from two kinds of file, so it
-can show where each entity sits on its workflow's stage spine:
+first officer, or in Pi's case is taken to be one because its transcript carries a boot envelope,
+Cargento reads YAML frontmatter, and only frontmatter, from two kinds of file, so it can show where
+each entity sits on its workflow's stage spine:
 
 1. one workflow `README.md`, for the ordered stage list and which stages are initial or terminal;
 2. the entity files in that workflow's entity-state directory, for each entity's current `status`.
