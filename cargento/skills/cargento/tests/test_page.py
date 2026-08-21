@@ -69,31 +69,31 @@ class FrontendAssetContractTest(unittest.TestCase):
             ),
             "regular.js": (
                 37_479,
-                "b519bc26d48488a6121de581057c5249d676832305165ce6bf7782e5d5f054e2",
+                "1adbe63bbfd4563bb26582fc626180220483e65e6f0e815cea9c7625caeae1f3",
             ),
             "mode.js": (
-                1_938,
-                "6baf5aa67046d4fca5027646f7797ed55f555c7d96f9e7bf8cfee516316c00a4",
+                2_703,
+                "36a032ba696f81389b2d474ced806d34d52161d860c6b67abf8de12b40748321",
             ),
             "usage.js": (
                 51_066,
                 "3eb8d87fb2f809058678218cf57bc6b381bb7750d7523efea0eeb56628db70fe",
             ),
             "controls.js": (
-                3_363,
-                "b45a331ff631f4293b463765c85f45ae9bc2b5b7b43401034727a5867a1ac0e7",
+                4_437,
+                "eb0c5c6c93645e66caec485891f787cebec34264302d8d8ecea830f43f45d7e0",
             ),
             "calm.js": (
-                42_009,
-                "413e946d188c56ecb7403d199d79042777f6e2e022c31b2b70bc1520a426ae30",
+                42_186,
+                "33cafa0866937c5eba341e4daa59fb313fbbed18ef705f5f035a0d4080b6cccc",
             ),
             "notify.js": (
                 3_185,
                 "afd7a8ff735ea52b95e31a22f60f024d0bb752b7063860abc0e7bb1ae1c0fcae",
             ),
             "main.js": (
-                9_094,
-                "7ce44003973ca6845f63d5dc1be20e100ce254cd7221d4b8c47d70baa836f920",
+                9_294,
+                "0c70a99b32e3b1d341eac5266bf851aceaa258548417b3e96cb0ef2ea47f7c0e",
             ),
             "live.js": (
                 6_176,
@@ -108,16 +108,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(44_998, len(styles))
+        self.assertEqual(46_772, len(styles))
         self.assertEqual(
-            "505bdf665d67465e48364105c43f211c7a59102309c6c4be7e53dedff92ba1f0",
+            "84309889a27d65b3b83046c97d3071e983bf5291d62c94b9c8d61eec21561cbc",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(227_688, len(assembled))
+        self.assertEqual(232_636, len(assembled))
         self.assertEqual(
-            "e81de7a1056c4eca5a5a374209f4bf837662547c839281ebcd5421c74246252e",
+            "782c1fce88f76b333f12902d542a676e58b2ce746ea9acaa0d4e4cc4f05b2bd7",
             hashlib.sha256(assembled).hexdigest(),
         )
 
@@ -3378,3 +3378,202 @@ console.log(JSON.stringify(out));
             },
             out,
         )
+
+    # ── project filter ─────────────────────────────────────────────────────
+
+    # Shared fixture for project-filter tests: a board with sessions across
+    # three projects in both working and idle states, plus one needs-input
+    # session in the first project.
+    PROJECT_FIXTURE = """
+let __focused = null;
+const __controls = () => [...__els.app.innerHTML.matchAll(
+    /data-calm="([^"]*)"(?: data-arg="([^"]*)")?/g)].map(m => ({
+  getAttribute: a => a === "data-calm" ? m[1]
+    : (a === "data-arg" ? (m[2] === undefined ? null : m[2]) : null),
+  focus(){ __focused = m[1] + ":" + (m[2] === undefined ? "" : m[2]); }
+}));
+__els.app = {innerHTML: "", className: "",
+  querySelectorAll: () => __controls(),
+  querySelector(sel){
+    if(sel !== ".need.cursor") return null;
+    if(!__els.app.innerHTML.includes('class="need cursor"')) return null;
+    return {scrollIntoView(){}};
+  }};
+const mk = (o) => Object.assign({
+  harness: "claude", session: "1234", sid: "1234", project: "cargento/cargento",
+  title: null, last_prompt: "", state: "idle", state_detail: "awaiting your message",
+  active: false, last_activity: 99000, rate_per_min: 0, total: 0, done: 0, open: 0,
+  progress_pct: 0, eta_h: null, turn: null, subagents: [], tasks: [], spacedock: null
+}, o);
+const board = (sessions) => ({
+  generated: 100000, window_hours: 24, show_all: false, harnesses: [],
+  summary: {needs_input: 0, working: 0, rate_per_min: 0, active_sessions: 0,
+            open_tasks: 0, progress_pct: 0, total_tasks: 0, total_done: 0},
+  sessions
+});
+// Three projects, two working sessions per project (one each), two idle per
+// project, and a needs-input session in the first project only.
+const projSess = (proj, sid, over) => mk(Object.assign(
+  {project: proj, sid: sid, session: sid}, over));
+const sessions = [
+  projSess("alpha/proj", "a1", {state: "working", active: true,
+    state_detail: "running Bash", last_activity: 99990}),
+  projSess("beta/repo", "b1", {state: "working", active: true,
+    state_detail: "running Bash", last_activity: 99980}),
+  projSess("gamma/lib", "g1", {state: "working", active: true,
+    state_detail: "running Bash", last_activity: 99970}),
+  projSess("alpha/proj", "a2", {state: "idle", last_activity: 98000}),
+  projSess("beta/repo", "b2", {state: "idle", last_activity: 97000}),
+  projSess("gamma/lib", "g2", {state: "idle", last_activity: 96000}),
+  projSess("alpha/proj", "a3", {state: "needs_input", active: true,
+    state_detail: "open question", last_activity: 99500, blocked_since: 99500}),
+];
+const multi = board(sessions);
+"""
+
+    @staticmethod
+    def proj_prelude(saved: str | None = None) -> str:
+        store = {} if saved is None else {"cargento.projectFilter": saved}
+        return f"""
+let __store = {json.dumps(store)};
+const localStorage = {{
+  getItem(k){{ return Object.prototype.hasOwnProperty.call(__store, k) ? __store[k] : null; }},
+  setItem(k, v){{ __store[k] = String(v); }},
+  removeItem(k){{ delete __store[k]; }}
+}};
+const navigator = {{}};
+"""
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_project_filter_narrows_regular_view_to_one_project(self) -> None:
+        # AC-1: selecting a project narrows the rendered sessions to that
+        # project in the regular view. Falsifying edit: remove the
+        # projectFilter check from the working/idle filter in render().
+        checks = (
+            self.PROJECT_FIXTURE
+            + """
+const out = {};
+render(multi);
+setProjectFilter("beta/repo");
+const h = __els.app.innerHTML;
+// Only beta/repo sessions appear in the rendered output.
+out.hasBeta = h.includes(">b1<") || h.includes("b1");
+out.hasAlpha = /\ba1\b/.test(h) && h.includes("alpha/proj");
+out.hasGamma = /\bg1\b/.test(h) && h.includes("gamma/lib");
+// The needs-input band is empty: the blocked session is in alpha/proj.
+out.bandGone = !h.includes("Needs your input");
+out.title = document.title;
+// Reset for the next assertion.
+setProjectFilter(null);
+out.bandBack = __els.app.innerHTML.includes("Needs your input");
+console.log(JSON.stringify(out));
+"""
+        )
+        out = self._run_page_js(checks, prelude=self.proj_prelude())
+        self.assertTrue(out["hasBeta"], "beta/repo session was filtered out")
+        self.assertFalse(out["hasAlpha"], "alpha/proj session survived the filter")
+        self.assertFalse(out["hasGamma"], "gamma/lib session survived the filter")
+        self.assertFalse(out["bandGone"] is False, "needs-input band not filtered")
+        self.assertTrue(out["bandGone"], "band showed a session from another project")
+        self.assertNotIn("(", out["title"], "title count not filtered")
+        self.assertTrue(out["bandBack"], "clearing the filter did not restore the band")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_project_filter_persists_across_reloads(self) -> None:
+        # AC-2: the filter is read from localStorage at load, so a reload keeps
+        # it. Falsifying edit: remove the localStorage.getItem call in mode.js.
+        checks = (
+            self.PROJECT_FIXTURE
+            + """
+const out = {};
+render(multi);
+const h = __els.app.innerHTML;
+// The beta chip is selected.
+out.betaChipOn = h.includes('data-calm="project" data-arg="beta/repo" aria-pressed="true"');
+// Only beta/repo sessions appear.
+out.hasBeta = h.includes("beta/repo");
+out.hasAlphaWork = h.includes("alpha/proj") && h.includes('class="card"');
+out.allChipOn = h.includes('data-calm="project" data-arg="all" aria-pressed="true"');
+console.log(JSON.stringify(out));
+"""
+        )
+        out = self._run_page_js(checks, prelude=self.proj_prelude("beta/repo"))
+        self.assertTrue(out["betaChipOn"], "saved filter was not honoured on load")
+        self.assertTrue(out["hasBeta"], "beta/repo sessions absent despite filter")
+        self.assertFalse(out["hasAlphaWork"], "alpha/proj working card survived the saved filter")
+        self.assertFalse(out["allChipOn"], "all chip selected when a filter is saved")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_project_bar_hidden_for_single_project(self) -> None:
+        # AC-3: the bar appears only when two or more distinct projects are
+        # present. Falsifying edit: remove the >= 2 guard in projectBar().
+        checks = (
+            self.PROJECT_FIXTURE
+            + """
+const out = {};
+render(board([projSess("only/proj", "x1", {state: "working", active: true,
+  state_detail: "running Bash", last_activity: 99990}),
+  projSess("only/proj", "x2", {state: "idle", last_activity: 98000})]));
+out.noBar = !__els.app.innerHTML.includes("projbar");
+console.log(JSON.stringify(out));
+"""
+        )
+        out = self._run_page_js(checks, prelude=self.proj_prelude())
+        self.assertTrue(out["noBar"], "project bar rendered for a single project")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_regular_view_groups_sessions_under_project_dividers(self) -> None:
+        # AC-4: with no filter selected, the regular view groups sessions
+        # under .pg-head dividers carrying the correct project name.
+        # Falsifying edit: remove the divider emission from groupedByProject().
+        checks = (
+            self.PROJECT_FIXTURE
+            + """
+const out = {};
+render(multi);
+const h = __els.app.innerHTML;
+// Project dividers appear in the Working section.
+out.workingDividers = (h.match(/class="pg-head"/g) || []).length;
+out.hasAlpha = h.includes('class="pg-head-k">alpha/proj<');
+out.hasBeta = h.includes('class="pg-head-k">beta/repo<');
+out.hasGamma = h.includes('class="pg-head-k">gamma/lib<');
+console.log(JSON.stringify(out));
+"""
+        )
+        out = self._run_page_js(checks, prelude=self.proj_prelude())
+        # Three projects in the working section (each has one working session).
+        self.assertGreaterEqual(out["workingDividers"], 3,
+                                "project dividers missing from the regular view")
+        self.assertTrue(out["hasAlpha"], "alpha/proj divider missing")
+        self.assertTrue(out["hasBeta"], "beta/repo divider missing")
+        self.assertTrue(out["hasGamma"], "gamma/lib divider missing")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_gate_band_respects_project_filter(self) -> None:
+        # AC-5: filtering to a project with no needs-input sessions empties
+        # the gate band; filtering to a project with needs-input sessions keeps
+        # it. Falsifying edit: filter the gateQueue input but not the rendered
+        # sessions (or vice versa).
+        checks = (
+            self.PROJECT_FIXTURE
+            + """
+const out = {};
+render(multi);
+out.bandBefore = __els.app.innerHTML.includes("Needs your input");
+// Filter to beta/repo, which has no needs-input sessions.
+setProjectFilter("beta/repo");
+out.bandEmpty = !__els.app.innerHTML.includes("Needs your input");
+out.titleFiltered = document.title;
+// Filter to alpha/proj, which has the needs-input session.
+setProjectFilter("alpha/proj");
+out.bandPresent = __els.app.innerHTML.includes("Needs your input");
+out.bandHasAlpha = __els.app.innerHTML.includes("alpha/proj");
+console.log(JSON.stringify(out));
+"""
+        )
+        out = self._run_page_js(checks, prelude=self.proj_prelude())
+        self.assertTrue(out["bandBefore"], "band missing before any filter")
+        self.assertTrue(out["bandEmpty"], "band not empty for a project with no blocked sessions")
+        self.assertNotIn("(", out["titleFiltered"], "title count not filtered")
+        self.assertTrue(out["bandPresent"], "band missing for a project with blocked sessions")
+        self.assertTrue(out["bandHasAlpha"], "band showed a session from another project")

@@ -255,6 +255,26 @@
   .stopped-h{font-size:var(--fs-xl);font-weight:700;color:var(--ink)}
   .stopped-p{font-size:var(--fs-sm);color:var(--ink2);line-height:1.7}
 
+  /* project filter bar — a chip per project, shown only when two or more
+     distinct projects are present. Reuses the segmented-control shape the
+     mode bar uses, left-aligned rather than right. */
+  .projbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .projbar-k{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+  .proj-seg{display:flex;align-items:center;gap:2px;padding:3px;border-radius:10px;border:1px solid var(--line2);background:var(--bg);flex-wrap:wrap}
+  .proj-chip{font-family:var(--mono);font-size:var(--fs-xs);font-weight:700;letter-spacing:.03em;padding:6px 15px;border:0;border-radius:7px;cursor:pointer;color:var(--ink3);background:transparent;transition:color .12s,background .12s;display:inline-flex;align-items:center;gap:7px}
+  .proj-chip:hover{color:var(--ink)}
+  .proj-chip.on{color:var(--ink);background:var(--sel-bg);box-shadow:inset 0 0 0 1px var(--sel-bd)}
+  .proj-chip:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
+  .proj-chip-n{font-size:var(--fs-2xs);color:var(--ink3);font-weight:500}
+  .proj-chip.on .proj-chip-n{color:var(--ink2)}
+
+  /* project group divider in the regular view — the same divider pattern
+     calm's "repo" sort uses (.cm-div), adapted for the card/row layout. */
+  .pg-head{display:flex;align-items:center;gap:10px}
+  .pg-head-k{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pg-head-n{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);flex:none}
+  .pg-head-rule{flex:1;height:1px;background:var(--line)}
+
   /* calm mode — one dense ledger row per session, in a fixed frame that
      scrolls internally so the chrome never leaves the screen */
   .wrap.calm{max-width:1420px;padding:24px 26px 30px;gap:12px}

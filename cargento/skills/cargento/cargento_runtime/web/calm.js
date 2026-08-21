@@ -192,7 +192,8 @@ function calmRow(d, x){
 
 function calmFilter(all){
   return all.filter(r => (!calmFlagOnly || !!r.flag) &&
-                         (!calmStateOnly || r.st === calmStateOnly));
+                         (!calmStateOnly || r.st === calmStateOnly) &&
+                         (!projectFilter || r.project === projectFilter));
 }
 
 /* Ordering has to be STABLE across the 5s poll — a row that swaps places under
@@ -378,6 +379,7 @@ function calmAction(act, arg){
     return;
   }
   if(act === "copy"){ calmCopyId(arg); return; }
+  if(act === "project"){ setProjectFilter(arg === "all" ? null : arg); return; }
   if(act === "sort"){
     if(calmSort === arg) return;
     calmSort = arg; calmResetScroll = true;
@@ -717,6 +719,7 @@ function calmLedger(d){
         ` aria-pressed="${usageOpen}">usage</button>`
       : "") +
     `<span class="cm-sp"></span><span class="cm-note">${esc(note)}</span></div>` +
+    projectBar(d) +
     usageBandCalm(d) +
     `<div class="cm-body" id="cm-body">` +
     `<div class="cm-head"><span></span><span></span><span>session</span><span>where</span>` +

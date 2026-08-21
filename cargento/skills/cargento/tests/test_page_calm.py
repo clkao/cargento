@@ -2308,3 +2308,38 @@ console.log(JSON.stringify(out));
         # and #live-dot, which the DOM stub does not register, so any such check
         # would pass whatever the code did. The failure count is the observable.
         self.assertEqual(0, out["failures"], "a deliberate stop was counted as a refresh failure")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_project_filter_narrows_calm_view_to_one_project(self) -> None:
+        # AC-1 (calm): selecting a project narrows the rendered ledger rows to
+        # that project. The fixture's three sessions span two projects:
+        # repo/proj (blocked, quiet) and repo/other (busy). Falsifying edit:
+        # remove the projectFilter check from calmFilter().
+        checks = """
+const out = {};
+render(board());
+// Two distinct projects, so the bar is visible.
+out.barVisible = __els.app.innerHTML.includes('class="projbar"');
+out.allProjects = rows();
+// Filter to repo/other, which holds only the busy session.
+setProjectFilter("repo/other");
+out.afterFilter = rows();
+const h = __els.app.innerHTML;
+out.hasOther = h.includes("repo/other");
+out.hasProj = h.includes("repo/proj") &&
+  (h.includes(">Approve deploy?") || h.includes(">Old thing<"));
+// The showing-note reflects the filter.
+out.note = h.includes("showing 1 of 3");
+// Reset.
+setProjectFilter(null);
+out.afterReset = rows();
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["barVisible"], "project bar not shown with two projects")
+        self.assertEqual(3, out["allProjects"])
+        self.assertEqual(1, out["afterFilter"], "calm filter did not narrow to one project")
+        self.assertTrue(out["hasOther"], "repo/other row missing after filter")
+        self.assertFalse(out["hasProj"], "repo/proj row survived the filter")
+        self.assertTrue(out["note"], "showing-note did not reflect the filter")
+        self.assertEqual(3, out["afterReset"], "clearing the filter did not restore all rows")

@@ -33,3 +33,24 @@ function setDisplayMode(mode){
   if(lastData) render(lastData);
 }
 
+/* The project filter narrows both views to one project. Persisted the same way
+   displayMode is — a localStorage key read once at load and written on every
+   change — so a reload keeps the filter. `null` means all projects. */
+const PROJECT_FILTER_KEY = "cargento.projectFilter";
+let projectFilter = null;
+try{
+  const saved = localStorage.getItem(PROJECT_FILTER_KEY);
+  if(saved) projectFilter = saved;
+}catch(e){ /* no storage — all projects */ }
+
+function setProjectFilter(p){
+  if(p === projectFilter) return;
+  projectFilter = p;
+  try{
+    if(p) localStorage.setItem(PROJECT_FILTER_KEY, p);
+    else localStorage.removeItem(PROJECT_FILTER_KEY);
+  }catch(e){ /* nothing to persist to */ }
+  calmResetScroll = true;
+  if(lastData) render(lastData);
+}
+
