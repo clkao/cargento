@@ -1,6 +1,6 @@
 ---
 title: Pi agent view shows Spacedock state
-status: backlog
+status: ideation
 source: captain seed
 id: hdz7pr9bmw5vpc5ah52sbcmb
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: captain directs the backlog seed to advance to ideation for design
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 
 Cargento already derives Spacedock workflow cartography for Claude first officers — `collectors/claude.py` decides a session is a first officer from its transcript's `agentSetting`, then asks `cargento_runtime/spacedock.py` for the workflow strip. The Pi collector (`collectors/pi.py`) does not yet surface this, so a Pi first officer renders on the dashboard without the workflow context a Claude officer gets.
