@@ -974,6 +974,108 @@ class PiCollectorTest(PiScanTestCase):
         # dropped from the published row altogether.
         self.assertIsNone(rows[0]["spacedock"])
 
+    def test_dispatch_history_aggregates_all_batches(self) -> None:
+        # AC-4: the backend publishes every dispatch batch from the session
+        # transcript, ordered by when the dispatch happened, with the slug,
+        # stage, and timestamp of each. Falsifying edit: keep only the newest
+        # batch (revert to live_workers-only) — the first two batches
+        # disappear and the test fails.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wf = root / "wf"
+            wf.mkdir()
+            (wf / "README.md").write_text(
+                "---\n"
+                "commissioned-by: spacedock@1.0.0\n"
+                "stages:\n"
+                "  states:\n"
+                "    - name: intake\n"
+                "      initial: true\n"
+                "    - name: review\n"
+                "    - name: posted\n"
+                "      terminal: true\n"
+                "---\n",
+                encoding="utf-8",
+            )
+            entity_state = wf / ".spacedock-state"
+            entity_state.mkdir()
+            envelope = json.dumps(
+                {
+                    "command": "boot",
+                    "definition_dir": str(wf),
+                    "entity_dir": str(entity_state),
+                    "dispatchable": [],
+                }
+            )
+            sessions_dir = root / "sessions"
+            sessions_dir.mkdir()
+
+            # Three assistant entries at different timestamps, each with an
+            # async subagent dispatch carrying a different (slug, stage) pair.
+            def _dispatch(entry_id: str, parent: str, when: float, slug: str, stage: str) -> dict[str, Any]:
+                script = f"/tmp/spacedock-ensign-{slug}-{stage}.md"
+                return self._message(
+                    entry_id,
+                    parent,
+                    when,
+                    "assistant",
+                    [
+                        {
+                            "type": "toolCall",
+                            "id": entry_id,
+                            "name": "subagent",
+                            "arguments": {"async": True, "workflowScript": script},
+                        }
+                    ],
+                )
+
+            _jsonl(
+                sessions_dir / "fo.jsonl",
+                [
+                    self._header("fo"),
+                    self._message("p", None, self.NOW - 50, "user", "Start workflow"),
+                    self._message(
+                        "boot",
+                        "p",
+                        self.NOW - 45,
+                        "toolResult",
+                        [{"type": "text", "text": "=== BOOT ===\n" + envelope}],
+                    ),
+                    _dispatch("d1", "boot", self.NOW - 40, "drc-1", "intake"),
+                    _dispatch("d2", "d1", self.NOW - 30, "drc-2", "review"),
+                    _dispatch("d3", "d2", self.NOW - 20, "drc-3", "posted"),
+                ],
+                self.NOW - 20,
+            )
+            with store_patch(PI_SESSIONS_DIR=str(sessions_dir)):
+                config, state = runtime()
+                rows = pi_collector.collect(config, state, self.NOW, 24, True)
+
+        by_sid = {row["sid"]: row for row in rows}
+        self.assertIn("fo", by_sid)
+        sd = by_sid["fo"]["spacedock"]
+        assert sd is not None
+        history = sd["dispatch_history"]
+        self.assertEqual(3, len(history), "expected 3 dispatch batches")
+        # Ordered by timestamp (oldest first).
+        ts = [e["ts"] for e in history]
+        self.assertEqual(ts, sorted(ts), "dispatch history is not in timestamp order")
+        # Correct (slug, stage) pairs.
+        self.assertEqual("drc-1", history[0]["slug"])
+        self.assertEqual("intake", history[0]["stage"])
+        self.assertEqual("drc-2", history[1]["slug"])
+        self.assertEqual("review", history[1]["stage"])
+        self.assertEqual("drc-3", history[2]["slug"])
+        self.assertEqual("posted", history[2]["stage"])
+        # Timestamps match the entries.
+        self.assertAlmostEqual(self.NOW - 40, history[0]["ts"])
+        self.assertAlmostEqual(self.NOW - 30, history[1]["ts"])
+        self.assertAlmostEqual(self.NOW - 20, history[2]["ts"])
+        # The newest batch is also the live_workers (backward-compatible).
+        live = sd["workflows"][0]["entities"]
+        live_slugs = [e["slug"] for e in live if e.get("live")]
+        self.assertIn("drc-3", live_slugs)
+
 
 class TurnTrackingTest(unittest.TestCase):
     def setUp(self) -> None:

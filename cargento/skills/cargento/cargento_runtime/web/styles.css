@@ -566,3 +566,23 @@
   .session .sv-loading-p a{color:var(--accent-ink)}
   .session .sv-empty-h{font-size:var(--fs-sm);font-weight:600;color:var(--ink2);margin-bottom:4px}
   .session .sv-empty-p{font-size:var(--fs-xs);color:var(--ink3);line-height:1.5}
+
+  /* session-view card placement: the session card sits above the workflow
+     strip in the session view, reusing the board's .card anatomy. The .sv-card
+     class only adjusts margins — the card's own structure comes from
+     sessionCardCore, shared with the board view. */
+  .session .sv-card{margin:0 16px 16px}
+
+  /* dispatch-history work log: one row per dispatched (slug, stage), with
+     the dispatch time and the last gate decision. Live dispatched ensigns
+     carry sd-live, the same class the board's Spacedock strip uses. */
+  .session .sv-dispatch-hist{display:flex;flex-direction:column;gap:3px;margin-bottom:6px}
+  .session .sv-disp{display:flex;align-items:baseline;gap:8px;font-family:var(--mono);font-size:var(--fs-xs);padding:3px 7px;border-radius:5px;border:1px solid transparent}
+  .session .sv-disp.sd-live{color:var(--accent-ink);border-color:color-mix(in oklab,var(--accent) 40%,transparent);background:color-mix(in oklab,var(--accent) 10%,transparent);font-weight:700}
+  .session .sv-disp-slug{color:var(--ink2);max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .session .sv-disp.sd-live .sv-disp-slug{color:var(--ink)}
+  .session .sv-disp-stage{color:var(--ink3)}
+  .session .sv-disp-when{color:var(--ink3);margin-left:auto;white-space:nowrap}
+  .session .sv-disp .sv-dec{display:flex;align-items:center;gap:6px}
+  .session .sv-other-sep{margin-top:6px;padding-top:4px;border-top:1px dashed var(--line2);margin-bottom:3px}
+  .session .sv-other-sep .sd-k{font-family:var(--mono);font-size:var(--fs-xs);color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}

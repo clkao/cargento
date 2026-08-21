@@ -68,8 +68,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "287f0971ff09de7a7df3869cdfe93ad002a74450ff0e97f87b9500324acc385c",
             ),
             "regular.js": (
-                40_243,
-                "22bc0dc2c577271e6fd23b60eeb010a1274efd1063f0565561b362bce0c01da3",
+                41_176,
+                "00f6f90fa7e700f277f7f63690de149d38263be880703724676544b1163268a6",
             ),
             "mode.js": (
                 5_235,
@@ -88,8 +88,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "1b9dbe0c67b954697bf5e23a3f2f7aabd82f912b09b0b3e0ae7aaef9b93e9c1c",
             ),
             "session.js": (
-                6_693,
-                "95946c58f15aa4ccd2fd0f0e1b8c482f58c974244a9f17432089f8b38c10b957",
+                9_784,
+                "5986449d65053d20d619131f8e14888c55a2e37372fc6a95d072b54b77cba240",
             ),
             "notify.js": (
                 3_185,
@@ -116,16 +116,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(51_458, len(styles))
+        self.assertEqual(53_083, len(styles))
         self.assertEqual(
-            "5ea2cf407aa3841e2ee28d9b31d34ee53b35e87f971c960c154309dd12aab150",
+            "3f29f2cda6c8eb658e81e08b5d52a08d83ba388469ce452d56824175bfbc6277",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(250_643, len(assembled))
+        self.assertEqual(256_292, len(assembled))
         self.assertEqual(
-            "cf3fb97791d27e3638bc745abeeef007fe94ba8ab60799c270596aef0e525c9c",
+            "a6c42f6077531d5fcd022b9f3555af026e7dce33f53ad664660dd7b48b9cf2af",
             hashlib.sha256(assembled).hexdigest(),
         )
 
@@ -3477,7 +3477,7 @@ const noGateHtml = html([noGate]);
 console.log(JSON.stringify({
   liveBadge: withGates.includes('class="sd-badge sd-ok"'),
   liveProgress: withGates.includes('advanced to implementation'),
-  dimSection: withGates.includes('not touched'),
+  dimSection: withGates.includes('other workflow entities'),
   dimHasDimClass: withGates.includes('sd-dim'),
   noGateNoBadge: !noGateHtml.includes('sd-badge'),
   noGateNoProgress: !noGateHtml.includes('advanced to')

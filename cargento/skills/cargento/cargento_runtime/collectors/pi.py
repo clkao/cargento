@@ -348,6 +348,17 @@ def _info(config: RuntimeConfig, scan: dict[str, Any]) -> dict[str, Any] | None:
         if entry.get("dispatches"):
             live_workers = [(slug, stage, "") for slug, stage in entry["dispatches"]]
             break
+    # The full dispatch history: every async ensign dispatch batch in the
+    # session's active branch, ordered by when the dispatch happened. This is
+    # the session's work log — every (slug, stage) it dispatched is a thing it
+    # did — and it feeds the session view's session-centric workflow section.
+    # ``path_entries`` is oldest-first (root to leaf), so iterating in order
+    # yields chronological order.
+    dispatch_history: list[dict[str, Any]] = []
+    for entry in path_entries:
+        if entry.get("dispatches"):
+            for slug, stage in entry["dispatches"]:
+                dispatch_history.append({"ts": entry["timestamp"], "slug": slug, "stage": stage})
     return {
         "title": title,
         "last_prompt": prompts[-1] if prompts else None,
@@ -358,6 +369,7 @@ def _info(config: RuntimeConfig, scan: dict[str, Any]) -> dict[str, Any] | None:
         "provider": provider,
         "model": model,
         "live_workers": live_workers,
+        "dispatch_history": dispatch_history,
     }
 
 
@@ -457,11 +469,13 @@ def session_spacedock(
     # computation, not a second file read.
     scan = scan_pi_session(config, state, path)
     live_workers = (scan or {}).get("live_workers", [])
+    dispatch_history = (scan or {}).get("dispatch_history", [])
     return {
         "role": "first-officer",
         "workflows": runtime_spacedock.session_workflows(
             config, state, boot, [], now, window_sec, attributed_workers=live_workers
         ),
+        "dispatch_history": dispatch_history,
     }
 
 

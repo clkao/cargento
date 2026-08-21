@@ -41,24 +41,78 @@ function sessionBackBar(){
     `</div>`;
 }
 
-function sessionHeader(sess){
-  const title = sess.title || sess.last_prompt || sess.project;
-  return `<div class="sv-header"><div class="sv-title">${esc(title)}</div>` +
-    `<div class="sv-meta">${badge(sess.harness, sess.active)}` +
-    `<span class="sv-meta-text">${esc(sess.project)} · ${esc(sess.session)}</span></div></div>`;
+/* The session card: the shared card anatomy from `sessionCardCore`, wrapped
+   for the session view without board-only elements (no Working pill, no lead
+   pill, no sparkline, no consumption, no subagents, no sdBlock, no taskBlock).
+   Reuses the board's `.card` CSS so the two views cannot disagree about what
+   a session is doing. */
+function sessionCard(d, sess){
+  return `<div class="card sv-card">` +
+    sessionCardCore(d, sess, {working: false, lead: false, spark: false, consumption: false}) +
+    `</div>`;
 }
 
-/* One workflow's dispatch tree: stages as a vertical spine, entities grouped
-   under their current stage. Live workers carry the `sd-live` class, the same
-   class the existing Spacedock strip in regular.js uses, so the visual language
-   is shared. Stages with no entities still render (the spine is the workflow's
-   declared stage order, not a list of occupied stages) so the reader can see
-   where the work is not. */
-function sessionWorkflow(wf){
+/* One workflow's dispatch history as a session-centric work log: each
+   dispatched (slug, stage) with when it was dispatched and the last gate
+   decision. Live dispatched ensigns carry the `sd-live` class. When the
+   session has no dispatch history, the stage-spine tree is preserved so the
+   view still shows the workflow's entity roster. Non-dispatched workflow
+   entities are labeled "other workflow entities" — not "NOT TOUCHED" —
+   because the session may have advanced them without a live worker right now. */
+function sessionWorkflow(wf, sd){
   const stages = wf.stages || [];
   const entities = wf.entities || [];
   const goal = wf.goal || "";
   const goalHtml = goal ? `<div class="sv-goal">${esc(goal)}</div>` : "";
+  const history = (sd && sd.dispatch_history) || [];
+  /* Build a slug → entity lookup so each dispatch can cross-reference the
+     workflow's entities for gate decision and live status. */
+  const entMap = {};
+  for(const ent of entities) entMap[ent.slug] = ent;
+  /* When the session has a dispatch history, render it as the work log.
+     Only dispatches whose slug matches this workflow's entities appear — a
+     dispatch for another workflow's entity is not this workflow's work. */
+  if(history.length){
+    const dispatchedSlugs = new Set();
+    const histRows = [];
+    for(const disp of history){
+      if(!(disp.slug in entMap)) continue;
+      dispatchedSlugs.add(disp.slug);
+      const ent = entMap[disp.slug];
+      const live = ent && ent.live;
+      const cls = live ? " sd-live" : "";
+      const cyc = ent && ent.cycle ? ` <span class="sv-cyc">${esc(ent.cycle)}</span>` : "";
+      const decBadge = ent && ent.decision ? sdDecisionBadge(ent.decision) : "";
+      const when = disp.ts ? fmtDur(nowSec() - disp.ts) + " ago" : "";
+      histRows.push(`<div class="sv-disp${cls}">` +
+        `<span class="sv-disp-slug" title="${esc(disp.slug)}">${esc(sdSlug(disp.slug))}${cyc}</span>` +
+        `<span class="sv-disp-stage">${esc(disp.stage)}</span>` +
+        (decBadge ? `<span class="sv-dec">${decBadge}</span>` : "") +
+        (when ? `<span class="sv-disp-when">${esc(when)}</span>` : "") +
+        `</div>`);
+    }
+    /* Non-dispatched workflow entities: the roster minus what this session
+       dispatched. Labeled accurately, never "NOT TOUCHED." */
+    const otherEnts = entities.filter(e => !dispatchedSlugs.has(e.slug));
+    const otherRows = otherEnts.length ? otherEnts.map(ent => {
+      const live = ent.live ? " sd-live" : "";
+      const cyc = ent.cycle ? ` <span class="sv-cyc">${esc(ent.cycle)}</span>` : "";
+      const decBadge = ent.decision ? sdDecisionBadge(ent.decision) : "";
+      return `<div class="sv-disp${live}">` +
+        `<span class="sv-disp-slug" title="${esc(ent.slug)}">${esc(sdSlug(ent.slug))}${cyc}</span>` +
+        `<span class="sv-disp-stage">${esc(ent.stage)}</span>` +
+        (decBadge ? `<span class="sv-dec">${decBadge}</span>` : "") +
+        `</div>`;
+    }).join("") : "";
+    const otherSection = otherRows
+      ? `<div class="sv-other-sep"><span class="sd-k">other workflow entities</span></div>${otherRows}`
+      : "";
+    return `<div class="sv-wf"><div class="sv-wf-name">${esc(wf.workflow)}</div>${goalHtml}` +
+      `<div class="sv-dispatch-hist">${histRows.join("")}</div>${otherSection}</div>`;
+  }
+  /* No dispatch history: preserve the stage-spine tree so the view still
+     renders the workflow's entity roster for sessions that carry no
+     dispatch records (non-Pi sessions). */
   const byStage = {};
   for(const ent of entities){
     const stage = ent.stage || "";
@@ -82,17 +136,17 @@ function sessionWorkflow(wf){
    the session is found but has no dispatch tree to render. Each gives a
    heading, a one-line explanation, and a back link — never a blank panel that
    reads as "stuck". */
-function sessionEmptyState(sess){
+function sessionEmptyState(d, sess){
   const sd = sess.spacedock;
   if(!sd){
-    return sessionHeader(sess) +
+    return sessionCard(d, sess) +
       `<div class="sv-empty sv-empty-type">` +
       `<div class="sv-empty-h">Not a Spacedock session</div>` +
       `<div class="sv-empty-p">This session is not driving a Spacedock workflow.</div>` +
       `</div>`;
   }
   if(sd.role === "first-officer"){
-    return sessionHeader(sess) +
+    return sessionCard(d, sess) +
       `<div class="sv-empty sv-empty-fo">` +
       `<div class="sv-empty-h">First officer with no in-flight entities</div>` +
       `<div class="sv-empty-p">No workflow entities are fresh enough to show. ` +
@@ -100,7 +154,7 @@ function sessionEmptyState(sess){
       `</div>`;
   }
   const role = sd.role || "worker";
-  return sessionHeader(sess) +
+  return sessionCard(d, sess) +
     `<div class="sv-empty sv-empty-worker">` +
     `<div class="sv-empty-h">${esc(role)} session</div>` +
     `<div class="sv-empty-p">This Spacedock session has no in-flight workflow entities.</div>` +
@@ -127,7 +181,8 @@ function sessionView(d){
   }
   const sd = sess.spacedock;
   if(!sd || !sd.workflows || !sd.workflows.length){
-    return sessionBackBar() + sessionEmptyState(sess);
+    return sessionBackBar() + sessionEmptyState(d, sess);
   }
-  return sessionBackBar() + sessionHeader(sess) + sd.workflows.map(sessionWorkflow).join("");
+  return sessionBackBar() + sessionCard(d, sess) +
+    sd.workflows.map(wf => sessionWorkflow(wf, sd)).join("");
 }
