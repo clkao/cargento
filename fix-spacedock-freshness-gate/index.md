@@ -55,6 +55,17 @@ gates:
                 digest: sha256:050dc55277f0a018263ebafd8b6979e2eb8bf6afce3c8a7cfb44dac6f6d45b36
                 request-digest: sha256:06c14963cdb215050c0dcfba201acb45622dbfea05f85c9f17ef0eca2567dcdb
                 room-ref: ./review/validation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:tzrvnebvdb10fddfr40szvtm:validation:1
+                briefing: briefing:tzrvnebvdb10fddfr40szvtm:validation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T08:27:11.950181707Z"
+                decision: approve
+                reason: 'conn granted: ''you have the conn to push to the forked repo and open PR'' (re-granted post-compaction: ''you have unlimited tokens... you have the conn to push to the forked repo and open PR''). Subspace approved all 4 gates: ''you have the conn, why are you still asking?''. Implementation verified: mtime is_fresh dropped from read_entities; inverted + new tests falsified by re-adding it; suite green 89.3%; no git dep. I independently confirmed the flagged flaky test passes deterministically (46/46). Delivery proceeds to done.'
+              application:
+                target-stage: done
+                state: pending
 started: 2026-08-21T07:28:35Z
 worktree: .worktrees/spacedock-ensign-fix-spacedock-freshness-gate
 ---
