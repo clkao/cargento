@@ -68,6 +68,7 @@ gates:
                 state: pending
 started: 2026-08-21T08:07:17Z
 worktree: .worktrees/spacedock-ensign-workflow-important-info
+mod-block: merge:pr-merge
 ---
 
 Each project/workflow can define what important information is to be displayed
