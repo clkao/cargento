@@ -15,6 +15,17 @@ gates:
                 digest: sha256:9db6429b8f07c980562244070249df4d71499ce8505895ddc36a6db7d0f67bd7
                 request-digest: sha256:87224cad04e08e0db3c2e9a9ef602df7ca2845e96a71b822abe1ca35eb1cc25e
                 room-ref: ./review/backlog/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:rj497exc44z5es90d7a2bg49:backlog:1
+                briefing: briefing:rj497exc44z5es90d7a2bg49:backlog:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T08:42:27.761264687Z"
+                decision: approve
+                reason: 'conn granted: ''you have the conn to push to the forked repo and open PR''. Captain directive: ''source of truth should be we have 3 ensigns actively working.'' Root cause of this session showing workflows:[] despite 3 live ensigns — Pi collector hardcodes worker_names=[].'
+              application:
+                target-stage: ideation
+                state: pending
 ---
 
 The Pi collector passes an empty `worker_names` list to `session_workflows`, so the session view's "live workers first" source is always empty for Pi FO sessions — even when ensigns are actively running. The source of truth for "what is this session doing right now" is the live ensigns; the dashboard should reflect that.
