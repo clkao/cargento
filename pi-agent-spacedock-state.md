@@ -26,6 +26,15 @@ gates:
               application:
                 target-stage: ideation
                 state: consumed
+        - id: gate:hdz7pr9bmw5vpc5ah52sbcmb:ideation
+          stage: ideation
+          attempts:
+            - id: gate-attempt:hdz7pr9bmw5vpc5ah52sbcmb-ideation-1
+              briefing:
+                id: briefing:hdz7pr9bmw5vpc5ah52sbcmb:ideation:attempt-1:revision-1
+                digest: sha256:d598f32c752c3d31f6ffd3929b934960db1a19989e105008c714e43e8f335751
+                request-digest: sha256:b967f5f4eb3eaadc79f5bf1ef5efa55323def3e0749f91fa82f91f54c09ff09a
+                room-ref: ./pi-agent-spacedock-state/review/ideation/briefing-1
 started: 2026-08-21T02:46:39Z
 ---
 

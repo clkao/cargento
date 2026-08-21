@@ -1,0 +1,24 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:hdz7pr9bmw5vpc5ah52sbcmb:ideation:attempt-1:revision-1",
+  "question": "Approve the pi-agent-spacedock-state ideation design — Pi FO classified by boot envelope in transcript (no agentSetting), three-line toolResult branch in tool_result_text, session_workflows reuses the harness-agnostic parser — to proceed to implementation?",
+  "artifacts": [
+    {
+      "id": "artifact:hdz7pr9bmw5vpc5ah52sbcmb:ideation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/a1cc3bf15ab380eafdc3f1fcd312d2ac9d27cf35/pi-agent-spacedock-state.md",
+      "rev": "sha256:cd7a7ae5ca1dcc465132c0f2c304384ecb81cc6dad487ce2d2efdb97edf99992",
+      "mediaType": "text/markdown",
+      "summary": "Pi collector classifies a first officer by finding a boot envelope in its transcript (Pi has no agentSetting); tool_result_text gains a toolResult branch so transcript_boot works on Pi; session_workflows is called to produce the same spacedock field a Claude FO publishes. Riskiest mechanism spiked against two live Pi FO transcripts (empty before the fix, correct after). Two falsifiable ACs + mock at pi-agent-spacedock-state/mock.html."
+    }
+  ],
+  "context": [
+    {
+      "type": "Reference",
+      "id": "reference:hdz7pr9bmw5vpc5ah52sbcmb:ideation:attempt-1:revision-1:item-2",
+      "uri": "git-root://state/a1cc3bf15ab380eafdc3f1fcd312d2ac9d27cf35/pi-agent-spacedock-state/mock.html",
+      "mediaType": "application/octet-stream",
+      "rev": "sha256:caf446f21dc4acf0deee491d573a83e9c9990786c6c46f5a6efd19c909213981"
+    }
+  ]
+}
