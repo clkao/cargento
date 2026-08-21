@@ -31,7 +31,27 @@ One git repo (`.spacedock/repo/`), two branches, one object store:
   linked worktree at `dev/.spacedock-state`. The orphan branch has no common
   ancestor with `main`, so the state tree and the spec tree are disjoint.
 
-No origin — local-only until the repo gets a remote.
+One git repo (`.spacedock/repo/`), two branches, one object store:
+- **`main`** — the workflow spec: `README.md`, `_mods/`, `DETACH.md`. Pushed to
+  `origin/spacedock-workflow`.
+- **`dev-state`** (orphan, declared via `state-branch: dev-state` in the README
+  frontmatter) — the entity state, checked out as a linked worktree at
+  `dev/.spacedock-state`. Pushed to `origin/dev-state`.
+
+Remote: `origin = https://github.com/clkao/cargento`. This simulates an
+outside-contributor shape: the workflow spec and the entity state are
+independent branches on the upstream, so a contributor clones
+`spacedock-workflow` for the spec and `dev-state` for the state separately,
+and `state ready`/`state commit` pull/push the `dev-state` branch directly.
+
+The local orphan branch is named `dev-state` (not the default
+`spacedock-state/dev`) so the binary's `Publish`/`Pull` — which push/pull
+`refs/heads/<StateBranch-result>` — hit `origin/dev-state`. `StateBranch`
+reads the `state-branch:` override from the README frontmatter; without it
+the binary would push to `origin/spacedock-state/dev`, a branch that does
+not exist upstream, and `state ready` would fail to pull. The
+`state-branch:` field is the one line that keeps the local branch name and
+the remote state branch name aligned.
 
 ## Why separate branches (not inline)
 
@@ -108,29 +128,49 @@ auto-discovery from the Cargento root.
 
 - `status --boot` from `cargento/` root auto-discovers `.spacedock/dev`. ✓
 - `status --workflow-dir .spacedock/dev --validate` → `VALID`. ✓
-- `state ready` → exits 0 (local-only, no origin). ✓
-- `state commit <slug>` → commits to the orphan branch as local-only. ✓
+- `state ready` → exits 0, pulls from `origin/dev-state` (`State checkout
+  ready — integrated peers' state from dev-state`). ✓
+- `state commit <slug>` → commits to the `dev-state` worktree and pushes to
+  `origin/dev-state` (`Committed and pushed <slug> to dev-state`). ✓
 - `dispatch build --stamp` → worktrees land in `cargento/.worktrees/`
   (`FindGitRoot(.spacedock/dev)` = `cargento`). ✓ (path arithmetic confirmed;
   not yet exercised live this session.)
-- `state init` on a **fresh clone** → does not work: it fetches from the
-  workflow dir's repo, but `dev/` is not a git repo, so git climbs to
-  Cargento's origin, which has no `spacedock-state/dev` branch. This is the
-  overlay-contribution sprint's DoD-3 gap. For a local-only workflow with no
-  remote, there is nothing to resume from. If `repo/` gets a remote, the
-  orphan branch rides with it, and `state init`'s fetch source is the
-  binary gap to close.
+- `state init` on a **fresh clone** → fetches from the workflow dir's repo
+  on the *default* state branch name (`spacedock-state/<basename>`), not the
+  README-declared `state-branch: dev-state`. So it fails on a fresh clone
+  unless the contributor manually fetches `dev-state` and adds the worktree
+  (see Resuming). This is the overlay-contribution sprint's DoD-3 gap;
+  closing it is a binary follow-up.
 
-## Resuming this layout
+## Resuming this layout (outside-contributor simulation)
 
 `.spacedock/repo/` is untracked from Cargento's `main` (via `info/exclude`),
 so a fresh clone of Cargento has neither the spec nor the state. To rebuild
-once `repo/` has its own remote:
+on a fresh clone (the outside-contributor path):
 
 1. Recreate `cargento/.git/info/exclude` entries: `.spacedock/` and
    `.worktrees/`.
-2. Clone `repo/` to `cargento/.spacedock/repo/`.
-3. `mkdir -p .spacedock/dev && ln -s ../repo/README.md .spacedock/dev/README.md && ln -s ../repo/_mods .spacedock/dev/_mods`
-4. `git -C .spacedock/repo worktree add ../dev/.spacedock-state spacedock-state/dev`
+2. Clone the spec branch:
+   `git clone -b spacedock-workflow https://github.com/clkao/cargento .spacedock/repo`
+3. Create the workflow dir with symlinks to the spec:
+   `mkdir -p .spacedock/dev && ln -s ../repo/README.md .spacedock/dev/README.md && ln -s ../repo/_mods .spacedock/dev/_mods`
+4. Fetch the state branch and add it as a linked worktree:
+   `git -C .spacedock/repo fetch origin dev-state && git -C .spacedock/repo worktree add ../dev/.spacedock-state dev-state`
 
-Until `repo/` has its own origin, this is a single-machine workflow.
+This is single-machine-clone-friendly today. The binary's `state init`
+still fetches from the workflow dir's repo on the *default* state branch
+name, which is the overlay-contribution sprint's DoD-3 gap; the manual
+`fetch origin dev-state` in step 4 works around it. Closing that gap (so
+`state init` fetches the README-declared `state-branch`) is a binary
+follow-up.
+
+### Why two remote branches (spacedock-workflow + dev-state), not one
+
+The workflow spec (`main` → `spacedock-workflow`) and the entity state
+(`dev-state`) are separate branches on the same upstream repo so a
+contributor can pull the spec without the (large, mutable) state history,
+and push state without churning the spec branch. This mirrors the local
+orphan-branch split (spec on `main`, state on the orphan) onto the remote:
+two branches, one upstream repo, no PR between them — the state branch is
+not a feature branch to review; it is the contributor's durable state
+ledger, and `state ready`/`state commit` keep it in sync.
