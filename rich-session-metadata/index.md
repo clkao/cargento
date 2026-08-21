@@ -1,6 +1,6 @@
 ---
 title: Rich session metadata — entities touched, state, decisions, and progress
-status: implementation
+status: validation
 source: captain dogfood feedback
 id: z4tjfzz9y4dz1vvaz588mc81
 gates:
