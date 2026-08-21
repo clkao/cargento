@@ -47,6 +47,7 @@ gates:
                 target-stage: implementation
                 state: consumed
 started: 2026-08-21T08:07:17Z
+worktree: .worktrees/spacedock-ensign-workflow-important-info
 ---
 
 Each project/workflow can define what important information is to be displayed
