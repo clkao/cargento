@@ -1,6 +1,6 @@
 ---
 title: Bind the dashboard to a configurable host (--host 0.0.0.0 for remote access)
-status: backlog
+status: ideation
 source: captain seed
 id: bkjcbqac4d34rtsn7a0vy1kz
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: 'Captain approved the backlog seed in the same message that filed it (''file: allow --host 0.0.0.0 in cli. dispatch'') — ''file and dispatch'' is the approval. Advance to ideation.'
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 
 An operator running the Cargento dashboard on a shared or remote machine cannot
