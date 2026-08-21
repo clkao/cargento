@@ -15,6 +15,17 @@ gates:
                 digest: sha256:ccc42b201dd9818ef37d42815ce44b7fa89e69fdc08cc57858eb11ed3842bc8e
                 request-digest: sha256:890c71dca7bf7c2b8552257358643bc0729d51f3c3e816367634a987885790f6
                 room-ref: ./review/backlog/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:z4tjfzz9y4dz1vvaz588mc81:backlog:1
+                briefing: briefing:z4tjfzz9y4dz1vvaz588mc81:backlog:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T07:28:23.481133823Z"
+                decision: approve
+                reason: 'FO autonomous approval (conn granted: ''you have the conn to push to the forked repo and open PR''; reinforced: ''when you have the conn, you should still do gate attempt and record your autonomous approval as resolution''). Backlog seed names a user-facing end value and a concrete dashboard surface; proof-needed well-scoped. Advancing to ideation.'
+              application:
+                target-stage: ideation
+                state: pending
 ---
 
 The session view should show, for the session being viewed, the entities it
