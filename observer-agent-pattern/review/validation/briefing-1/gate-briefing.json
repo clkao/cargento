@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:9t63gp52zec23rh0k9t160ft:validation:attempt-1:revision-1",
+  "question": "Approve the observer-agent-pattern validation — all 4 ACs independently reproduced with falsifying edits, no-goal sentinel not overridable by a fabricating model, panel renders from sidecar with no hardcoded fallback, pre-PR suite green — to proceed to done (merge)?",
+  "artifacts": [
+    {
+      "id": "artifact:9t63gp52zec23rh0k9t160ft:validation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/ac966365ba99edb24b6cae02f13b107cb631fd79/observer-agent-pattern.md",
+      "rev": "sha256:692007e97650fb669f6fe2a557752eff60e5101104607a76dc9072a79888b121",
+      "mediaType": "text/markdown",
+      "summary": "Validation PASSED. All 4 ACs independently reproduced: AC1 goal tracks the directive (falsified by changing the directive); AC2 no-goal sentinel survives a fabricating model (model branch gated by if goal != NO_GOAL, never invoked); AC3 read-only mount leaves target mtimes unchanged, sidecar produced outside target; AC4 panel renders from sidecar alone with observer-sentinel class, no hardcoded fallback, null sidecar renders idle. Pre-PR suite green (ruff, mypy 82 files, lint_embedded, validate_plugins, coverage 88.6%, 1186+157 tests). No new findings. Recommendation PASSED."
+    }
+  ]
+}

@@ -60,6 +60,15 @@ gates:
               application:
                 target-stage: implementation
                 state: consumed
+        - id: gate:9t63gp52zec23rh0k9t160ft:validation
+          stage: validation
+          attempts:
+            - id: gate-attempt:9t63gp52zec23rh0k9t160ft-validation-1
+              briefing:
+                id: briefing:9t63gp52zec23rh0k9t160ft:validation:attempt-1:revision-1
+                digest: sha256:2ecc4e22ecc903570e034c750ec2f126a9ffc88aa1b32998fe3a60bdf3f85dbd
+                request-digest: sha256:0de2f6f8ee7c8c44154b3352631eba514868d17aac3243ab036881c679ebdc1e
+                room-ref: ./observer-agent-pattern/review/validation/briefing-1
 started: 2026-08-20T18:30:00Z
 worktree: .worktrees/spacedock-ensign-observer-agent-pattern
 ---
