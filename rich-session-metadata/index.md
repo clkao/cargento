@@ -1,6 +1,6 @@
 ---
 title: Rich session metadata — entities touched, state, decisions, and progress
-status: backlog
+status: ideation
 source: captain dogfood feedback
 id: z4tjfzz9y4dz1vvaz588mc81
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: 'FO autonomous approval (conn granted: ''you have the conn to push to the forked repo and open PR''; reinforced: ''when you have the conn, you should still do gate attempt and record your autonomous approval as resolution''). Backlog seed names a user-facing end value and a concrete dashboard surface; proof-needed well-scoped. Advancing to ideation.'
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 
 The session view should show, for the session being viewed, the entities it
