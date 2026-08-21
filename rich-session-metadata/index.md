@@ -48,7 +48,7 @@ gates:
                 state: consumed
 started: 2026-08-21T08:07:11Z
 worktree: .worktrees/spacedock-ensign-rich-session-metadata
-mod-block: merge:pr-merge
+mod-block:
 ---
 
 The session view should show, for the session being viewed, the entities it
