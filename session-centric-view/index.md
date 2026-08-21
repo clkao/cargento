@@ -292,3 +292,20 @@ history as an ordered list with `sd-live` highlighting on live rows.
 ### Summary
 
 The ideation proposes a two-part approach: (1) extract `sessionCardCore` from `workingCard` so the session view reuses the board card without duplication, and (2) publish the full dispatch history from the Pi collector so the session view's workflow section shows what this session did, not the workflow's full roster. The riskiest mechanism — factoring the card — is proven feasible by inspection: the shared functions are already extracted, and the board-only elements sit at the card's boundaries. The mock renders the target shape for captain review.
+
+## Stage Report: implementation
+
+- DONE: Extract sessionCardCore from workingCard (shared anatomy, no duplication); session view renders it at top
+  Extracted `sessionCardCore(d, sess, opts)` from `workingCard` in `regular.js`. The core renders headrow (badge; optionally Working pill + lead pill), card-title, card-meta (project · session · authorityMeta; optionally consumptionMeta), card-bits, rate meter (optionally with sparkline), the "now" block (state_detail), and turnBlock. `workingCard` calls the core with all opts true and wraps it with board-specific elements (subs, sdBlock, taskBlock). The session view calls the core with all opts false (no Working pill, lead pill, sparkline, or consumption) in a `.sv-card` container.
+- DONE: Publish dispatch_history (all Pi dispatch batches, ordered) so the session view shows what this session did, not the workflow's full roster
+  Added `dispatch_history` aggregation in `collectors/pi.py` `_info()`: iterates all `path_entries` (oldest-first, root to leaf), collecting every entry with non-empty `dispatches` into a flat list of `{ts, slug, stage}` dicts. Passed through `session_spacedock()` as `sd.dispatch_history` on the session's `spacedock` object. The session view renders this as the work log when present, falling back to the stage-spine tree for sessions without dispatch records.
+- DONE: Replace misleading "NOT TOUCHED" label with accurate "other workflow entities" or omit
+  Changed the `sdBlock` label in `regular.js` from "not touched" to "other workflow entities". The session view's dispatch-history rendering also uses "other workflow entities" for non-dispatched workflow entities.
+- DONE: Live dispatched ensigns highlighted in the dispatch history
+  In `sessionWorkflow()`, each dispatch-history row cross-references the workflow's entities for live status. Live entities carry the `sd-live` class, the same class the board's Spacedock strip uses.
+- DONE: Pre-PR suite green
+  All 1235 dashboard tests + 157 script tests pass. ruff check clean (pre-existing spacedock.py ARG001 and format issues unchanged). mypy clean (pre-existing spacedock.py error unchanged). `lint_embedded.py` clean. `validate_plugins.py` clean. Coverage 88.6% (threshold 73%). `bump_version --current` = 0.11.0.
+
+### Summary
+
+Implemented the two-part approach: (1) extracted `sessionCardCore` from `workingCard` so the session view renders the same card as the board without duplication, and (2) published the full `dispatch_history` from the Pi collector so the session view's workflow section shows what this session did (all dispatch batches, ordered by timestamp), not the workflow's full roster. The "NOT TOUCHED" label was replaced with "other workflow entities" in both `sdBlock` and the session view's dispatch-history rendering. Five acceptance-criterion tests were added (AC-1 through AC-5) plus one backend dispatch-history aggregation test (AC-4). Existing tests were updated for the byte oracle, page size, and label change.
