@@ -64,12 +64,12 @@ class FrontendAssetContractTest(unittest.TestCase):
         # part that moved is also the more useful failure of the two.
         expected_parts = {
             "spark.js": (
-                41_240,
-                "73d98309500e1d318dfda39e62474ea2d91b7be3a3e3b2b5684adae60b8f6701",
+                42_149,
+                "d878ef70b0e132371a198148cb7aaa93199560fdd51be0a20f29a60e83943ce3",
             ),
             "regular.js": (
-                38_564,
-                "40cf543aec2e09de31cd4144f9a990eefb4f6a8e192e50f207e64fe75f0fb9b4",
+                39_387,
+                "8169ba41e076b73d6e2a26c35e4bfb43f32f42d4337d738e64df260e455aec6c",
             ),
             "mode.js": (
                 2_172,
@@ -84,8 +84,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "b36c6fd4c6924857f7e86dbc2818de59d1e0984233480701bef0fabe14b6cc12",
             ),
             "calm.js": (
-                49_381,
-                "a15f5870e32370e2962ef4d8f1505c849d5013aadb5f9a7c866d95f7868ce856",
+                50_641,
+                "1975d7e9d9eba976f4986572fefa47174cee93965ed3717d756d960e7536a73d",
             ),
             "notify.js": (
                 3_185,
@@ -115,9 +115,9 @@ class FrontendAssetContractTest(unittest.TestCase):
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(257_438, len(assembled))
+        self.assertEqual(260_430, len(assembled))
         self.assertEqual(
-            "16db65d285d3f56043d82d46c997a1f4b59eb8248c1d4eee9e99e9c63f8a2826",
+            "960b0d14398b1528a235f4661e36deb1d83f4a5a93522adfcd2592217a46cf48",
             hashlib.sha256(assembled).hexdigest(),
         )
 
