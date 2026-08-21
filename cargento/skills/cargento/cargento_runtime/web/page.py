@@ -13,6 +13,7 @@ APP_PARTS: tuple[str, ...] = (
     "usage.js",  # the usage band, configure, and the disclosure modal
     "controls.js",  # the stop control, stopped panel, and mode bar
     "calm.js",  # the calm ledger: tables, actions, listeners, renderers
+    "session.js",  # the session view: one session's dispatch tree and goal line
     "notify.js",  # desktop notifications
     "observer.js",  # the observer panel: goal + stage + block from the sidecar
     "main.js",  # render() and refresh()
