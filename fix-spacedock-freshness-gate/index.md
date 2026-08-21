@@ -67,3 +67,158 @@ and current — but their mtime is hours old, so `read_entities` filters them ou
 
 Whether `read_entities` is the only mtime-gated path, and whether git commit time
 (or frontmatter timestamps) is reachable read-only without a git dependency.
+
+## Approach
+
+Drop the mtime freshness gate in `read_entities`. The `is_fresh(config, now,
+info.st_mtime, window_sec)` check filters entity files by filesystem mtime,
+but Spacedock entity state is committed via git — mtime reflects the last
+checkout/write, not the last logical change. A long-running first officer
+whose entity files were committed hours ago has stale mtime and the strip
+blanks.
+
+The session's own freshness (transcript mtime within the window) already
+gates whether the session appears on the dashboard at all. The boot envelope
+(read from the transcript) names the `entity_dir` — a retired workflow would
+not be booted. The `resting` filter in `session_workflows` already excludes
+entities on initial/terminal stages. The `status`-in-declared-stages check
+in `read_entities` handles per-file discrimination. These are the real gates;
+the mtime gate is a false negative on long-running sessions.
+
+### Simplest rejected alternative
+
+Replace mtime with the frontmatter `started:` timestamp. Why it cannot
+deliver the MVP value:
+
+1. `started:` is not universally present — 4 of 9 entity files in the live
+   `.spacedock-state` checkout lack it (entities seeded and advanced without
+   the field).
+2. Even when present, `started:` records when the entity *entered* the
+   current stage — which can be hours old for an actively-worked entity,
+   reproducing the same staleness bug.
+3. It would require a fallback to mtime for files without `started:`, which
+   means the original bug persists for those files.
+4. It is more complex (ISO timestamp parsing, missing-field handling,
+   fallback logic) for a gate that adds no value over the session-level
+   freshness already in place.
+
+## Riskiest mechanism exercised first
+
+Spike: confirm whether git commit time (or frontmatter timestamps) is
+reachable read-only without a git dependency, vs. dropping the mtime gate.
+
+- **Git commit time**: NOT reachable without a git dependency. No `import git`
+  or `subprocess.*git` exists anywhere in `cargento_runtime/`. Adding
+  `subprocess` git calls would introduce an external dependency (git must be
+  installed), a cross-platform risk (git may not be available on all
+  platforms), and would violate the "pure parsers" design (D-4 in
+  `docs/design-cross-platform.md`). REJECTED.
+- **Frontmatter `started:`**: Parseable via the existing `scalar()` function
+  + `datetime.fromisoformat()` (Python 3.11+ handles the `Z` suffix natively,
+  verified on the project's 3.12 runtime). But not universally present (4 of
+  9 entity files lack it), and even when present it is a logical stage-entry
+  timestamp that can be hours old — the same staleness as mtime. Does not
+  solve the core problem.
+- **Dropping the mtime gate**: The session-level freshness (transcript mtime
+  within `window_sec`) already gates the session. The boot envelope proves
+  the workflow is live for that session. The `resting` and
+  `status`-in-declared-stages filters handle the "don't show retired"
+  intent. SIMPLEST and MOST CORRECT.
+
+`read_entities` is the only mtime-gated path in `spacedock.py` — confirmed
+by grep: `is_fresh` is called exactly once in the module, inside
+`read_entities`. No other Spacedock code path gates entity visibility by
+file mtime.
+
+## Expected surface + tolerance
+
+One function in `cargento_runtime/spacedock.py`:
+
+- `read_entities`: remove the `is_fresh(config, now, info.st_mtime, window_sec)`
+  check (currently lines 575-576). The `now` and `window_sec` parameters
+  become unused; remove them from the signature and update the call site in
+  `session_workflows` (line 643) accordingly.
+- Tolerance: ±5 lines. The change is the removal of one `if` branch and its
+  parameters; no new logic is added.
+
+No changes to `cargento/skills/cargento/SKILL.md` (no portability-rule
+exposure). No changes to frontend sources.
+
+## Acceptance criteria
+
+**AC1**: A first-officer session whose entity state files have mtime older
+than the freshness window still shows its workflow strip on the dashboard.
+- Verified by: `read_entities` returns `[(slug, stage)]` for entity files
+  whose `status` is a declared stage, regardless of `st_mtime`. The existing
+  test `test_entity_state_older_than_the_window_is_history_not_work` is
+  updated to assert the entity IS returned (was `[]`, now `[(slug, stage)]`).
+  Falsifying edit: re-add the `is_fresh` check in `read_entities` → the test
+  fails (returns `[]`).
+
+**AC2**: Entities resting on initial or terminal stages are still excluded
+from the strip (the "don't show retired workflows" intent is preserved).
+- Verified by: `session_workflows` still filters entities on `resting`
+  stages. The existing test
+  `test_session_workflows_places_entities_on_the_spine` still passes.
+  Falsifying edit: remove the `if stage in resting` check in
+  `session_workflows` → the test fails (resting entities appear).
+
+**AC3**: Entity files whose `status` is not a declared stage are still
+excluded.
+- Verified by: `read_entities` still checks `stage in declared`. The
+  existing test `test_entity_state_refuses_everything_that_is_not_an_entity`
+  still passes. Falsifying edit: remove the `stage in declared` check → the
+  test fails (undeclared stages appear).
+
+**AC4**: No git dependency is introduced.
+- Verified by: `grep -rn 'import git\|subprocess.*git\|from git'
+  cargento/skills/cargento/cargento_runtime/` returns no results after the
+  change. Falsifying edit: add a `subprocess.run(["git", ...])` call → the
+  grep returns a result.
+
+## no mock: {not a user-facing surface}
+
+This is a backend-only change to `spacedock.py`'s `read_entities` collector.
+The dashboard rendering is unchanged — the fix makes the existing workflow
+strip appear when it should, rather than blanking it. No new view, card, or
+rendered panel is introduced.
+
+## Test plan
+
+1. Update `test_entity_state_older_than_the_window_is_history_not_work` to
+   assert that a stale-mtime entity with a valid stage IS returned (was:
+   `[]`, now: `[(slug, stage)]`).
+2. Add a test: `read_entities` returns entities regardless of mtime — a file
+   with mtime hours in the past and a file with mtime now both appear, as long
+   as their `status` is a declared stage.
+3. Existing tests for `resting` exclusion, `status`-in-declared-stages,
+   symlink refusal, cache invalidation, and newest-first ordering continue
+   to pass unchanged (they do not depend on the mtime gate).
+4. Remove `now`/`window_sec` from `read_entities` test call-sites if the
+   signature is cleaned up; the existing tests that pass these arguments
+   are updated to match.
+
+## Stage Report: ideation
+
+- DONE: Approach names the simplest rejected alternative and why it cannot deliver the MVP value
+  Frontmatter `started:` rejected: not universally present (4/9 files lack it), records stage-entry time (hours old for active entities), needs mtime fallback that preserves the bug, adds complexity for no value over session-level freshness.
+- DONE: Riskiest mechanism exercised first: confirm whether git commit time (or frontmatter timestamps) is reachable read-only without a git dependency, vs. dropping the mtime gate
+  Git commit time: no git dependency in cargento_runtime/, subprocess git adds external dep + cross-platform risk, violates pure-parser design D-4. Frontmatter `started:`: parseable via scalar() + fromisoformat() (3.11+ handles Z), but not universal and equally stale. Dropping the mtime gate is simplest and correct — session freshness, boot envelope, resting filter, and status-in-declared already gate correctly.
+- DONE: Each AC carries an external Verified-by clause with the concrete falsifying edit
+  AC1 verified by updated stale-mtime test (falsified by re-adding is_fresh). AC2 verified by existing resting-filter test (falsified by removing the resting check). AC3 verified by existing undeclared-stage test (falsified by removing the declared check). AC4 verified by grep for git imports (falsified by adding a subprocess git call).
+- DONE: Backend-only task (spacedock.py collector change, no user-facing rendered surface): record no mock: {not a user-facing surface} in the body
+  Recorded in the body above: "no mock: {not a user-facing surface}" — collector change, no new view/card/panel.
+
+### Summary
+
+The mtime freshness gate in `read_entities` is a false negative for
+long-running Spacedock first-officer sessions: git-committed entity state
+has stale mtime even when the workflow is active. The spike confirmed git
+commit time is unreachable without a new dependency (rejected), and
+frontmatter `started:` is not universal and equally stale (rejected). The
+approach is to drop the mtime gate entirely — the session's own freshness,
+the boot envelope's `entity_dir`, the `resting` filter, and the
+`status`-in-declared-stages check are the real gates that preserve the
+"don't show retired workflows" intent. One function changes in
+`spacedock.py`; the existing stale-mtime test is inverted, one new test
+added, and the rest of the suite passes unchanged.
