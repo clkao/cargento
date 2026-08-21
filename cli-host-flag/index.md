@@ -15,6 +15,17 @@ gates:
                 digest: sha256:0dbf75cf3dd168a3eee148a1013492d4f8b78282793f7a7fec9fe335cf202fe4
                 request-digest: sha256:81479a38bb71ead4823692ca3f47b91fd2f9aa6a11d0ed2c0f95b8f4fce889c1
                 room-ref: ./review/backlog/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:bkjcbqac4d34rtsn7a0vy1kz:backlog:1
+                briefing: briefing:bkjcbqac4d34rtsn7a0vy1kz:backlog:attempt-1:revision-1
+                by: person:captain
+                at: "2026-08-21T04:12:15.955343418Z"
+                decision: approve
+                reason: 'Captain approved the backlog seed in the same message that filed it (''file: allow --host 0.0.0.0 in cli. dispatch'') — ''file and dispatch'' is the approval. Advance to ideation.'
+              application:
+                target-stage: ideation
+                state: pending
 ---
 
 An operator running the Cargento dashboard on a shared or remote machine cannot
