@@ -47,6 +47,7 @@ gates:
                 target-stage: implementation
                 state: consumed
 started: 2026-08-21T08:07:14Z
+worktree: .worktrees/spacedock-ensign-group-sessions-by-project
 ---
 
 With 18 sessions across cargento, subspace-ssh, subspace-v0, tycho, spacedock,
