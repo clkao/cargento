@@ -55,6 +55,17 @@ gates:
                 digest: sha256:5944366ceb8930b28b8f88690454edefdd0a388c69c4740564f73ac7790153d2
                 request-digest: sha256:55b3152705fa19e45101345b34b0431acd37ec62c421e9e9a9ba27a1f03d9af5
                 room-ref: ./review/validation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:rj497exc44z5es90d7a2bg49:validation:1
+                briefing: briefing:rj497exc44z5es90d7a2bg49:validation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T09:55:19.168571745Z"
+                decision: approve
+                reason: 'conn granted: ''you have the conn''. Per captain: when you have the conn, no presentation — just record the gate and resolution. Implementation verified: dispatch_workers + attributed_workers, 6 tests, suite green. Delivery proceeds to done.'
+              application:
+                target-stage: done
+                state: pending
 started: 2026-08-21T08:42:31Z
 worktree: .worktrees/spacedock-ensign-pi-live-worker-attribution
 ---
