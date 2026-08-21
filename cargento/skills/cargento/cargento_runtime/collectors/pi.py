@@ -22,6 +22,21 @@ if TYPE_CHECKING:
 _PI_NO_NAME = object()
 
 
+def _subagent_dispatches(block: dict[str, Any]) -> list[tuple[str, str]]:
+    """(slug, stage) pairs from an async subagent toolCall's workflowScript.
+
+    Returns [] for sync calls and non-ensign tasks (rebases, management
+    ``list``/``status``) — they carry no dispatch file.
+    """
+    if block.get("name") != "subagent":
+        return []
+    arguments = records.as_dict(block.get("arguments"))
+    script = arguments.get("workflowScript")
+    if arguments.get("async") and isinstance(script, str):
+        return runtime_spacedock.dispatch_workers(script)
+    return []
+
+
 def _text(value: Any) -> str | None:
     """One authority string — a provider or a model — bounded, or nothing.
 
@@ -54,6 +69,7 @@ def _projection(record: Any) -> dict[str, Any] | None:
     tool = None
     provider = None
     model = None
+    dispatches: list[tuple[str, str]] = []
     usage_source: Any = record.get("usage")
     if kind == "message":
         usage_source = message.get("usage")
@@ -72,6 +88,16 @@ def _projection(record: Any) -> dict[str, Any] | None:
                 tool_name = block.get("name")
                 if isinstance(tool_name, str) and tool_name:
                     tool = tool_name
+                # An async subagent dispatch fans ensigns out via a
+                # ``workflowScript`` whose per-run ``task:`` names a dispatch
+                # file ``spacedock-ensign-{slug}-{stage}.md``. Those (slug,
+                # stage) pairs are the ground truth of what this first officer
+                # is doing right now; they feed ``session_workflows`` as
+                # pre-attributed live workers. Sync calls and non-ensign tasks
+                # (rebases, management ``list``/``status``) carry no dispatch
+                # file, so they match nothing.
+                if tool_name == "subagent":
+                    dispatches = _subagent_dispatches(block)
     elif kind == "model_change":
         # A switch the user has made but may not have spent yet. Newer than any
         # message right after a switch, which is when it matters most.
@@ -94,6 +120,7 @@ def _projection(record: Any) -> dict[str, Any] | None:
         "kind": kind,
         "provider": provider,
         "model": model,
+        "dispatches": dispatches,
     }
 
 
@@ -312,6 +339,15 @@ def _info(config: RuntimeConfig, scan: dict[str, Any]) -> dict[str, Any] | None:
         if entry["timestamp"] and entry["usage"] is not None
     ]
     tools = [entry["tool"] for entry in path_entries if entry["tool"]]
+    # The live ensigns are the runs of the most recent async ensign dispatch
+    # batch — the newest branch entry with a non-empty ``dispatches`` list.
+    # Management calls and rebase tasks carry no dispatch file, so they cannot
+    # displace the live ensign batch.
+    live_workers: list[tuple[str, str, str]] = []
+    for entry in reversed(path_entries):
+        if entry.get("dispatches"):
+            live_workers = [(slug, stage, "") for slug, stage in entry["dispatches"]]
+            break
     return {
         "title": title,
         "last_prompt": prompts[-1] if prompts else None,
@@ -321,6 +357,7 @@ def _info(config: RuntimeConfig, scan: dict[str, Any]) -> dict[str, Any] | None:
         "turn": _turn(config, path_entries),
         "provider": provider,
         "model": model,
+        "live_workers": live_workers,
     }
 
 
@@ -414,9 +451,17 @@ def session_spacedock(
         # The switch withdraws the project reads, not the role: the boot
         # envelope is a transcript read, so the classification survives it.
         return {"role": "first-officer", "workflows": []}
+    # The live ensigns are extracted from the transcript's own async dispatch
+    # records — the ground truth of what this session is doing right now. The
+    # scan is cached from the ``collect`` pass, so this is a second ``_info``
+    # computation, not a second file read.
+    scan = scan_pi_session(config, state, path)
+    live_workers = (scan or {}).get("live_workers", [])
     return {
         "role": "first-officer",
-        "workflows": runtime_spacedock.session_workflows(config, state, boot, [], now, window_sec),
+        "workflows": runtime_spacedock.session_workflows(
+            config, state, boot, [], now, window_sec, attributed_workers=live_workers
+        ),
     }
 
 

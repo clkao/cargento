@@ -209,6 +209,9 @@
   .sd-revise{color:var(--warnink);background:color-mix(in oklab,var(--warn) 18%,transparent);border:1px solid color-mix(in oklab,var(--warn) 36%,transparent)}
   .sd-hold{color:var(--alert);background:color-mix(in oklab,var(--alert) 14%,transparent);border:1px solid color-mix(in oklab,var(--alert) 30%,transparent)}
   .sd-prog{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .sd-info{display:inline-flex;align-items:baseline;gap:4px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);padding-left:6px}
+  .sd-info-k{text-transform:lowercase;letter-spacing:.03em;opacity:.7}
+  .sd-info-v{color:var(--ink2)}
   .tasks{display:flex;flex-direction:column;border-top:1px solid var(--line)}
   .task{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
   .task:last-child{border-bottom:none;padding-bottom:0}

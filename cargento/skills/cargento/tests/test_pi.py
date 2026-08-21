@@ -936,13 +936,15 @@ class PiCollectorTest(PiScanTestCase):
         self.assertEqual("first-officer", sd["role"])
         self.assertEqual(1, len(sd["workflows"]))
         self.assertEqual(["intake", "review", "posted"], sd["workflows"][0]["stages"])
-        # Equality, not membership: `live` and `stage` are the fields a wrong
-        # worker list silently rewrites, and `live` can never be True on Pi
-        # because Pi reports no workers to attribute one to.
-        self.assertEqual(
-            [{"slug": "drc-1", "stage": "review", "cycle": "", "live": False}],
-            sd["workflows"][0]["entities"],
-        )
+        # Equality on the fields a wrong worker list silently rewrites: `live`
+        # and `stage` can never be True on Pi because Pi reports no workers to
+        # attribute one to. The decision and info fields are tested separately.
+        entities = sd["workflows"][0]["entities"]
+        self.assertEqual(1, len(entities))
+        self.assertEqual("drc-1", entities[0]["slug"])
+        self.assertEqual("review", entities[0]["stage"])
+        self.assertEqual("", entities[0]["cycle"])
+        self.assertFalse(entities[0]["live"])
 
     def test_pi_non_fo_session_has_no_spacedock(self) -> None:
         # A Pi session with no boot envelope in its transcript has no

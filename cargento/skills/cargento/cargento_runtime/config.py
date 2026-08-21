@@ -23,6 +23,12 @@ STORE_ENV_VARS = (
     "PI_CODING_AGENT_SESSION_DIR",
 )
 CARGENTO_HOME_ENV = "CARGENTO_HOME"
+
+# The fields a workflow's Spacedock strip renders when its README declares no
+# `display:` key. Workflows without the declaration render byte-identical to
+# the pre-feature strip: slug + cycle + spine.
+DEFAULT_SPACEDOCK_DISPLAY: tuple[str, ...] = ("slug", "stage", "cycle")
+
 _PATH_TYPE = type(Path())
 
 

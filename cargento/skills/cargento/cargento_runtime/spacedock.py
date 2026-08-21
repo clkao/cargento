@@ -12,10 +12,10 @@ import json
 import os
 import re
 import stat as stat_module
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
-from cargento_runtime import sessions
 from cargento_runtime import state as runtime_state
+from cargento_runtime.config import DEFAULT_SPACEDOCK_DISPLAY
 
 if TYPE_CHECKING:
     from cargento_runtime.config import RuntimeConfig
@@ -58,6 +58,13 @@ SD_STAGE_RE = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
 
 
 SD_CYCLE_RE = re.compile(r"^(?:cycle|pass|round|c|v|p|r)\d+[a-z]?$|^(?:retry|rerun)$")
+
+
+# A Pi first officer dispatches ensigns via async ``subagent`` toolCalls whose
+# ``workflowScript`` names a dispatch file per run. The slug is the longest
+# kebab prefix; the stage is the trailing token — all Spacedock stages are
+# single tokens (see SD_STAGE_RE), so a greedy match splits them.
+SD_DISPATCH_RE = re.compile(r"spacedock-ensign-([a-z0-9][a-z0-9-]*[a-z0-9])-([a-z0-9]+)\.md")
 
 
 SD_COMMISSIONED_PREFIX = "spacedock@"
@@ -105,6 +112,39 @@ def scalar(lines: list[str], key: str) -> str:
 def truthy(value: str) -> bool:
     """YAML's true-ish scalars, quoted or bare. Anything else is false."""
     return value.strip().strip("\"'").lower() in {"true", "yes", "on"}
+
+
+def indented_scalar(lines: list[str], key: str) -> str:
+    """The last indented ``<key>: value`` scalar from frontmatter lines.
+
+    The entity's ``gates:`` block is nested YAML that ``scalar()`` (a column-0
+    reader) cannot reach. This scan finds every line indented under any block
+    whose key matches, and returns the last occurrence — the newest gate record
+    is appended last, so the last match is the current state.
+    """
+    prefix = key + ":"
+    out = ""
+    for raw in lines:
+        if raw.startswith(prefix) or not raw[:1].isspace():
+            continue
+        body = raw.strip()
+        if body.startswith(prefix):
+            out = body[len(prefix) :].strip().strip("\"'")
+    return out
+
+
+def display_list(lines: list[str]) -> list[str]:
+    """The ordered field names a workflow's README declares for the strip.
+
+    A column-0 ``display:`` scalar holding a space-delimited list, read where
+    ``read_workflow`` already reads. Falls back to the default set so workflows
+    without the declaration render unchanged.
+    """
+    raw = scalar(lines, "display")
+    if not raw:
+        return list(DEFAULT_SPACEDOCK_DISPLAY)
+    fields = [f for f in raw.split() if f]
+    return fields or list(DEFAULT_SPACEDOCK_DISPLAY)
 
 
 def stage_entries(config: RuntimeConfig, lines: list[str]) -> list[dict[str, Any]]:
@@ -183,6 +223,15 @@ def tool_result_text(record: dict[str, Any]) -> list[str]:
     it arrives in a tool result. Scanning the raw line would let ordinary
     conversation text — anything a user pasted or a model echoed — nominate an
     absolute path for Cargento to open.
+
+    Two transcript shapes carry that provenance. Claude writes tool results as
+    ``content`` blocks with ``type: "tool_result"``. Pi writes them as a
+    ``toolResult`` role message whose blocks carry ``type: "text"``.
+
+    The two are read exclusively, not additively: a ``toolResult`` role returns
+    on its own blocks and never falls through to the ``tool_result`` scan below.
+    Nothing writes both shapes in one message today, so no behaviour changes,
+    but a transcript that did would lose the second half.
     """
     message = record.get("message")
     if not isinstance(message, dict):
@@ -191,6 +240,14 @@ def tool_result_text(record: dict[str, Any]) -> list[str]:
     if not isinstance(content, list):
         return []
     out: list[str] = []
+    if message.get("role") == "toolResult":
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            text = block.get("text")
+            if isinstance(text, str):
+                out.append(text)
+        return out
     for block in content:
         if not isinstance(block, dict) or block.get("type") != "tool_result":
             continue
@@ -256,9 +313,7 @@ def workflow_dirs(config: RuntimeConfig, envelopes: list[dict[str, Any]]) -> lis
     out: list[str] = []
     for record in envelopes:
         value = record.get("definition_dir")
-        if not isinstance(value, str) or not value:
-            continue
-        if not os.path.isabs(value) or "\x00" in value:
+        if not _usable_dir(value):
             continue
         if value not in out:
             out.append(value)
@@ -290,6 +345,34 @@ def boot_entities(envelopes: list[dict[str, Any]], workflow_dir: str) -> dict[st
     return out
 
 
+def _usable_dir(value: object) -> TypeGuard[str]:
+    """A boot-envelope directory Cargento is willing to touch.
+
+    Absolute and NUL-free, and encodable for this filesystem. That last check is
+    not decoration: a lone surrogate survives JSON decoding, so an envelope can
+    carry one, and every guard below this point is wrapped in ``except OSError``.
+    ``os.fsencode`` raises ``UnicodeEncodeError``, which is a ``ValueError``, so
+    it would sail through those handlers and out of the collector, and one such
+    line in one transcript blanks every row for that harness until the session
+    leaves the freshness window.
+
+    The probe is platform-dependent and deliberately not the only defence.
+    POSIX encodes with ``surrogateescape`` and cannot represent a lone
+    surrogate; Windows uses ``surrogatepass`` and encodes it happily, where the
+    path simply fails to exist. So the readers that consume these paths catch
+    ``ValueError`` beside ``OSError`` rather than trusting this to refuse first.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    if not os.path.isabs(value) or "\x00" in value:
+        return False
+    try:
+        os.fsencode(value)
+    except (UnicodeEncodeError, ValueError):
+        return False
+    return True
+
+
 def boot_entity_dir(envelopes: list[dict[str, Any]], workflow_dir: str) -> str:
     """The absolute entity-state directory one workflow's boot output names.
 
@@ -306,7 +389,7 @@ def boot_entity_dir(envelopes: list[dict[str, Any]], workflow_dir: str) -> str:
         if record.get("definition_dir") != workflow_dir:
             continue
         value = record.get("entity_dir")
-        if isinstance(value, str) and value and os.path.isabs(value) and "\x00" not in value:
+        if _usable_dir(value):
             out = value
     return out
 
@@ -320,7 +403,7 @@ def transcript_boot(config: RuntimeConfig, state: RuntimeState, path: str) -> li
     """
     try:
         size = os.path.getsize(path)
-    except OSError:
+    except (OSError, ValueError):
         return []
     key = (path, min(size, config.spacedock_boot_scan_bytes))
     with state.cache_lock:
@@ -333,7 +416,7 @@ def transcript_boot(config: RuntimeConfig, state: RuntimeState, path: str) -> li
             blob = handle.read(config.spacedock_boot_scan_bytes)
         if b"definition_dir" in blob:
             envelope_records = boot_records(config, blob)
-    except OSError:
+    except (OSError, ValueError):
         return []
     with state.cache_lock:
         runtime_state.bounded_put(
@@ -459,6 +542,7 @@ def read_workflow(
                 "resting": [
                     entry["name"] for entry in entries if entry["initial"] or entry["terminal"]
                 ],
+                "display": display_list(lines),
             }
     with state.cache_lock:
         runtime_state.bounded_put(
@@ -578,16 +662,28 @@ def _entity_data(
     try:
         lines = read_frontmatter(config, path, config.spacedock_entity_bytes, info)
     except SdMismatchError:
-        return {"stage": "", "gate": {}}
+        return {"stage": "", "gate": {}, "lines": []}
     result: dict[str, Any] = {
         "stage": scalar(lines, "status"),
         "gate": entity_gate_summary(config, lines),
+        "lines": lines,
     }
     with state.cache_lock:
         runtime_state.bounded_put(
             state.spacedock_entity_cache, key, result, limit=config.max_cache_entries
         )
     return result
+
+
+def entity_frontmatter(
+    config: RuntimeConfig, state: RuntimeState, path: str, info: os.stat_result
+) -> list[str]:
+    """The cached frontmatter lines of one entity file, or [].
+
+    Shares the cache ``entity_stage`` and ``entity_gate_data`` warm, so the
+    per-entity ``info`` extraction — :func:`extract_info` — costs no new read.
+    """
+    return _entity_data(config, state, path, info)["lines"]
 
 
 def entity_stage(
@@ -694,6 +790,49 @@ def read_entities(
     return out
 
 
+# Fields that come from the existing attribution rather than entity frontmatter.
+# When the default display declares only these, no frontmatter read is needed.
+_ATTRIBUTED_FIELDS = {"slug", "stage", "cycle"}
+
+
+def extract_info(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    display: list[str],
+    slug: str,
+    stage: str,
+    cycle: str,
+    path: str | None,
+    info: os.stat_result | None,
+) -> dict[str, str]:
+    """The declared fields' values for one entity, for the strip's ``info`` block.
+
+    ``slug``/``stage``/``cycle`` come from the attribution. Other declared fields
+    are read from the entity's cached frontmatter via ``scalar()`` (column-0
+    scalars) or ``indented_scalar()`` (``gate-*`` fields nested under ``gates:``).
+    An absent value is "" so the frontend can render it as an em-dash.
+    """
+    info_map: dict[str, str] = {}
+    lines: list[str] = []
+    for field in display:
+        if field == "slug":
+            info_map[field] = slug
+        elif field == "stage":
+            info_map[field] = stage
+        elif field == "cycle":
+            info_map[field] = cycle
+        elif path is not None and info is not None:
+            if not lines:
+                lines = entity_frontmatter(config, state, path, info)
+            if field.startswith("gate-"):
+                info_map[field] = indented_scalar(lines, field.removeprefix("gate-"))
+            else:
+                info_map[field] = scalar(lines, field)
+        else:
+            info_map[field] = ""
+    return info_map
+
+
 def attribute_worker(name: str, slugs: list[str], stages: list[str]) -> tuple[str, str, str] | None:
     """``(slug, stage, cycle)`` for a worker, anchored on a *known* slug.
 
@@ -724,6 +863,29 @@ def attribute_worker(name: str, slugs: list[str], stages: list[str]) -> tuple[st
     return None
 
 
+def dispatch_workers(workflow_script: str) -> list[tuple[str, str]]:
+    """``(slug, stage)`` pairs parsed from async ensign dispatch file paths.
+
+    A Pi first officer dispatches ensigns via async ``subagent`` toolCalls
+    whose ``workflowScript`` names one dispatch file
+    ``spacedock-ensign-{slug}-{stage}.md`` per run. The slug is the longest kebab
+    prefix; the stage is the trailing token. Rebase and management tasks carry
+    no dispatch file, so they match nothing.
+
+    The stage is not validated here: ``session_workflows`` checks it against the
+    workflow's declared stages, so an unrecognised trailing token is dropped
+    rather than rendered as a wrong-strip entity.
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[tuple[str, str]] = []
+    for match in SD_DISPATCH_RE.finditer(workflow_script):
+        pair = (match.group(1), match.group(2))
+        if pair not in seen:
+            seen.add(pair)
+            out.append(pair)
+    return out
+
+
 def session_workflows(
     config: RuntimeConfig,
     state: RuntimeState,
@@ -731,6 +893,8 @@ def session_workflows(
     worker_names: list[str],
     now: float,
     window_sec: float,
+    *,
+    attributed_workers: list[tuple[str, str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Render-ready workflow strips for one session.
 
@@ -748,16 +912,23 @@ def session_workflows(
     """
     out: list[dict[str, Any]] = []
     for workflow_dir in workflow_dirs(config, boot):
-        info = read_workflow(config, state, workflow_dir)
-        if info is None:
+        wf_info = read_workflow(config, state, workflow_dir)
+        if wf_info is None:
             continue
-        stages: list[str] = info["stages"]
-        resting: set[str] = set(info["resting"])
+        stages: list[str] = wf_info["stages"]
+        resting: set[str] = set(wf_info["resting"])
+        display: list[str] = wf_info.get("display", list(DEFAULT_SPACEDOCK_DISPLAY))
         booted = boot_entities(boot, workflow_dir)
         entity_dir = boot_entity_dir(boot, workflow_dir)
         roster = (
             read_entities(config, state, entity_dir, stages) if entity_dir else []
         )
+        # A slug → (path, stat) lookup so the per-entity info extraction can read
+        # frontmatter the entity_stage read already cached, without a new scandir.
+        entity_paths: dict[str, tuple[str, os.stat_result]] = {}
+        if entity_dir:
+            for slug, path, stat in entity_files(config, entity_dir):
+                entity_paths[slug] = (path, stat)
         # Live worker names carry a stage but not a slug boundary, so the slug
         # has to come from a roster. The state directory is what makes that
         # roster non-empty for a first officer that booted an empty queue.
@@ -765,6 +936,17 @@ def session_workflows(
         gate_map: dict[str, dict[str, str]] = {slug: gate for slug, _, gate in roster}
         entities: list[dict[str, Any]] = []
         seen: set[str] = set()
+        # Pre-attributed workers (slug, stage, cycle) come from the dispatch
+        # records a first officer's own transcript carries — the ground truth
+        # of what that session is doing right now. They run first (freshest
+        # source) and need no roster: the slug and stage were read off the
+        # dispatch file path, not guessed off a worker name, so this source works
+        # even for a detached workflow whose entity-state directory is empty.
+        for aw_slug, aw_stage, aw_cycle in attributed_workers or []:
+            if aw_stage not in stages or aw_slug in seen:
+                continue
+            seen.add(aw_slug)
+            entities.append({"slug": aw_slug, "stage": aw_stage, "cycle": aw_cycle, "live": True})
         for name in worker_names:
             attributed = attribute_worker(name, slugs, stages)
             if attributed is None:
@@ -774,6 +956,7 @@ def session_workflows(
                 continue
             seen.add(slug)
             g = gate_map.get(slug, {})
+            path_stat = entity_paths.get(slug)
             entities.append(
                 {
                     "slug": slug,
@@ -784,12 +967,23 @@ def session_workflows(
                     "decision_at": g.get("decision_at", ""),
                     "decision_by": g.get("decision_by", ""),
                     "target_stage": g.get("target_stage", ""),
+                    "info": extract_info(
+                        config,
+                        state,
+                        display,
+                        slug,
+                        stage,
+                        cycle,
+                        path_stat[0] if path_stat else None,
+                        path_stat[1] if path_stat else None,
+                    ),
                 }
             )
         for slug, stage, gate in roster:
             if slug in seen or stage in resting:
                 continue
             seen.add(slug)
+            path_stat = entity_paths.get(slug)
             entities.append(
                 {
                     "slug": slug,
@@ -800,6 +994,16 @@ def session_workflows(
                     "decision_at": gate.get("decision_at", ""),
                     "decision_by": gate.get("decision_by", ""),
                     "target_stage": gate.get("target_stage", ""),
+                    "info": extract_info(
+                        config,
+                        state,
+                        display,
+                        slug,
+                        stage,
+                        "",
+                        path_stat[0] if path_stat else None,
+                        path_stat[1] if path_stat else None,
+                    ),
                 }
             )
         for slug, stage in booted.items():
@@ -807,6 +1011,7 @@ def session_workflows(
                 continue
             seen.add(slug)
             g = gate_map.get(slug, {})
+            path_stat = entity_paths.get(slug)
             entities.append(
                 {
                     "slug": slug,
@@ -817,13 +1022,23 @@ def session_workflows(
                     "decision_at": g.get("decision_at", ""),
                     "decision_by": g.get("decision_by", ""),
                     "target_stage": g.get("target_stage", ""),
+                    "info": extract_info(
+                        config,
+                        state,
+                        display,
+                        slug,
+                        stage,
+                        "",
+                        path_stat[0] if path_stat else None,
+                        path_stat[1] if path_stat else None,
+                    ),
                 }
             )
         if not entities:
             continue
         out.append(
             {
-                "workflow": info["name"],
+                "workflow": wf_info["name"],
                 "stages": stages,
                 "entities": entities[: config.spacedock_max_entities],
             }

@@ -288,6 +288,7 @@ class SpacedockReadContractTest(unittest.TestCase):
                 "name": "wf",
                 "stages": ["intake", "review", "posted"],
                 "resting": ["intake", "posted"],
+                "display": ["slug", "stage", "cycle"],
             },
             spacedock.read_workflow(config, state, str(root)),
         )
@@ -425,8 +426,6 @@ class SpacedockReadContractTest(unittest.TestCase):
                 state,
                 str(entity_state),
                 ["intake", "review", "posted"],
-                1_700_000_200,
-                3600,
             ),
         )
 
@@ -449,7 +448,7 @@ class SpacedockReadContractTest(unittest.TestCase):
         self.assertEqual(
             [("drc-1", "review", {})],
             spacedock.read_entities(
-                config, state, str(entity_state), ["intake", "review", "posted"], time.time(), 3600
+                config, state, str(entity_state), ["intake", "review", "posted"]
             ),
         )
 
@@ -511,31 +510,8 @@ class SpacedockReadContractTest(unittest.TestCase):
                     state,
                     str(entity_state),
                     ["intake", "review", "posted"],
-                    time.time(),
-                    3600,
                 ),
             )
-
-    def test_entity_state_older_than_the_window_is_history_not_work(self) -> None:
-        """A first officer discovers every workflow in the project. One retired
-        months ago still has entities frozen mid-pipeline."""
-        config, state = runtime()
-        root = self.workflow(self.README)
-        entity_state = root / ".spacedock-state"
-        stale = self.entity(entity_state, "drc-1", "review")
-        os.utime(stale, (1_700_000_000, 1_700_000_000))
-
-        self.assertEqual(
-            [],
-            spacedock.read_entities(
-                config,
-                state,
-                str(entity_state),
-                ["intake", "review", "posted"],
-                1_700_000_000 + 90_000,
-                86_400,
-            ),
-        )
 
     @unittest.skipUnless(hasattr(os, "symlink"), "platform has no symlink")
     def test_a_symlinked_entity_file_is_refused_not_followed(self) -> None:
@@ -551,7 +527,7 @@ class SpacedockReadContractTest(unittest.TestCase):
         self.assertEqual(
             [("drc-1", "review", {})],
             spacedock.read_entities(
-                config, state, str(entity_state), ["intake", "review", "posted"], time.time(), 3600
+                config, state, str(entity_state), ["intake", "review", "posted"]
             ),
         )
 
@@ -572,14 +548,14 @@ class SpacedockReadContractTest(unittest.TestCase):
             return lines
 
         with mock.patch.object(spacedock, "read_frontmatter", counting):
-            spacedock.read_entities(config, state, str(entity_state), stages, now, 3600)
-            spacedock.read_entities(config, state, str(entity_state), stages, now, 3600)
+            spacedock.read_entities(config, state, str(entity_state), stages)
+            spacedock.read_entities(config, state, str(entity_state), stages)
             self.assertEqual(1, len(reads))
             self.entity(entity_state, "drc-1", "posted")
             os.utime(path, (now + 1, now + 1))
             self.assertEqual(
                 [("drc-1", "posted", {})],
-                spacedock.read_entities(config, state, str(entity_state), stages, now + 2, 3600),
+                spacedock.read_entities(config, state, str(entity_state), stages),
             )
         self.assertEqual(2, len(reads))
 
@@ -767,3 +743,172 @@ class SpacedockReadContractTest(unittest.TestCase):
         self.assertEqual("", ent["decision_at"])
         self.assertEqual("", ent["decision_by"])
         self.assertEqual("", ent["target_stage"])
+
+    def test_display_declaration_is_parsed_by_read_workflow(self) -> None:
+        """AC-1: a workflow declaring `display:` has it parsed and returned."""
+        config, state = runtime()
+        body = (
+            "---\n"
+            "commissioned-by: spacedock@0.22.0\n"
+            "state: .spacedock-state\n"
+            "display: title stage pr gate-decision\n"
+            "stages:\n"
+            "  states:\n"
+            "    - name: intake\n"
+            "      initial: true\n"
+            "    - name: review\n"
+            "    - name: posted\n"
+            "      terminal: true\n"
+            "---\n"
+        )
+        root = self.workflow(body)
+
+        result = spacedock.read_workflow(config, state, str(root))
+        assert result is not None
+        self.assertEqual(["title", "stage", "pr", "gate-decision"], result["display"])
+
+    def test_no_display_declaration_keeps_the_default_strip(self) -> None:
+        """AC-2 (baseline): a README without `display:` defaults to the current set."""
+        config, state = runtime()
+        root = self.workflow(self.README)
+
+        result = spacedock.read_workflow(config, state, str(root))
+        assert result is not None
+        self.assertEqual(["slug", "stage", "cycle"], result["display"])
+
+        # The default-set entity carries no extra info fields, so the strip
+        # renders byte-identical to the pre-feature shape.
+        boot = [
+            {
+                "command": "boot",
+                "definition_dir": str(root),
+                "dispatchable": [{"slug": "drc-1", "current": "review"}],
+            }
+        ]
+        strips = spacedock.session_workflows(config, state, boot, [], time.time(), 3600)
+        self.assertEqual(1, len(strips))
+        ent = strips[0]["entities"][0]
+        self.assertEqual(
+            {"slug": "drc-1", "stage": "review", "cycle": ""},
+            {k: ent["info"][k] for k in ("slug", "stage", "cycle")},
+        )
+        # No non-attributed fields, so no extras in info.
+        self.assertEqual(set(), {k for k in ent["info"] if k not in ("slug", "stage", "cycle")})
+
+    def test_display_declaration_is_rendered_per_entity(self) -> None:
+        """AC-1: a workflow declaring `display:` surfaces declared field values.
+
+        Falsifying edit: remove the `info` extraction from `session_workflows` —
+        `info` comes back empty or default, and the assertions miss."""
+        config, state = runtime()
+        body = (
+            "---\n"
+            "commissioned-by: spacedock@0.22.0\n"
+            "state: .spacedock-state\n"
+            "display: title stage pr gate-decision\n"
+            "stages:\n"
+            "  states:\n"
+            "    - name: intake\n"
+            "      initial: true\n"
+            "    - name: review\n"
+            "    - name: posted\n"
+            "      terminal: true\n"
+            "---\n"
+        )
+        root = self.workflow(body)
+        entity_state = root / ".spacedock-state"
+        entity_body = (
+            "---\n"
+            "id: et7hb2x9k6\n"
+            'title: "Workflow important info"\n'
+            "status: review\n"
+            'pr: "#1573"\n'
+            "gates:\n"
+            "  version: 1\n"
+            "  records:\n"
+            "    - id: gate:1:backlog\n"
+            "      stage: backlog\n"
+            "      resolution:\n"
+            "        decision: approve\n"
+            "        target-stage: review\n"
+            "---\n"
+        )
+        path = entity_state / "drc-1.md"
+        entity_state.mkdir(exist_ok=True)
+        path.write_text(entity_body, encoding="utf-8")
+        boot = [
+            {
+                "command": "boot",
+                "definition_dir": str(root),
+                "entity_dir": str(entity_state),
+                "dispatchable": [],
+            }
+        ]
+
+        strips = spacedock.session_workflows(config, state, boot, [], time.time(), 3600)
+        self.assertEqual(1, len(strips))
+        ent = strips[0]["entities"][0]
+        self.assertEqual("drc-1", ent["slug"])
+        self.assertEqual("Workflow important info", ent["info"]["title"])
+        self.assertEqual("#1573", ent["info"]["pr"])
+        self.assertEqual("approve", ent["info"]["gate-decision"])
+
+    def test_gate_field_present_and_absent_paths(self) -> None:
+        """AC-3: gate-derived fields are reachable when present, em-dash when absent.
+
+        Falsifying edit: drop the indented-scalar `gate-*` scan — the first
+        assertion sees `''` instead of `'approve'`."""
+        config, state = runtime()
+        body = (
+            "---\n"
+            "commissioned-by: spacedock@0.22.0\n"
+            "state: .spacedock-state\n"
+            "display: title gate-decision gate-stage\n"
+            "stages:\n"
+            "  states:\n"
+            "    - name: intake\n"
+            "      initial: true\n"
+            "    - name: review\n"
+            "    - name: posted\n"
+            "      terminal: true\n"
+            "---\n"
+        )
+        root = self.workflow(body)
+        entity_state = root / ".spacedock-state"
+        entity_state.mkdir(exist_ok=True)
+
+        # Entity WITH a gates block.
+        with_gates = (
+            "---\n"
+            'title: "Has gates"\n'
+            "status: review\n"
+            "gates:\n"
+            "  records:\n"
+            "    - resolution:\n"
+            "        decision: approve\n"
+            "        stage: backlog\n"
+            "---\n"
+        )
+        (entity_state / "drc-with.md").write_text(with_gates, encoding="utf-8")
+
+        # Entity WITHOUT a gates block.
+        without_gates = '---\ntitle: "No gates"\nstatus: review\n---\n'
+        (entity_state / "drc-without.md").write_text(without_gates, encoding="utf-8")
+
+        boot = [
+            {
+                "command": "boot",
+                "definition_dir": str(root),
+                "entity_dir": str(entity_state),
+                "dispatchable": [],
+            }
+        ]
+
+        strips = spacedock.session_workflows(config, state, boot, [], time.time(), 3600)
+        self.assertEqual(1, len(strips))
+        by_slug = {e["slug"]: e for e in strips[0]["entities"]}
+        self.assertEqual("approve", by_slug["drc-with"]["info"]["gate-decision"])
+        self.assertEqual("backlog", by_slug["drc-with"]["info"]["gate-stage"])
+        # Absent gate block yields empty strings (rendered as em-dash by frontend).
+        self.assertEqual("", by_slug["drc-without"]["info"]["gate-decision"])
+        self.assertEqual("", by_slug["drc-without"]["info"]["gate-stage"])

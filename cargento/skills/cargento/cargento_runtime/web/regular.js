@@ -384,6 +384,11 @@ function sdWindow(stages, idx){
 const SD_SLUG_MAX = 22;   // matches the .sd-ent column width, in mono ch
 const SD_SLUG_HEAD = 8;   // enough to tell one workflow's entities from another's
 
+// Fields already rendered as slug (sd-ent), cycle (sd-cyc), and the stage spine.
+// The info block renders only the extras, so a workflow with the default display
+// renders byte-identical to the pre-feature strip.
+const SD_ATTRIBUTED = new Set(["slug", "stage", "cycle"]);
+
 // Elide the MIDDLE of an over-long entity slug, never the tail. Entity slugs
 // within a workflow share a long prefix and differ only at the end
 // (`datarecce-recce-cloud-infra-pr-1573` vs `…-pr-1587`), so tail truncation
@@ -413,6 +418,19 @@ function sdRelTime(iso){
   return fmtDur(ago) + " ago";
 }
 
+function sdInfo(ent){
+  const info = ent.info;
+  if(!info) return "";
+  let parts = "";
+  for(const key in info){
+    if(SD_ATTRIBUTED.has(key)) continue;
+    const v = info[key];
+    parts += `<span class="sd-info"><span class="sd-info-k">${esc(key)}</span>` +
+      `<span class="sd-info-v">${v ? esc(v) : "—"}</span></span>`;
+  }
+  return parts;
+}
+
 function sdBlock(sess){
   const sd = sess.spacedock;
   if(!sd) return "";
@@ -440,7 +458,7 @@ function sdBlock(sess){
         (ent.cycle ? `<span class="sd-cyc">${esc(ent.cycle)}</span>` : "") +
         `<span class="sd-spine">${spine}</span>` +
         (badge ? `<span class="sd-dec">${badge}</span>` : "") +
-        prog + `</div>`;
+        prog + sdInfo(ent) + `</div>`;
       if(ent.live) liveRows += row; else dimRows += row;
     }
   }
