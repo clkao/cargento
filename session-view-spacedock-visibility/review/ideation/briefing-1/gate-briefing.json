@@ -1,0 +1,24 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:6s6ft835wwg0q9hb8505rkz6:ideation:attempt-1:revision-1",
+  "question": "Approve the session-view-spacedock-visibility ideation design — a third 'session' display mode reusing the existing /api/data payload and spacedock.workflows, goal line from workflow frontmatter title, three additive ACs — to proceed to implementation?",
+  "artifacts": [
+    {
+      "id": "artifact:6s6ft835wwg0q9hb8505rkz6:ideation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/1ec4b455fa55a68caae0645df6491d419a4042cd/session-view-spacedock-visibility.md",
+      "rev": "sha256:e6b8561691cf3a42a11b0c4b08a6a30140109029dd10036e0c3ef78702de7f82",
+      "mediaType": "text/markdown",
+      "summary": "A third 'session' display mode reusing the existing /api/data payload and spacedock.workflows data (no new endpoint); goal line from the workflow frontmatter title scalar; three ACs with falsifying edits (tree renders, goal present/absent, overviews unchanged). No spike needed — all mechanisms proven from existing code. Mock at session-view-spacedock-visibility/mock.html renders the target tree shape."
+    }
+  ],
+  "context": [
+    {
+      "type": "Reference",
+      "id": "reference:6s6ft835wwg0q9hb8505rkz6:ideation:attempt-1:revision-1:item-2",
+      "uri": "git-root://state/1ec4b455fa55a68caae0645df6491d419a4042cd/session-view-spacedock-visibility/mock.html",
+      "mediaType": "application/octet-stream",
+      "rev": "sha256:b8e3f5287398bf97bbcc4992f4f9ac6e34c2ee3da21e6514c16008c38201bc30"
+    }
+  ]
+}
