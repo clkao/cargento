@@ -1,6 +1,6 @@
 ---
 title: Pi live-worker attribution — feed live ensign names to session_workflows
-status: backlog
+status: ideation
 source: captain directive — source of truth is the live ensigns
 id: rj497exc44z5es90d7a2bg49
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: 'conn granted: ''you have the conn to push to the forked repo and open PR''. Captain directive: ''source of truth should be we have 3 ensigns actively working.'' Root cause of this session showing workflows:[] despite 3 live ensigns — Pi collector hardcodes worker_names=[].'
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 
 The Pi collector passes an empty `worker_names` list to `session_workflows`, so the session view's "live workers first" source is always empty for Pi FO sessions — even when ensigns are actively running. The source of truth for "what is this session doing right now" is the live ensigns; the dashboard should reflect that.
