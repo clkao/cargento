@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:z4tjfzz9y4dz1vvaz588mc81:backlog:attempt-1:revision-1",
+  "question": "Approve the rich-session-metadata backlog seed to advance to ideation?",
+  "artifacts": [
+    {
+      "id": "artifact:z4tjfzz9y4dz1vvaz588mc81:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/48de457f099292d9da08ddb635c0d74bc220e6f6/rich-session-metadata/index.md",
+      "rev": "sha256:a5f7ba84cb37111747fc1b218bd6eacd472223473f2cf6987d2453a17c630bb1",
+      "mediaType": "text/markdown",
+      "summary": "Backlog seed for rich-session-metadata (filed from captain dogfood feedback). See entity body for end value, included/excluded scope, and proof needed."
+    }
+  ]
+}

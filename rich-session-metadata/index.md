@@ -3,6 +3,18 @@ title: Rich session metadata — entities touched, state, decisions, and progres
 status: backlog
 source: captain dogfood feedback
 id: z4tjfzz9y4dz1vvaz588mc81
+gates:
+    version: 1
+    records:
+        - id: gate:z4tjfzz9y4dz1vvaz588mc81:backlog
+          stage: backlog
+          attempts:
+            - id: gate-attempt:z4tjfzz9y4dz1vvaz588mc81-backlog-1
+              briefing:
+                id: briefing:z4tjfzz9y4dz1vvaz588mc81:backlog:attempt-1:revision-1
+                digest: sha256:ccc42b201dd9818ef37d42815ce44b7fa89e69fdc08cc57858eb11ed3842bc8e
+                request-digest: sha256:890c71dca7bf7c2b8552257358643bc0729d51f3c3e816367634a987885790f6
+                room-ref: ./review/backlog/briefing-1
 ---
 
 The session view should show, for the session being viewed, the entities it
