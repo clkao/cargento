@@ -72,6 +72,17 @@ gates:
                 digest: sha256:10fc2f73a53b3b6cb2f2375c5243be37541965ceceeabf1fe605cfc74e534077
                 request-digest: sha256:8cdebdfb2c5816168f1f92854d944bb450993ce8992b98973f8a9a4dfb80f130
                 room-ref: ./pi-agent-spacedock-state/review/validation/briefing-2
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:hdz7pr9bmw5vpc5ah52sbcmb:validation:2
+                briefing: briefing:hdz7pr9bmw5vpc5ah52sbcmb:validation:attempt-2:revision-1
+                by: person:captain
+                at: "2026-08-21T06:58:10.239830201Z"
+                decision: approve
+                reason: Captain approved validation cycle-2 (rework) via Subspace (binding resolution, decision approve, no annotations). Blocking finding settled by docs/captures/pi/ capture (toolResult is a message role, 223 records). Reviewer's 3 commits confirmed green and load-bearing. Both ACs reproduced with falsifying edits, surrogate fix verified, toolResult branch additive, pre-PR suite green. Delivery can proceed to done.
+              application:
+                target-stage: done
+                state: pending
 started: 2026-08-21T02:46:39Z
 worktree: .worktrees/spacedock-ensign-pi-agent-spacedock-state
 mod-block:
