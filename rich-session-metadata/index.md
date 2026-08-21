@@ -265,3 +265,25 @@ cannot deliver the MVP because the snapshot lacks decision/reason/timestamp
 data and is empty for the common long-running FO case. Five acceptance
 criteria with falsifying edits, a five-test plan, and a static HTML mock at
 `rich-session-metadata/mock.html` rendering the target card shape.
+
+## Stage Report: implementation
+
+- DONE: `entity_gate_summary(config, lines)` — indentation-scoped scan of the `gates:` block, returns `{decision, decision_at, decision_by, target_stage}` from the last gate record's last resolved attempt, or `{}` when no resolution exists. Frontmatter-only read (never touches the body).
+- DONE: `_entity_data` refactored to cache both stage and gate summary from a single frontmatter read, with `entity_stage` and `entity_gate_data` as thin wrappers sharing the cache.
+- DONE: `read_entities` returns `(slug, stage, gate_summary)` tuples; `session_workflows` attaches `decision`, `decision_at`, `decision_by`, `target_stage` to each entity dict, using a `gate_map` built from the roster.
+- DONE: `sdBlock` in `regular.js` renders live and non-live entities in separate sections, with a decision badge (approve/revise/hold) and a "advanced to X Ym ago" progress line on entities with gate metadata. Non-live entities in a dimmed "not touched" section.
+- DONE: CSS styles for `.sd-badge`, `.sd-ok`, `.sd-revise`, `.sd-hold`, `.sd-prog`, `.sd-dim`, `.sd-dim-sep`.
+- DONE: Unit tests for `entity_gate_summary` (two-record gate history, no-gates), `session_workflows` gate attachment (with and without gate records), and frontend `sdBlock` rendering (decision badge, progress line, live/non-live split, no-gate entities render spine only).
+- DONE: Existing `read_entities` tests updated for the new `(slug, stage, gate)` return type; byte oracle for `regular.js` and `styles.css` updated.
+- DONE: Pre-PR suite green: ruff check, ruff format, mypy --strict, lint_embedded, validate_plugins, bump_version --current, full unittest suite (1181 passed, 1 skipped), coverage 89.2% (> 73% threshold).
+
+### Summary
+
+Implemented the rich session metadata feature: per-entity gate decision
+metadata (last decision, timestamp, by, target-stage) parsed from entity
+state file frontmatter by a new pure `entity_gate_summary` function, attached
+to each entity dict in the `session_workflows` payload, and rendered by
+`sdBlock` in the frontend as decision badges and progress lines, split into
+touched (live) and not-touched (non-live) sections. The frontmatter is read
+once per entity (shared cache), never the body. All five acceptance criteria
+satisfied with falsifying edits verified by tests.
