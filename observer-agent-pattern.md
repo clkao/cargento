@@ -43,6 +43,12 @@ gates:
                 at: "2026-08-21T03:43:47.849119381Z"
                 decision: revise
                 reason: 'Revise (captain via Subspace, anchored on the ''Mock: none — backend-only analyzer'' line): every task must have user impact — the observer task is NOT backend-only with no mock. Rework the ideation to address WHERE the observer''s output appears to the user: identify the concrete user-facing dashboard surface this task owns, and produce a mock of that surface.'
+            - id: gate-attempt:9t63gp52zec23rh0k9t160ft-ideation-2
+              briefing:
+                id: briefing:9t63gp52zec23rh0k9t160ft:ideation:attempt-2:revision-1
+                digest: sha256:bc8f0bf4f2116ffa5a0a844e42f1e17b96cba293a4dfd0f9601b25c4a5bfebff
+                request-digest: sha256:a6bd24d134604a2996bf99b25d0cd1c162560ac5c2223abe60d9a08be5fe256d
+                room-ref: ./observer-agent-pattern/review/ideation/briefing-2
 started: 2026-08-20T18:30:00Z
 ---
 

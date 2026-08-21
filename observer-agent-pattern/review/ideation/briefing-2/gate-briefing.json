@@ -1,0 +1,24 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:9t63gp52zec23rh0k9t160ft:ideation:attempt-2:revision-1",
+  "question": "Approve the REVISED observer-agent-pattern ideation — now ships its own user-facing surface (the observer panel rendering goal+stage+block from the sidecar), a mock with 4 variants, and AC-4 measuring the user-facing end value — to proceed to implementation?",
+  "artifacts": [
+    {
+      "id": "artifact:9t63gp52zec23rh0k9t160ft:ideation:attempt-2:revision-1:item-1",
+      "uri": "git-root://state/9d0fad12071b29e649722f5995526b4e7609f0c1/observer-agent-pattern.md",
+      "rev": "sha256:cd1b4e766c0d797900771605dd4fd134dfb5cc9002644d6fa8a451b35c508279",
+      "mediaType": "text/markdown",
+      "summary": "Reworked per captain revise: the observer now ships its own user-facing surface (the observer panel — a compact card rendering goal+stage+block from the sidecar), not a backend-only analyzer. Mock at observer-agent-pattern/mock.html with four variants (active, no-goal, model-failure fallback, idle). AC-4 added measuring user-facing end value (what the operator sees). Boundary with sibling reconciled: sibling owns the dispatch tree + frontmatter goal; this task owns the observer panel (live semantic state). Kept the three original ACs and the no-fabrication spike evidence."
+    }
+  ],
+  "context": [
+    {
+      "type": "Reference",
+      "id": "reference:9t63gp52zec23rh0k9t160ft:ideation:attempt-2:revision-1:item-2",
+      "uri": "git-root://state/9d0fad12071b29e649722f5995526b4e7609f0c1/observer-agent-pattern/mock.html",
+      "mediaType": "application/octet-stream",
+      "rev": "sha256:54f34f5b5fc5279b747dd89f5408c3751e483794510e7f4469fc518ea523db47"
+    }
+  ]
+}
