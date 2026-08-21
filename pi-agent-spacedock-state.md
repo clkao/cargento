@@ -131,3 +131,18 @@ All tests run on every runner (fixtures, no network, no live `spacedock` binary)
 ### Summary
 
 Filled all ideation placeholders: the Pi collector classifies a FO by finding a boot envelope in its transcript (Pi has no `agentSetting`), `tool_result_text` gains a three-line `toolResult` branch so `transcript_boot` works on Pi transcripts, and `session_workflows` is called with the envelopes to produce the same `spacedock` field a Claude FO session already publishes. Two ACs with falsifying edits, a four-test plan, and a mock at `pi-agent-spacedock-state/mock.html` rendering the Pi FO card with the workflow strip.
+
+## Stage Report: implementation
+
+- DONE: Change satisfies the ideation ACs: Pi FO session renders the same workflow strip a Claude FO does; non-FO Pi session shows no strip
+  `test_pi_fo_session_renders_spacedock_strip` asserts `spacedock.role == "first-officer"` and `workflows[0].stages == ["intake","review","posted"]` with entity `drc-1`; `test_pi_non_fo_session_has_no_spacedock` asserts `spacedock` is None for a plain session.
+- DONE: Tests written first and watched fail for the right reason (test_pi_fo_session_renders_spacedock_strip, test_pi_non_fo_session_has_no_spacedock)
+  All three new tests failed before implementation: `test_boot_records_finds_pi_tool_result_format` got `1 != 0` (no `toolResult` branch), `test_pi_fo_session_renders_spacedock_strip` got `AssertionError` on `assert sd is not None` (no `session_spacedock`), `test_pi_non_fo_session_has_no_spacedock` passed trivially (no `spacedock` key yet). The contracts test failed on the allowlist mismatch.
+- DONE: toolResult branch in tool_result_text is additive (Claude tool_result content blocks unchanged)
+  The `toolResult` branch returns early only when `message.role == "toolResult"`; Claude transcripts carry `type: "tool_result"` content blocks under a different role, so they fall through to the existing loop unchanged. `test_boot_records_require_tool_result_provenance` still passes.
+- DONE: Pre-PR suite run green: ruff check, ruff format --check, mypy, lint_embedded.py, validate_plugins.py, coverage
+  ruff check: All checks passed. ruff format --check: 109 files already formatted. mypy: Success, no issues in 80 files. lint_embedded: clean. validate_plugins: validated. coverage: 89.2% (threshold 73%). Full suite: 1180+157 tests OK.
+
+### Summary
+
+Added a `toolResult` role branch to `spacedock.tool_result_text` (additive — Claude's `tool_result` blocks unchanged), wired `collectors/pi.py` to the shared Spacedock cartography via `session_spacedock` (classifies FO by boot envelope, calls `session_workflows` with empty worker names), and added `cargento_runtime.spacedock` to the Pi collector's import-graph allowlist. Three new tests plus the allowlist update; all pre-PR checks green. Commit `4f3fbc0` on `spacedock-ensign/pi-agent-spacedock-state`.
