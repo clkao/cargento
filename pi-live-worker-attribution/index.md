@@ -229,3 +229,18 @@ extracts and feeds the data (collector + `session_workflows`), adding no new ren
   next ensign dispatch (the same freshness compromise Claude's subagent-window makes). If
   per-run precision is later required, a subagent-artifact-transcript-freshness model (mirroring
   Claude's `agent_children`) is the robust upgrade path; noted, not built at ideation.
+
+## Stage Report: ideation
+
+- DONE: Approach names the simplest rejected alternative and why it cannot deliver the MVP value
+  Notify-subtraction rejected: `subagent-notify` content is truncated (a 4-run completion lists only the first key), so key-matching under-reports completion and over-reports liveness (prototype showed 6 live, not 3).
+- DONE: Riskiest mechanism exercised first — parse a real Pi session transcript's subagent dispatch tool_use records to confirm they carry agent name + dispatch file path (with slug) + stage
+  Parsed session 01a02216: 22 async dispatches, 21 distinct `(slug, stage)` from `spacedock-ensign-{slug}-{stage}.md` task paths, zero false matches; `agent:"worker"` confirmed; most-recent ensign batch = the dogfood three at implementation.
+- DONE: Each acceptance criterion carries an external Verified-by clause with the concrete falsifying edit
+  AC-1..AC-4 each state a test/assertion and the specific edit that makes it fail (delete emit-first loop / route through attribute_worker / make param required / mis-pick the batch).
+- DONE: Whether attribute_worker can consume a richer (name, slug, stage) input or needs a small extension
+  Needs a small extension: attribute_worker requires a known slug from the roster and a `spacedock-ensign-`-prefixed name; a new `attributed_workers` (slug,stage,cycle) path in session_workflows emits live entities directly, bypassing the name-parse.
+
+### Summary
+
+The FO transcript's async `subagent` dispatch records carry `(slug, stage)` on the dispatch file path reliably enough to attribute live ensigns without the roster. `attribute_worker` cannot consume this directly (it needs a known slug), so the approach adds an additive `attributed_workers` emit-first path to `session_workflows` and a `dispatches` capture in the Pi collector's projection, taking the most-recent ensign dispatch batch as live. Two dependencies surfaced: the `pi-agent-spacedock-state` branch must land first (it adds `session_spacedock` + Pi boot reading), and the `read_workflow` symlink-containment guard blocks the local dev dogfood — confirmed out of scope (separate entity; FO unblocks locally with a real README).
