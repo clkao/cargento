@@ -55,7 +55,9 @@ in its transcript, names the workflow directory and the entity-state directory a
 Cargento uses those values and nothing else. Before any file is opened, all of the following must
 hold, and a path failing any one is skipped silently:
 
-- the directory value is absolute and contains no NUL;
+- the directory value is absolute, contains no NUL, and encodes for this filesystem. A lone
+  surrogate survives JSON decoding, and the checks below it raise `UnicodeEncodeError` rather
+  than `OSError`, so an unencodable path would escape every handler here;
 - the path is canonicalised with `realpath`, and the README must still resolve inside the workflow
   directory (`commonpath` containment), so a swapped entry cannot redirect the read;
 - every file opened is a regular file and not a symlink. This is checked with `lstat`, opened with

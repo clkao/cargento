@@ -400,13 +400,12 @@ def session_spacedock(
 ) -> dict[str, Any] | None:
     """Spacedock role and workflow strips for one Pi session, or None.
 
-    Pi has no ``agentSetting``: a first officer is classified by finding a
-    Spacedock boot envelope in its transcript — the same ``definition_dir`` /
-    ``entity_dir`` payload ``spacedock status --boot`` writes, which only a
-    first officer runs. The boot envelope is both the classifier and the data
-    source: its presence proves the session is a first officer, and its paths
-    feed ``session_workflows`` directly. No envelope means a non-FO session,
-    which gets no strip.
+    Pi writes no ``agentSetting``, so the boot envelope does both jobs here:
+    finding one classifies the session, and its paths feed ``session_workflows``.
+    That is weaker than Claude's launch-time declaration, because tool output is
+    whatever a tool printed, so a session that merely echoed an envelope is
+    badged too. See S-5 in ``docs/design-spacedock.md`` for why that trade was
+    taken and which downstream guards carry it.
     """
     boot = runtime_spacedock.transcript_boot(config, state, path)
     if not boot:
@@ -419,6 +418,27 @@ def session_spacedock(
         "role": "first-officer",
         "workflows": runtime_spacedock.session_workflows(config, state, boot, [], now, window_sec),
     }
+
+
+def spacedock_or_none(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    path: str,
+    now: float,
+    window_sec: float,
+) -> dict[str, Any] | None:
+    """``session_spacedock``, with a bad envelope costing one strip and no more.
+
+    The paths in an envelope are untrusted text, and `aggregate`'s failure
+    boundary is per harness rather than per session: an exception escaping here
+    blanks every Pi row and badges the harness `collector error` until the
+    session leaves the freshness window. A row without its strip is the better
+    failure.
+    """
+    try:
+        return session_spacedock(config, state, path, now, window_sec)
+    except (OSError, ValueError):
+        return None
 
 
 def collect(
@@ -471,7 +491,7 @@ def collect(
                 "last_activity": last_activity,
                 "rate_per_min": sessions.rate_from(info, now, config),
                 "turn": turns.turn_progress((info or {}).get("turn"), session_state, now, config),
-                "spacedock": session_spacedock(config, state, path, now, window_hours * 3600),
+                "spacedock": spacedock_or_none(config, state, path, now, window_hours * 3600),
             }
         )
         out.append(session)

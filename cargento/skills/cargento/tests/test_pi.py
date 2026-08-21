@@ -936,8 +936,13 @@ class PiCollectorTest(PiScanTestCase):
         self.assertEqual("first-officer", sd["role"])
         self.assertEqual(1, len(sd["workflows"]))
         self.assertEqual(["intake", "review", "posted"], sd["workflows"][0]["stages"])
-        entities = sd["workflows"][0]["entities"]
-        self.assertTrue(any(e["slug"] == "drc-1" for e in entities))
+        # Equality, not membership: `live` and `stage` are the fields a wrong
+        # worker list silently rewrites, and `live` can never be True on Pi
+        # because Pi reports no workers to attribute one to.
+        self.assertEqual(
+            [{"slug": "drc-1", "stage": "review", "cycle": "", "live": False}],
+            sd["workflows"][0]["entities"],
+        )
 
     def test_pi_non_fo_session_has_no_spacedock(self) -> None:
         # A Pi session with no boot envelope in its transcript has no
@@ -963,7 +968,9 @@ class PiCollectorTest(PiScanTestCase):
                 rows = pi_collector.collect(config, state, self.NOW, 24, True)
 
         self.assertEqual(["plain"], [row["sid"] for row in rows])
-        self.assertIsNone(rows[0].get("spacedock"))
+        # Subscript, not `.get`: with `.get` this passes even if the key were
+        # dropped from the published row altogether.
+        self.assertIsNone(rows[0]["spacedock"])
 
 
 class TurnTrackingTest(unittest.TestCase):

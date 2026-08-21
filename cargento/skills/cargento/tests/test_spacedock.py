@@ -235,6 +235,80 @@ class SpacedockParserTest(unittest.TestCase):
         self.assertEqual(1, len(records))
         self.assertEqual("/w/one", records[0]["definition_dir"])
 
+    def test_pi_conversation_text_cannot_nominate_a_path(self) -> None:
+        """The negative twin of the Pi format test above.
+
+        Boot output is command output. The ``toolResult`` role is the only thing
+        separating "a tool printed an envelope" from "somebody pasted a workflow
+        path into a chat", and a pasted path would otherwise be canonicalised and
+        opened. Falsifying edit: widen the role gate in ``tool_result_text`` to
+        accept ``user`` or ``assistant`` and this returns one record.
+        """
+        config, _runtime = runtime()
+        envelope = (
+            '{"command":"boot","id_style":"slug",'
+            '"definition_dir":"/w/one","entity_dir":"/w/one",'
+            '"dispatchable":[]}'
+        )
+
+        def line(role: str) -> bytes:
+            return json.dumps(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": role,
+                        "content": [{"type": "text", "text": "=== BOOT ===\n" + envelope}],
+                    },
+                }
+            ).encode()
+
+        self.assertEqual(1, len(spacedock.boot_records(config, line("toolResult"))))
+        for role in ("user", "assistant", "system", "toolCall"):
+            with self.subTest(role=role):
+                self.assertEqual([], spacedock.boot_records(config, line(role)))
+
+    def test_a_tool_result_text_block_that_is_not_a_string_is_skipped(self) -> None:
+        """``isinstance(text, str)`` in the Pi branch is load-bearing.
+
+        A block whose ``text`` is an object reaches ``str.find`` in the boot
+        scanner otherwise, and the ``AttributeError`` escapes the collector to
+        blank every row for that harness. Falsifying edit: drop the isinstance
+        check and this raises instead of returning [].
+        """
+        config, _runtime = runtime()
+        record = json.dumps(
+            {
+                "type": "message",
+                "message": {
+                    "role": "toolResult",
+                    "content": [{"type": "text", "text": {"definition_dir": "/w/x"}}],
+                },
+            }
+        ).encode()
+
+        self.assertEqual([], spacedock.boot_records(config, record))
+
+    def test_an_unencodable_envelope_path_is_refused(self) -> None:
+        """A lone surrogate survives JSON decoding and every guard below is
+        ``except OSError``. ``os.fsencode`` raises ``UnicodeEncodeError``, a
+        ``ValueError``, which would sail out of the collector and blank the
+        harness. Falsifying edit: drop the ``os.fsencode`` probe from
+        ``_usable_dir`` and ``read_workflow`` raises here.
+        """
+        config, runtime_state = runtime()
+        boot = [
+            {
+                "command": "boot",
+                "definition_dir": "/\ud800",
+                "entity_dir": "/\udfff",
+                "dispatchable": [],
+            }
+        ]
+
+        self.assertEqual([], spacedock.workflow_dirs(config, boot))
+        self.assertEqual("", spacedock.boot_entity_dir(boot, "/\ud800"))
+        self.assertEqual([], spacedock.session_workflows(config, runtime_state, boot, [], 0.0, 1.0))
+
     def test_boot_scan_is_bounded_against_decoy_candidates(self) -> None:
         """Every unbalanced candidate used to rescan to the end of the blob."""
         config, _runtime = runtime()

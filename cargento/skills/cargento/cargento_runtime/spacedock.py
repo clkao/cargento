@@ -12,7 +12,7 @@ import json
 import os
 import re
 import stat as stat_module
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from cargento_runtime import sessions
 from cargento_runtime import state as runtime_state
@@ -184,12 +184,14 @@ def tool_result_text(record: dict[str, Any]) -> list[str]:
     conversation text — anything a user pasted or a model echoed — nominate an
     absolute path for Cargento to open.
 
-    Two transcript shapes carry that provenance. Claude writes tool results
-    as ``content`` blocks with ``type: "tool_result"``. Pi writes them as a
-    ``toolResult`` role message whose ``content`` blocks carry ``type: "text"``
-    — the same authority in a different envelope. The branch below is
-    additive: Claude transcripts carry ``tool_result`` content blocks, not
-    ``toolResult`` role messages, so existing behaviour is unchanged.
+    Two transcript shapes carry that provenance. Claude writes tool results as
+    ``content`` blocks with ``type: "tool_result"``. Pi writes them as a
+    ``toolResult`` role message whose blocks carry ``type: "text"``.
+
+    The two are read exclusively, not additively: a ``toolResult`` role returns
+    on its own blocks and never falls through to the ``tool_result`` scan below.
+    Nothing writes both shapes in one message today, so no behaviour changes,
+    but a transcript that did would lose the second half.
     """
     message = record.get("message")
     if not isinstance(message, dict):
@@ -198,9 +200,6 @@ def tool_result_text(record: dict[str, Any]) -> list[str]:
     if not isinstance(content, list):
         return []
     out: list[str] = []
-    # Pi writes tool results as a ``toolResult`` role message whose ``content``
-    # blocks carry ``type: "text"`` — the same provenance as Claude's
-    # ``tool_result`` content blocks in a different transcript shape.
     if message.get("role") == "toolResult":
         for block in content:
             if not isinstance(block, dict) or block.get("type") != "text":
@@ -222,6 +221,28 @@ def tool_result_text(record: dict[str, Any]) -> list[str]:
                 if isinstance(part, dict) and isinstance(part.get("text"), str)
             )
     return out
+
+
+def _usable_dir(value: object) -> TypeGuard[str]:
+    """A boot-envelope directory Cargento is willing to touch.
+
+    Absolute and NUL-free, and encodable for this filesystem. That last check is
+    not decoration: a lone surrogate survives JSON decoding, so an envelope can
+    carry one, and every guard below this point is wrapped in ``except OSError``.
+    ``os.fsencode`` raises ``UnicodeEncodeError``, which is a ``ValueError``, so
+    it sails through those handlers and out of the collector, and one such line
+    in one transcript blanks every row for that harness until the session leaves
+    the freshness window.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    if not os.path.isabs(value) or "\x00" in value:
+        return False
+    try:
+        os.fsencode(value)
+    except (UnicodeEncodeError, ValueError):
+        return False
+    return True
 
 
 def boot_records(config: RuntimeConfig, data: bytes) -> list[dict[str, Any]]:
@@ -274,9 +295,7 @@ def workflow_dirs(config: RuntimeConfig, envelopes: list[dict[str, Any]]) -> lis
     out: list[str] = []
     for record in envelopes:
         value = record.get("definition_dir")
-        if not isinstance(value, str) or not value:
-            continue
-        if not os.path.isabs(value) or "\x00" in value:
+        if not _usable_dir(value):
             continue
         if value not in out:
             out.append(value)
@@ -324,7 +343,7 @@ def boot_entity_dir(envelopes: list[dict[str, Any]], workflow_dir: str) -> str:
         if record.get("definition_dir") != workflow_dir:
             continue
         value = record.get("entity_dir")
-        if isinstance(value, str) and value and os.path.isabs(value) and "\x00" not in value:
+        if _usable_dir(value):
             out = value
     return out
 
