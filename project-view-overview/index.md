@@ -1,0 +1,39 @@
+---
+title: Project view — multi-session entity state overview across sessions
+status: backlog
+source: captain dogfood feedback
+id: 5semdnyk5x3w5gh8vkjxfqxw
+---
+
+In a project with multiple sessions (e.g. cargento has this FO session plus two
+dispatched ensign workers), the dashboard should show the overview entity state
+across all the project's sessions — which session is driving which entity, and
+the aggregate state of the workflow across the project's active sessions.
+
+## Problem
+
+The session view shows one session's dispatch tree. But a project's workflow is
+driven by multiple sessions: a first officer and its dispatched ensigns. An
+operator cannot see, for one project, the aggregate picture — which entities are
+being worked by which session, what's blocked, what's dispatchable — across all
+the project's sessions in one view.
+
+## Included scope
+
+- A project-level view (selectable when grouping by project) that shows, for
+  one project's workflow, the entity state aggregated across all the project's
+  active sessions: each entity with its current stage, which session is driving
+  it, and the workflow's overall progress.
+- Reuse `spacedock.workflows` data already published per session; aggregate by
+  slug across the project's sessions.
+
+## Excluded scope
+
+- Per-session detail view (owned by `session-view-spacedock-visibility`).
+- Per-workflow important-info definition (owned by a separate task).
+
+## Proof needed to decide whether design should start
+
+Whether entity slugs are unique across sessions in a project (so aggregation by
+slug is well-defined), and whether the project view can be built from the
+existing `/api/data` payload without a new endpoint.
