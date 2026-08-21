@@ -517,14 +517,15 @@ console.log(JSON.stringify(out));
     def test_ac_dispatch_history_shows_work_log(self) -> None:
         """AC-3: the workflow section shows the session's dispatch history, not
         the full workflow roster. Dispatches appear in timestamp order, live
-        entities carry sd-live, and no "NOT TOUCHED" text appears. Fails if
-        the full roster is rendered instead."""
+        entities carry sd-live, and no "NOT TOUCHED" text appears. Non-dispatched
+        entities are cut as noise — they belong in a project view. The history is
+        deduplicated: one row per entity, showing the latest dispatch."""
         checks = """
 const out = {};
 sessionViewKey = "claude:1234abcd";
 // A fixture with dispatch_history: three batches at different timestamps.
 // The workflow's entities include the dispatched slugs plus one
-// non-dispatched entity.
+// non-dispatched entity (drc-4) that should NOT appear.
 const dhSess = mk({
   spacedock: {role: "first-officer", dispatch_history: [
     {ts: 100, slug: "drc-1", stage: "intake"},
@@ -553,9 +554,9 @@ out.order23 = h.indexOf("drc-2") < h.indexOf("drc-3");
 out.liveClass = h.includes('sv-disp sd-live');
 // No "NOT TOUCHED" text.
 out.noNotTouched = !h.includes('NOT TOUCHED') && !h.includes('not touched');
-// Non-dispatched entity (drc-4) appears under "other workflow entities".
-out.hasOther = h.includes('other workflow entities');
-out.hasDrc4 = h.includes("drc-4");
+// Non-dispatched entity (drc-4) is cut as noise — should NOT appear.
+out.noDrc4 = !h.includes("drc-4");
+out.noOther = !h.includes('other workflow entities');
 // Dispatch history section is present.
 out.hasHist = h.includes('sv-dispatch-hist');
 console.log(JSON.stringify(out));
@@ -568,8 +569,8 @@ console.log(JSON.stringify(out));
         self.assertTrue(out["order23"], "drc-2 does not appear before drc-3")
         self.assertTrue(out["liveClass"], "the live entity does not carry sd-live")
         self.assertTrue(out["noNotTouched"], "'NOT TOUCHED' text appears in the output")
-        self.assertTrue(out["hasOther"], "the 'other workflow entities' label is missing")
-        self.assertTrue(out["hasDrc4"], "the non-dispatched entity drc-4 is missing")
+        self.assertTrue(out["noDrc4"], "the non-dispatched entity drc-4 should have been cut")
+        self.assertTrue(out["noOther"], "the 'other workflow entities' section should be gone")
         self.assertTrue(out["hasHist"], "the dispatch history section is missing")
 
     @unittest.skipUnless(shutil.which("node"), "node not available")

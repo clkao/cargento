@@ -138,6 +138,7 @@ function sessionCard(d, sess){
    → implementation → validation → done) is NOT repeated per entity; just the
    current stage name is shown, because the user already knows the pipeline. */
 function sessionWorkflow(wf, sd){
+  const stages = wf.stages || [];
   const entities = wf.entities || [];
   const goal = wf.goal || "";
   const goalHtml = goal ? `<div class="sv-goal">${esc(goal)}</div>` : "";
@@ -152,7 +153,6 @@ function sessionWorkflow(wf, sd){
      Only entities the session dispatched are shown — untouched entities are
      cut as noise that belongs in a project view. */
   if(history.length){
-    const dispatchedSlugs = new Set();
     const histRows = [];
     /* Deduplicate: show only the latest dispatch per (slug) so the user sees
        where each entity is now, not the full chronological log of every
@@ -165,7 +165,6 @@ function sessionWorkflow(wf, sd){
       if(seen.has(disp.slug)) continue;
       seen.add(disp.slug);
       const ent = entMap[disp.slug];
-      dispatchedSlugs.add(disp.slug);
       const live = ent && ent.live;
       const cls = live ? " sd-live" : "";
       const cyc = ent && ent.cycle ? ` <span class="sv-cyc">${esc(ent.cycle)}</span>` : "";
