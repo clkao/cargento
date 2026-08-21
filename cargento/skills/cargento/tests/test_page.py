@@ -64,12 +64,12 @@ class FrontendAssetContractTest(unittest.TestCase):
         # part that moved is also the more useful failure of the two.
         expected_parts = {
             "spark.js": (
-                28_084,
-                "287f0971ff09de7a7df3869cdfe93ad002a74450ff0e97f87b9500324acc385c",
+                36_918,
+                "cf837c0430c6417c2e58ccee57750f8d761a98414b4cfffcb55faf4298a30892",
             ),
             "regular.js": (
-                37_479,
-                "b519bc26d48488a6121de581057c5249d676832305165ce6bf7782e5d5f054e2",
+                37_745,
+                "e35d6e3c2bc35b277b441bff98c261b6f1cc26d9cff44f2ad54c7ab19d96cce7",
             ),
             "mode.js": (
                 2_172,
@@ -84,16 +84,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "b45a331ff631f4293b463765c85f45ae9bc2b5b7b43401034727a5867a1ac0e7",
             ),
             "calm.js": (
-                44_626,
-                "e59e786ff1971831e6d943d3ced858764db466a2881acadc7770335657e83a8b",
+                44_081,
+                "9b24d470bdc95dbc1aaa54d944befd99bb3f230b60dd4a4f6f2ab40f3241a3fc",
             ),
             "notify.js": (
                 3_185,
                 "afd7a8ff735ea52b95e31a22f60f024d0bb752b7063860abc0e7bb1ae1c0fcae",
             ),
             "main.js": (
-                9_094,
-                "7ce44003973ca6845f63d5dc1be20e100ce254cd7221d4b8c47d70baa836f920",
+                9_733,
+                "54a9fb40b365fa1f079ea8070952fa1ac4fd4c1556a78a343489fe9f047d81c4",
             ),
             "live.js": (
                 6_176,
@@ -108,16 +108,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(44_998, len(styles))
+        self.assertEqual(45_461, len(styles))
         self.assertEqual(
-            "505bdf665d67465e48364105c43f211c7a59102309c6c4be7e53dedff92ba1f0",
+            "b7c05297001a082073f7d2c8e6e8571348047a8fb91e5c8d11a59b32d8ed34bc",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(230_539, len(assembled))
+        self.assertEqual(240_196, len(assembled))
         self.assertEqual(
-            "d8ad241df4a8810b7a760a134869e6faa2ae87b35d038dde69ca5fa1b270b4c4",
+            "5750e7b8be64c45e2747d3dac6d164064d66c06bb8e31286e93e83ff387466f5",
             hashlib.sha256(assembled).hexdigest(),
         )
 
@@ -1133,16 +1133,20 @@ console.log(JSON.stringify(out));
         # Copilot fills `consumption` and, on this fixture, no model — so the same
         # line carries a printed figure and an unread dash, which is the pairing
         # that makes the two absences readable side by side.
-        self.assertEqual("proj · cp1 · model — · used 6.43 AIU", out["working"])
+        # Four sessions on the label `proj`, three of them live, so these two
+        # rows also carry the shared-label marker. Pinned in the same string
+        # rather than dodged with a per-row label, because a board of four
+        # sessions in one project is what this fixture is.
+        self.assertEqual("proj 3 live · cp1 · model — · used 6.43 AIU", out["working"])
         # The needs row leads with the harness badge, whose tooltip text survives
         # the tag strip; the clause still lands at the end of the same line.
-        self.assertEqual("Copilotproj · cp2 · model — · used 0.00 AIU", out["needs"])
+        self.assertEqual("Copilotproj 3 live · cp2 · model — · used 0.00 AIU", out["needs"])
         # A harness with no ledger says nothing about spend and still declares the
         # model slot: the consumption clause vanishes, the model dash does not.
         # The two absences are different — no `used` claims nothing, whereas every
         # session does run on some model.
         self.assertEqual(
-            "proj · cl1 · model —", out["plain"], "a session with no ledger drew a stray dot"
+            "proj 3 live · cl1 · model —", out["plain"], "a session with no ledger drew a stray dot"
         )
         self.assertEqual("proj · pi1 · via Copilot · gpt-5 · used 1.20 AIU", out["both"])
         self.assertNotIn("AIU", out["idle"], "the idle drawer grew a second unit")
@@ -2364,6 +2368,56 @@ console.log(JSON.stringify(out));
         self.assertIn("the highest of the 1 working session that report", out["idleIgnored"][1])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_card_column_says_when_two_live_sessions_share_a_project_label(self) -> None:
+        # The card view has no grouping to lean on, so without a marker the two
+        # agents about to overwrite each other read as two unrelated cards. The
+        # gate row carries it for the same reason it counts as live: answering
+        # that gate is the keystroke that lets one session write over the other.
+        checks = """
+const base = {harness: "claude", session: "aaa", sid: "aaa", project: "repo/proj",
+  title: "t", last_prompt: "", state: "working", state_detail: "running Bash",
+  active: true, last_activity: 990, rate_per_min: 100, total: 0, done: 0, open: 0,
+  progress_pct: 0, eta_h: null, turn: null, subagents: [], tasks: [], spacedock: null};
+const s = o => Object.assign({}, base, o);
+const mate = s({sid: "bbb", session: "bbb", harness: "codex", rate_per_min: 3000});
+const gate = s({sid: "ccc", session: "ccc", state: "needs_input",
+                state_detail: "permission needed", blocked_since: 900});
+const solo = s({sid: "ddd", session: "ddd", project: "repo/solo"});
+const dead = s({sid: "eee", session: "eee", state: "idle", active: false,
+                last_activity: 400});
+const strip = [
+  {key: "claude", label: "Claude", discovered: true, error: null, reports_rate: true},
+  {key: "codex", label: "Codex", discovered: true, error: null, reports_rate: true}];
+const d = {generated: 1000, rate_window_sec: 600, harnesses: strip,
+           summary: {rate_per_min: 0}, sessions: [base, mate, gate, solo, dead]};
+const has = h => h.includes('class="dupmark"');
+const out = {};
+out.card = has(workingCard(d, base));
+out.mate = has(workingCard(d, mate));
+out.solo = has(workingCard(d, solo));
+out.gate = has(needRow(d, gate, 1, null));
+// An idle row on the same label is not one of the sessions in the collision:
+// it has stopped, so it is not about to write anything.
+out.dead = has(idleRow(d, dead));
+// The marker sits with the project label it is about, not in the pill row —
+// the card's pills claim things about burn, and this claims nothing about burn.
+out.headrow = workingCard(d, base).split('class="card-title"')[0];
+out.pillTip = (workingCard(d, mate).match(/class="pill" title="([^"]*)"/) || [])[1];
+console.log(JSON.stringify(out));
+"""
+        out = self._run_page_js(checks)
+        self.assertEqual(
+            [True, True, False, True, False],
+            [out["card"], out["mate"], out["solo"], out["gate"], out["dead"]],
+            "the shared-label marker is on the wrong set of rows",
+        )
+        self.assertNotIn("dupmark", out["headrow"], "the marker landed in the pill row")
+        self.assertTrue(
+            (out["pillTip"] or "").startswith("3,000 tok/min, the highest of the"),
+            f"the fastest pill's tooltip is no longer the card's first pill: {out['pillTip']}",
+        )
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_a_working_card_says_when_the_rate_is_unknown_rather_than_zero(self) -> None:
         # Copilot, OpenCode, Cursor and Droid read no token accounting, so their
         # rows publish 0. Omitting the meter left a blank corner that reads as
@@ -3378,3 +3432,159 @@ console.log(JSON.stringify(out));
             },
             out,
         )
+
+
+class AttentionOrderTest(PageJsHarness):
+    """One attention ordering, read by both views.
+
+    The card view used to render its sections in payload order, so a board with
+    a long-running turn or a freshly-woken idle session put the two views'
+    sequences in different orders on the same payload. These execute both views
+    against one payload rather than asserting on either comparator's source.
+    """
+
+    # A board that exercises every rung of the ladder, published in the order
+    # aggregate.py would publish it: gates longest-blocked first, then working
+    # and idle rows in bare session-id order. Every fixture below states its ids
+    # so that id order is the WRONG answer, so neither the payload's sequence
+    # nor the tiebreaker can produce the expected order on its own.
+    ATTENTION_FIXTURE = """
+let __focused = null;
+const __controls = () => [...__els.app.innerHTML.matchAll(
+    /data-calm="([^"]*)"(?: data-arg="([^"]*)")?/g)].map(m => ({
+  getAttribute: a => a === "data-calm" ? m[1]
+    : (a === "data-arg" ? (m[2] === undefined ? null : m[2]) : null),
+  focus(){ __focused = m[1]; }
+}));
+__els.app = {innerHTML: "", className: "",
+             querySelectorAll: () => __controls(), querySelector: () => null};
+let __scrollTop = 0;
+__els["cm-body"] = {get scrollTop(){ return __scrollTop; },
+                    set scrollTop(v){ __scrollTop = v; },
+                    querySelector: () => null};
+const sess = o => Object.assign({
+  harness: "claude", session: "s", sid: "s", project: "repo/proj", title: null,
+  last_prompt: "", state: "idle", state_detail: "", active: false,
+  last_activity: 99000, rate_per_min: 0, total: 0, done: 0, open: 0,
+  progress_pct: 0, eta_h: null, turn: null, subagents: [], tasks: [],
+  spacedock: null}, o);
+const attnBoard = sessions => ({
+  generated: 100000, window_hours: 24, show_all: false, harnesses: [],
+  rate_window_sec: 600,
+  summary: {needs_input: 0, working: 0, rate_per_min: 0, active_sessions: 0,
+            open_tasks: 0, progress_pct: 0, total_tasks: 0, total_done: 0},
+  sessions});
+const busyRow = (sid, over) => sess(Object.assign({
+  sid, session: sid, title: sid, state: "working", active: true,
+  state_detail: "running Bash", last_activity: 99990}, over || {}));
+const quietRow = (sid, at) => sess({sid, session: sid, title: sid,
+                                    last_activity: at});
+const gateRow = (sid, since) => sess({sid, session: sid, title: sid,
+  state: "needs_input", active: true, state_detail: "permission needed",
+  last_activity: since, blocked_since: since});
+const LONG = {elapsed_h: "2h", eta_h: null, pct: 99, long: true};
+const bandOrder = () => [...__els.app.innerHTML.matchAll(
+  /class="need-title">([^<]*)/g)].map(m => m[1]);
+const cardOrder = () => [...__els.app.innerHTML.matchAll(
+  /class="card-title">([^<]*)/g)].map(m => m[1]);
+const idleOrder = () => [...__els.app.innerHTML.matchAll(
+  /class="idle-title">([^<]*)/g)].map(m => m[1]);
+const calmOrderOnScreen = () => [...__els.app.innerHTML.matchAll(
+  /class="cm-title"[^>]*>([^<]*)/g)].map(m => m[1]);
+"""
+
+    def run_attention(self, checks: str) -> Any:
+        prelude = (
+            "const localStorage = {getItem: () => null, setItem(){}};\n"
+            "const navigator = {};\n"
+            "let __timers = [];\nconst setTimeout = fn => { __timers.push(fn); };\n"
+        )
+        return self._run_page_js(self.ATTENTION_FIXTURE + checks, prelude=prelude)
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_working_cards_lead_with_the_long_running_turn(self) -> None:
+        # Rank 1 before rank 2, the same rung calm's ladder has always had. Safe
+        # to move a card on, where rate is not: `long` latches within a turn
+        # (turns.py's candidate median is non-decreasing in elapsed), so a card
+        # moves at most once per turn rather than on every poll.
+        checks = """
+const out = {};
+const board = attnBoard([busyRow("work-a"), busyRow("work-b"),
+                         busyRow("work-c", {turn: LONG})]);
+render(board);
+out.hoisted = cardOrder();
+// Same payload a minute later: the hoist must not churn as the rows age.
+render({...board, generated: 100060});
+out.stable = cardOrder();
+// A working row with no turn at all is the ordinary case for a non-Claude
+// collector, and it must not throw the whole ordering out.
+render(attnBoard([busyRow("work-a", {turn: null}), busyRow("work-b")]));
+out.nullTurn = cardOrder();
+console.log(JSON.stringify(out));
+"""
+        out = self.run_attention(checks)
+        self.assertEqual(["work-c", "work-a", "work-b"], out["hoisted"])
+        self.assertEqual(["work-c", "work-a", "work-b"], out["stable"])
+        self.assertEqual(["work-a", "work-b"], out["nullTurn"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_idle_list_leads_with_the_most_recently_active(self) -> None:
+        # The idle block is clipped, so this ordering decides which idle rows a
+        # reader ever sees without clicking. Most recently active first, taken
+        # from calm unchanged: the two views' visible idle rows must not be
+        # opposite ends of the same list.
+        checks = """
+const out = {};
+// Ids ascend as the activity descends, so server order is the wrong answer.
+const board = attnBoard([quietRow("aaa", 90000), quietRow("bbb", 95000),
+                         quietRow("ccc", 99000)]);
+render(board);
+out.recentFirst = idleOrder();
+// Two rows quiet since the same instant fall through to the session id, the
+// same last tiebreaker every other ordering uses.
+render(attnBoard([quietRow("zzz", 95000), quietRow("mmm", 95000)]));
+out.ties = idleOrder();
+console.log(JSON.stringify(out));
+"""
+        out = self.run_attention(checks)
+        self.assertEqual(["ccc", "bbb", "aaa"], out["recentFirst"])
+        self.assertEqual(["mmm", "zzz"], out["ties"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_both_views_order_the_same_payload_the_same_way(self) -> None:
+        # The anti-drift fence, and the only assertion a duplicated comparator
+        # fails. The card view's three sections and calm's single ledger are
+        # different renderings of one ladder, so the sequence a reader reads down
+        # the page must be the same sequence in both.
+        checks = """
+const out = {};
+const board = attnBoard([
+  // Gates as the server publishes them: longest-blocked first.
+  gateRow("gate-old", 98000), gateRow("gate-new", 99900),
+  busyRow("work-plain-a"), busyRow("work-plain-b"),
+  busyRow("work-long", {turn: LONG}),
+  quietRow("idle-oldest", 90000), quietRow("idle-mid", 95000),
+  quietRow("idle-newest", 99000)]);
+render(board);
+out.regular = bandOrder().concat(cardOrder(), idleOrder());
+setDisplayMode("calm");
+out.calmSort = calmSort;
+out.calm = calmOrderOnScreen();
+console.log(JSON.stringify(out));
+"""
+        out = self.run_attention(checks)
+        self.assertEqual("attention", out["calmSort"], "calm's default order moved")
+        self.assertEqual(
+            [
+                "gate-old",
+                "gate-new",
+                "work-long",
+                "work-plain-a",
+                "work-plain-b",
+                "idle-newest",
+                "idle-mid",
+                "idle-oldest",
+            ],
+            out["calm"],
+        )
+        self.assertEqual(out["calm"], out["regular"], "the two views disagree on one payload")
