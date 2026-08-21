@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:bkjcbqac4d34rtsn7a0vy1kz:ideation:attempt-1:revision-1",
+  "question": "Approve the cli-host-flag ideation design — a --host CLI flag + bind-conditional _local_ok relaxation (0.0.0.0 bind admits remote Hosts; default loopback unchanged), 5 falsifiable ACs — to proceed to implementation?",
+  "artifacts": [
+    {
+      "id": "artifact:bkjcbqac4d34rtsn7a0vy1kz:ideation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/2fc651f980c33a21722d4aee8acd9a1702fca5e5/cli-host-flag/index.md",
+      "rev": "sha256:85d65fa0e6322719c8fdb25ecf79d9c3b73ff074098d1c9a8b566116f24efdfe",
+      "mediaType": "text/markdown",
+      "summary": "A --host CLI flag (default 127.0.0.1) threaded to the single bind tuple + spawn_argv; the Host gate (_local_ok) becomes bind-conditional so a 0.0.0.0 bind admits remote Hosts while the default loopback posture and Origin/Sec-Fetch-Site checks stay. Spike confirmed the riskiest mechanism: a 0.0.0.0 bind alone leaves every remote request 403 via _local_ok, so bind-conditional admission is required. Five ACs with external falsifying edits. Backend-only, no mock."
+    }
+  ]
+}
