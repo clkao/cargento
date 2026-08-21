@@ -35,6 +35,17 @@ gates:
                 digest: sha256:9ddeb5f2daa951ef7764ee64b28af2ec7cea1605d0a7b78f57519c687a52af08
                 request-digest: sha256:07d5eb205b859a0836ec793237f571b7fc1fb76079b8108eac2316884dba7e17
                 room-ref: ./review/ideation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:tzrvnebvdb10fddfr40szvtm:ideation:1
+                briefing: briefing:tzrvnebvdb10fddfr40szvtm:ideation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T07:55:37.343186712Z"
+                decision: approve
+                reason: 'conn granted: ''you have the conn to push to the forked repo and open PR''; reinforced: ''when you have the conn, you should still do gate attempt and record your autonomous approval as resolution''. Ideation is sound: drop the mtime gate (the 4 other gates suffice); git-commit-time and frontmatter started: correctly rejected. 4 ACs with falsifying edits. Advancing to implementation.'
+              application:
+                target-stage: implementation
+                state: pending
 started: 2026-08-21T07:28:35Z
 ---
 
