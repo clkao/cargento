@@ -1,6 +1,6 @@
 ---
 title: Fix Spacedock entity-state freshness gate (mtime staleness blanks the workflow strip)
-status: implementation
+status: validation
 source: captain dogfood feedback
 id: tzrvnebvdb10fddfr40szvtm
 gates:
