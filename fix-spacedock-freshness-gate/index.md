@@ -1,6 +1,6 @@
 ---
 title: Fix Spacedock entity-state freshness gate (mtime staleness blanks the workflow strip)
-status: ideation
+status: implementation
 source: captain dogfood feedback
 id: tzrvnebvdb10fddfr40szvtm
 gates:
@@ -45,7 +45,7 @@ gates:
                 reason: 'conn granted: ''you have the conn to push to the forked repo and open PR''; reinforced: ''when you have the conn, you should still do gate attempt and record your autonomous approval as resolution''. Ideation is sound: drop the mtime gate (the 4 other gates suffice); git-commit-time and frontmatter started: correctly rejected. 4 ACs with falsifying edits. Advancing to implementation.'
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
 started: 2026-08-21T07:28:35Z
 ---
 
