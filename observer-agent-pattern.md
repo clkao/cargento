@@ -1,6 +1,6 @@
 ---
 title: Observer agent pattern beside an active session
-status: backlog
+status: ideation
 source: captain seed
 id: 9t63gp52zec23rh0k9t160ft
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: 'approve: captain directs the observer agent (the deliverable) use a cheap model (haiku or luna). MVP delight: an operator points the observer at any active session — including one they didn''t start, running for hours — and gets back, in seconds from a cheap model, one line (goal) + 3-5 salient bullets (decisions, blocks, in-flight work), read-only, no interruption. MVP cut: goal + current stage + the one open block, derived from the transcript head + the workflow entity dir, written to a sidecar the session view renders. No streaming, no salience beyond goal+stage+block in the MVP.'
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 
 An active coding session accumulates context a bystander cannot easily recover: what it set out to do, what it decided, where it got stuck, what it is doing right now. An observer agent — a separate agent that sits beside an active session, reads its transcript read-only, and derives its goal and the important things (decisions, blocks, in-flight work) — would let an operator ask "what is this session for and what matters in it right now?" without interrupting the session or relying on its self-report.
