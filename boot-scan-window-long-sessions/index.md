@@ -3,6 +3,18 @@ title: Boot envelope scan window too small for long-running Pi FO sessions
 status: backlog
 source: dogfood finding — this session lost its Spacedock strip
 id: gr210bdejn62ssjq7t97dfd3
+gates:
+    version: 1
+    records:
+        - id: gate:gr210bdejn62ssjq7t97dfd3:backlog
+          stage: backlog
+          attempts:
+            - id: gate-attempt:gr210bdejn62ssjq7t97dfd3-backlog-1
+              briefing:
+                id: briefing:gr210bdejn62ssjq7t97dfd3:backlog:attempt-1:revision-1
+                digest: sha256:5f8c85bb676f313db4349fb9466c2b9b6c2c64d5be74499faf1a5e8d9dc1444e
+                request-digest: sha256:8eff20d181c0eca51b16488bb5eacc6b74d2e4bf0c0c0662c42fd6a16c266ee9
+                room-ref: ./review/backlog/briefing-1
 ---
 
 The Pi collector's `transcript_boot` reads only the last `spacedock_boot_scan_bytes` (512KB) of the session transcript to find the boot envelope. For a long-running first-officer session (3MB+ transcript after hours of work), the boot envelope written at the START of the session has scrolled out of the scan window, so `transcript_boot` returns `[]`, `session_spacedock` returns `None`, and the session shows `spacedock: null` — losing its Spacedock classification and workflow strip entirely.

@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:gr210bdejn62ssjq7t97dfd3:backlog:attempt-1:revision-1",
+  "question": "Approve boot-scan-window-long-sessions backlog to proceed to ideation?",
+  "artifacts": [
+    {
+      "id": "artifact:gr210bdejn62ssjq7t97dfd3:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/60e0855797c970a22412c8d870c66c2ba8988c4e/boot-scan-window-long-sessions/index.md",
+      "rev": "sha256:9b379f6cb48f85c71789eed636ad19119ea63a7cc4cf7b3154781e9f53be9b70",
+      "mediaType": "text/markdown",
+      "summary": "Boot scan reads only last 512KB; long Pi sessions lose their boot envelope."
+    }
+  ]
+}
