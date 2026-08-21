@@ -26,6 +26,7 @@ gates:
               application:
                 target-stage: ideation
                 state: consumed
+started: 2026-08-21T02:46:39Z
 ---
 
 Cargento already derives Spacedock workflow cartography for Claude first officers — `collectors/claude.py` decides a session is a first officer from its transcript's `agentSetting`, then asks `cargento_runtime/spacedock.py` for the workflow strip. The Pi collector (`collectors/pi.py`) does not yet surface this, so a Pi first officer renders on the dashboard without the workflow context a Claude officer gets.
