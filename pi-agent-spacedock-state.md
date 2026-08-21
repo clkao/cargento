@@ -1,6 +1,6 @@
 ---
 title: Pi agent view shows Spacedock state
-status: implementation
+status: validation
 source: captain seed
 id: hdz7pr9bmw5vpc5ah52sbcmb
 gates:
