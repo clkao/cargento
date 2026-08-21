@@ -184,3 +184,18 @@ dependency).
 - The session view's rendering of the sidecar — owned by the `session-view-spacedock-visibility` entity, a
   separate task.
 - Resolving whether "luna" exists in the Pi models store — implementation follow-up; haiku is the default.
+
+## Stage Report: ideation
+
+- DONE: Choose the observer's home
+  Selected Cargento-side analyzer (the transcripts.py analyzer lineage); rejected dispatched ensign (entity-scoped, writes to state checkout, can't observe arbitrary non-workflow sessions) and standing background agent (continuous cost contradicts cheap/on-demand, risks interruption).
+- DONE: Exercise the riskiest mechanism first — derive a goal without fabrication
+  Spike `/tmp/observer_spike2.py` (read-only) ran against a real FO session (positive: goal derived from recent concrete directives + entity dir) and a 0-token aborted session (negative: returned "no goal derived", assert passed). Proven mechanisms: read-only transcript read without joining; no-goal detection via generic-opener short-circuit.
+- DONE: Define external-proof ACs
+  Three ACs with Verified-by clauses: (1) goal+salience match live scenario, falsified by editing the session's recent directive; (2) no-goal session yields "no goal derived", falsified by removing the short-circuit; (3) observer never mutates observed repo/state, verified by running against a read-only mount.
+- DONE: Record the captain's model direction and MVP delight cut
+  Recorded verbatim in Proposed approach: cheap model haiku-or-luna (luna absence noted as impl follow-up); MVP cut goal + current stage + the one open block, read-only, seconds, sidecar consumed by session view.
+
+### Summary
+
+Selected the Cargento-side analyzer as the observer's home (reuses the collectors' read-only read path; sits beside the session-view consumer). Exercised the riskiest mechanism with a read-only spike against two real Pi transcripts: a first-officer workflow session (positive — goal derivable from recent concrete directives + workflow entity dir) and a 0-token aborted session (negative — "no goal derived", asserted, not hallucinated). Wrote three falsifiable ACs (live-scenario match with a red negative case, no-goal sentinel, read-only invariant via read-only mount) and recorded the captain's haiku-or-luna model direction and the goal+stage+block MVP cut verbatim. No frontmatter touched; committed path-scoped to dev-state and pushed.
