@@ -116,16 +116,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(59_555, len(styles))
+        self.assertEqual(59_594, len(styles))
         self.assertEqual(
-            "a747769d110c0028052f8b6ecfda69b66d5e53ef2d72121205fa74b09cb41271",
+            "da9f49d58886cbc259519599acc62f16f9aea50383c4277d6566c4a902613e52",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(281_189, len(assembled))
+        self.assertEqual(281_228, len(assembled))
         self.assertEqual(
-            "0f250fecffc7e3e661f79fdafccd9b55940bf103da7d9fd8a86618b29dcb7f51",
+            "96b0b93365add0d65aa0066e6acb3e935e09c7f5cc89f0b8161f51b6826a148a",
             hashlib.sha256(assembled).hexdigest(),
         )
 

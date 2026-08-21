@@ -648,3 +648,4 @@
   /* state-of-world items */
   .session .sv-mirror-state-item{font-family:var(--mono);font-size:var(--fs-xs);color:var(--ink2)}
   .session .sv-mirror-needs .sv-needs-banner{margin:0}
+  .session .sv-mirror-sec-body{flex:1}
