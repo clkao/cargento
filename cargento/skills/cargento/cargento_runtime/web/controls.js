@@ -75,3 +75,23 @@ function modeBar(){
     `<span class="modebar-split" aria-hidden="true"></span>` + stopControl() + `</div>`;
 }
 
+/* The project filter bar: a chip per project, appearing only when two or more
+   distinct projects are present. Reuses the segmented-control shape the mode
+   bar and calm's sort control already use, and routes through the same
+   [data-calm] action channel so the global click listener handles it. */
+function projectBar(d){
+  const projects = Array.from(new Set(d.sessions.map(s => s.project))).sort();
+  if(projects.length < 2) return "";
+  const count = p => d.sessions.filter(s => s.project === p).length;
+  const chip = (p, label, n) => {
+    const on = projectFilter === p;
+    return `<button type="button" class="proj-chip${on ? " on" : ""}` +
+      `" data-calm="project" data-arg="${esc(p || "all")}" aria-pressed="${on}">` +
+      `${esc(label)}<span class="proj-chip-n">${n}</span></button>`;
+  };
+  return `<div class="projbar"><span class="projbar-k">project</span>` +
+    `<div class="proj-seg" role="group" aria-label="project filter">` +
+    chip(null, "all", d.sessions.length) +
+    projects.map(p => chip(p, p, count(p))).join("") + `</div></div>`;
+}
+

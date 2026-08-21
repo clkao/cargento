@@ -488,6 +488,29 @@ function taskBlock(sess){
   return `<div class="tasks">${rows}</div>`;
 }
 
+/* Groups session rows under project-header dividers in the regular view,
+   matching the divider pattern calm's "repo" sort already uses. Only groups
+   when the board carries two or more distinct projects — a single-project
+   board needs no divider, and the project bar is hidden for the same reason. */
+function groupedByProject(sessions, cardFn, d){
+  if(new Set(d.sessions.map(s => s.project)).size < 2)
+    return sessions.map(s => cardFn(d, s)).join("");
+  const by = new Map();
+  for(const s of sessions){
+    if(!by.has(s.project)) by.set(s.project, []);
+    by.get(s.project).push(s);
+  }
+  let html = "";
+  for(const proj of Array.from(by.keys()).sort()){
+    const group = by.get(proj);
+    html += `<div class="pg-head"><span class="pg-head-k">${esc(proj)}</span>` +
+      `<span class="pg-head-n">${group.length}</span>` +
+      `<span class="pg-head-rule"></span></div>` +
+      group.map(s => cardFn(d, s)).join("");
+  }
+  return html;
+}
+
 function workingCard(d, sess){
   const known = rateKnown(d, sess);
   const rate = known ? ((isFinite(sess.rate_per_min) ? sess.rate_per_min : 0) || 0) : null;

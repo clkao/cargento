@@ -14,7 +14,9 @@ function render(d){
   lastData = d;
   syncNotifications(d);
   const app = document.getElementById("app");
-  const needs = gateQueue(d);
+  const needs = projectFilter
+    ? gateQueue(d).filter(x => x.project === projectFilter)
+    : gateQueue(d);
   /* An answered queue leaves its cursor behind otherwise, and the same session
      blocking again later would inherit it — landing the cursor mid-queue on a
      board whose head is a gate that has waited longer. */
@@ -59,8 +61,10 @@ function render(d){
   // pointermove fires during the render operation.
   const savedPointer = sparkPointer ? {x: sparkPointer.x, y: sparkPointer.y} : null;
   const s = d.summary;
-  const working = d.sessions.filter(x => x.state === "working");
-  const idle = d.sessions.filter(x => x.state === "idle");
+  const working = d.sessions.filter(x => x.state === "working" &&
+    (!projectFilter || x.project === projectFilter));
+  const idle = d.sessions.filter(x => x.state === "idle" &&
+    (!projectFilter || x.project === projectFilter));
 
   const tiles =
     countTile("Needs you", {line: "sessions blocked on you",
@@ -94,7 +98,7 @@ function render(d){
   if(working.length){
     workingHtml = `<div class="stack"><div class="sec"><span class="sec-k">Working now</span>` +
       `<span class="sec-count">${working.length}</span><span class="sec-rule"></span></div>` +
-      working.map(s => workingCard(d, s)).join("") + `</div>`;
+      groupedByProject(working, workingCard, d) + `</div>`;
   } else if(d.sessions.length){
     workingHtml = `<div class="stack"><div class="sec"><span class="sec-k">Working now</span>` +
       `<span class="sec-count">0</span><span class="sec-rule"></span></div>` +
@@ -105,7 +109,7 @@ function render(d){
   if(idle.length){
     const maxh = idleExpanded ? "3000px" : "184px";
     const fade = idleExpanded ? "" : `<div class="idle-fade"></div>`;
-    const rows = idle.map(x => idleRow(d, x)).join("");
+    const rows = groupedByProject(idle, idleRow, d);
     idleHtml = `<div class="stack"><div class="sec"><span class="sec-k">Idle</span>` +
       `<span class="sec-count">${idle.length}</span><span class="sec-rule"></span></div>` +
       `<div class="idle-wrap"><div class="idle-clip" style="max-height:${maxh}">${rows}${fade}</div>` +
@@ -129,7 +133,7 @@ function render(d){
     `<div class="sub"><span class="live" id="live-dot"></span>` +
     `<span id="live-status">live · updated ${new Date(d.generated*1000).toLocaleTimeString()}${LIVE_SUPPORTED ? "" : " · auto-refresh 5s"}</span>` +
     (d.show_all ? " · showing all" : "") + notifyControl(d) + `</div></div>` +
-    `<div class="hstrip">${harnessStrip(d.harnesses)}</div></div>` + body + usageModal(d);
+    `<div class="hstrip">${harnessStrip(d.harnesses)}</div></div>` + projectBar(d) + body + usageModal(d);
   renderInProgress = false;
 
   restoreSparkState(sparkFocused, savedPointer);
