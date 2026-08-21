@@ -132,12 +132,14 @@ console.log(JSON.stringify(out));
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_ac2b_no_goal_line_when_title_absent(self) -> None:
         """AC-2b: when the workflow frontmatter carries no title, no goal
-        section renders. Fails if the renderer emits a goal element when goal
-        is empty."""
+        section renders (unless the observer is loading). The mirror view
+        shows a loading hint when the observer hasn't fetched yet; when it
+        has and there's no goal, the section is absent. Fails if the renderer
+        emits a fabricated goal element."""
         checks = """
 const out = {};
 sessionViewKey = "claude:1234abcd";
-// The second workflow (other-wf) has goal: "" — it must not render a goal.
+// The second workflow (other-wf) has goal: "" — it must not render a real goal.
 const h = sessionView(board([fo]));
 // Check that no sv-mirror-goal element appears for the other-wf section.
 // The first workflow has a goal, so we check per-workflow by looking at the
@@ -146,6 +148,10 @@ const wf2Start = h.indexOf("other-wf");
 const wf2Section = h.slice(wf2Start);
 out.noGoalForWf2 = !wf2Section.includes('sv-mirror-goal');
 // Also test with a session whose only workflow has no goal.
+// When mirrorObserver is null, the goal shows a loading hint, so the
+// section IS present. When mirrorObserver is set to a no-goal sidecar,
+// the section should be absent.
+mirrorObserver = {goal: "no goal derived", memory: ""};
 const noGoal = mk({
   spacedock: {
     role: "first-officer",
@@ -164,10 +170,11 @@ console.log(JSON.stringify(out));
     def test_ac2_no_hardcoded_goal_fallback(self) -> None:
         """AC-2 falsifying edit: hardcoding a goal string as a fallback when
         goal is absent must fail this test. No fabricated or placeholder text
-        should appear."""
+        should appear (excluding the loading hint when observer is null)."""
         checks = """
 const out = {};
 sessionViewKey = "claude:1234abcd";
+mirrorObserver = {goal: "no goal derived", memory: ""};
 const noGoal = mk({
   spacedock: {
     role: "first-officer",

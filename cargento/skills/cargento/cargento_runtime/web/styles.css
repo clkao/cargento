@@ -615,6 +615,7 @@
   .session .sv-mirror-goal-text{font-size:var(--fs-md);font-weight:600;color:var(--accent-ink);line-height:1.4}
   .session .sv-mirror-memory-text{font-size:var(--fs-sm);color:var(--ink2);line-height:1.6}
   .session .sv-mirror-consistency-text{font-size:var(--fs-xs);color:var(--ink3);font-style:italic}
+  .session .sv-loading-text{color:var(--ink3);font-style:italic}
 
   /* prominent active subagents */
   .session .sv-mirror-active{display:flex;align-items:baseline;gap:10px;padding:8px 16px;background:color-mix(in oklab,var(--accent) 8%,transparent);border-bottom:1px solid color-mix(in oklab,var(--accent) 28%,transparent)}

@@ -92,9 +92,12 @@ function mirrorDecisionBadge(ent){
     else effect = "approved → " + ent.target_stage;
   } else if(ent.decision === "revise"){
     effect = "sent back for revision";
+  } else if(ent.decision === "hold"){
+    effect = "on hold";
   }
   const by = ent.decision_by ? " by " + ent.decision_by.replace(/^person:/, "") : "";
-  const tip = "decision: " + ent.decision + by + (ent.target_stage ? " → " + ent.target_stage : "");
+  const when = ent.decision_at ? " · " + sdRelTime(ent.decision_at) : "";
+  const tip = "decision: " + ent.decision + by + (ent.target_stage ? " → " + ent.target_stage : "") + when;
   return `<span class="sd-badge ${d.cls}" title="${esc(tip)}">${esc(effect)}</span>`;
 }
 
@@ -134,16 +137,32 @@ function mirrorGoalSection(sess){
       if(wfGoals.length) goal = wfGoals.join(" · ");
     }
   }
-  if(!goal) return "";
+  if(!goal){
+    /* No goal from model or workflow. Show a loading hint if the observer
+       hasn't loaded yet, or the sentinel if it has. */
+    if(!mirrorObserver){
+      goal = "deriving from transcript…";
+      source = "loading";
+    } else {
+      return "";
+    }
+  }
   return `<div class="sv-mirror-section sv-mirror-goal">` +
     `<div class="sv-mirror-sec-k">goal</div>` +
-    `<div class="sv-mirror-sec-v sv-mirror-goal-text">${esc(goal)}</div>` +
+    `<div class="sv-mirror-sec-v sv-mirror-goal-text${source === "loading" ? " sv-loading-text" : ""}">` +
+    `${esc(goal)}</div>` +
     `<div class="sv-mirror-sec-src">${esc(source)}</div></div>`;
 }
 
 /* ── 2. Memory (model-derived one-paragraph digest) ──────────────────────── */
 function mirrorMemorySection(){
-  if(!mirrorObserver || !mirrorObserver.memory) return "";
+  if(!mirrorObserver){
+    /* Show a loading hint while the observer fetches. */
+    return `<div class="sv-mirror-section sv-mirror-memory">` +
+      `<div class="sv-mirror-sec-k">memory</div>` +
+      `<div class="sv-mirror-sec-v sv-mirror-memory-text sv-loading-text">compressing transcript…</div></div>`;
+  }
+  if(!mirrorObserver.memory) return "";
   return `<div class="sv-mirror-section sv-mirror-memory">` +
     `<div class="sv-mirror-sec-k">memory</div>` +
     `<div class="sv-mirror-sec-v sv-mirror-memory-text">${esc(mirrorObserver.memory)}</div></div>`;
@@ -185,6 +204,7 @@ function mirrorCausalLog(sd){
           `<span class="sv-disp-slug" title="${esc(disp.slug)}">${esc(sdSlug(disp.slug))}${cyc}</span>` +
           `<span class="sv-disp-stage">${esc(curStage)}</span>` +
           (decBadge ? `<span class="sv-dec">${decBadge}</span>` : "") +
+          (ent && ent.decision_at ? `<span class="sv-disp-when" title="${esc(ent.decision_at)}">${esc(sdRelTime(ent.decision_at))}</span>` : "") +
           `</div>`,
       });
     }
@@ -209,6 +229,7 @@ function mirrorCausalLog(sd){
             `<span class="sv-disp-slug" title="${esc(ent.slug)}">${esc(sdSlug(ent.slug))}${cyc}</span>` +
             `<span class="sv-disp-stage">${esc(ent.stage)}</span>` +
             (decBadge ? `<span class="sv-dec">${decBadge}</span>` : "") +
+            (ent.decision_at ? `<span class="sv-disp-when" title="${esc(ent.decision_at)}">${esc(sdRelTime(ent.decision_at))}</span>` : "") +
             `</div>`,
         });
       }
