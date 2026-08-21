@@ -165,3 +165,33 @@ A long session (envelope past 512KB) that has been scanned once does not re-read
 ### Summary
 
 The bug is a too-small head scan window (512KB) in `transcript_boot`, not a tail scan as the entity body described — the code reads the first 512KB, and the envelope is at ~588KB because Pi transcript lines are large. The spike confirmed `transcript_boot` returns `[]` for a 2.1MB transcript with the envelope past 512KB, and that a full-file `boot_records` scan finds it at ~2.7ms cost. The chosen approach is a cached fallback: head scan first (fast path, unchanged), full-file read when the head scan misses (one-time cost, cached per session). The simplest rejected alternative — increasing the fixed window — cannot deliver the MVP because no fixed value covers all Pi session shapes.
+
+## Stage Report: implementation
+
+### Summary
+
+Implemented the cached fallback full-file scan in `transcript_boot`. When the head scan (first `spacedock_boot_scan_bytes` = 512KB) finds no boot envelope and the file is larger than the scan window, the fallback reads the entire file and parses boot records from it. The fallback result is cached on `(path, size)` — the actual file size — so a growing file re-checks but a stable file does not. The head-scan negative result is no longer cached under the capped key for large files, fixing the sticky-negative bug where `[]` was permanently cached for growing transcripts.
+
+### Completion checklist
+
+- **transcript_boot: head scan (512KB) fast path unchanged; on miss, full-file read finds the boot envelope** — DONE. The head scan runs first on every call; on miss for files larger than `spacedock_boot_scan_bytes`, a full-file `handle.read()` feeds `boot_records`.
+- **Cache the full-file result per session (envelope is stable, written once); negative result must NOT be sticky** — DONE. The fallback result is cached on `(path, size)`. The head-scan negative is NOT cached under the capped key for files larger than the scan window — it falls through to the fallback. A growing file invalidates the fallback key and re-checks.
+- **No regression on short sessions (envelope in first 512KB)** — DONE. The existing `test_pi_fo_session_renders_spacedock_strip` and the new `test_transcript_boot_head_scan_still_works` both pass. The head-scan fast path is unchanged for files that fit in the scan window.
+- **Pre-PR suite green** — DONE. `ruff check .`, `ruff format --check .`, `mypy`, and the full test suite (1188 passed, 1 skipped, 1307 subtests) all pass.
+
+### Tests added
+
+| Test | Claim | Falsifying edit |
+|---|---|---|
+| `test_pi_fo_long_session_boot_past_scan_window` | A Pi transcript with the envelope at ~588KB (past 512KB) still classifies as first-officer with a workflow strip. | Remove the fallback read from `transcript_boot`. |
+| `test_transcript_boot_fallback_finds_envelope` | `transcript_boot` returns a non-empty list when the envelope is past the head scan window. | Remove the fallback read. |
+| `test_transcript_boot_head_scan_still_works` | `transcript_boot` returns the envelope when it is within the head scan window (no regression). | Skip the head scan entirely. |
+| `test_transcript_boot_head_scan_caches_without_fallback` | A short transcript does not trigger a full-file read on the second call — the head-scan cache returns the result. | Always do a full-file read regardless of head-scan result. |
+| `test_transcript_boot_fallback_cached` | The fallback result is cached; a second call does not re-read the full file. | Don't cache the fallback result. |
+
+### Files changed
+
+- `cargento/skills/cargento/cargento_runtime/spacedock.py` — `transcript_boot` function: added fallback full-file read when head scan misses on files larger than `spacedock_boot_scan_bytes`; negative head-scan results no longer cached for large files; fallback cached on `(path, size)`.
+- `cargento/skills/cargento/tests/test_pi.py` — 5 new tests (1 integration in `PiCollectorTest`, 4 unit in new `TranscriptBootTest` class).
+- `pyproject.toml` — added `PLR0911` to the per-file ignore for `spacedock.py` (the function legitimately has 7 return statements for error and cache paths).
+- `docs/design-spacedock.md` — updated the cost description to document the fallback mechanism.
