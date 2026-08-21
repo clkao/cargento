@@ -72,6 +72,17 @@ gates:
                 digest: sha256:32e05f5b5476f483626b0273aad9316393354d41e1ad191e02e70dee0328aff7
                 request-digest: sha256:74f7dd9c03caeaa6f87a0805e1c615e63229adcac5771a4264b931037298c392
                 room-ref: ./session-view-spacedock-visibility/review/validation/briefing-2
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:6s6ft835wwg0q9hb8505rkz6:validation:2
+                briefing: briefing:6s6ft835wwg0q9hb8505rkz6:validation:attempt-2:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T07:55:40.848007092Z"
+                decision: approve
+                reason: 'conn granted: ''you have the conn to push to the forked repo and open PR''; reinforced: ''when you have the conn, you should still do gate attempt and record your autonomous approval as resolution''. Rework addresses all 3 dogfood bugs: URL hash routing navigable from calm view, 4 distinct empty/loading states, dogfooded against this session and the non-Spacedock Review handoff session. Suite green. Delivery can proceed to done.'
+              application:
+                target-stage: done
+                state: pending
 started: 2026-08-21T02:50:26Z
 worktree: .worktrees/spacedock-ensign-session-view-spacedock-visibility
 mod-block:
