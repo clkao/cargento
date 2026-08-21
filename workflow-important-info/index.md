@@ -284,3 +284,20 @@ The captain can react to the shape before implementation builds the real
 ### Summary
 
 Ideation chose a `display:` key in the workflow README frontmatter (read where `read_workflow` already reads), with the default set `["slug","stage","cycle"]` so workflows without it are unchanged. The riskiest mechanism — extracting gate-derived fields from the nested `gates:` block — was spiked against this entity's own frontmatter and passed: an indented-scalar scan over already-read lines yields the last gate decision/stage/target. Four acceptance criteria each carry an external test and a falsifying edit, with AC-2 guarding the default baseline. A `mock.html` sketch renders the target strip shape for captain review.
+
+## Stage Report: implementation
+
+- DONE: display: key in README frontmatter read where read_workflow already reads (no duplicate parser path)
+  `display_list()` calls the existing `scalar(lines, "display")` reader on the same frontmatter lines `read_workflow` already reads; no new file open, no new read path. Falsifying edit: remove the `display_list` call from `read_workflow` — `display` is absent from the returned dict, and `session_workflows` falls back to the default.
+- DONE: Default ["slug","stage","cycle"] so workflows without it are unchanged (baseline AC)
+  `DEFAULT_SPACEDOCK_DISPLAY` in config.py; `display_list()` returns it when the `display:` scalar is absent. `test_no_display_declaration_keeps_the_default_strip` asserts `read_workflow` returns `["slug","stage","cycle"]` and the entity `info` has no non-attributed fields. Falsifying edit: change the default (drop `cycle` or add `title`) — the assertion on the returned list fails.
+- DONE: Gate-derived fields (decision/stage/target) from indented-scalar scan over already-read lines
+  `indented_scalar()` scans `^\s+<key>:\s` over the same `frontmatter_lines` `entity_frontmatter` returns (cached, shares the `entity_stage` read). `extract_info` calls it for `gate-*` fields. `test_gate_field_present_and_absent_paths` asserts `gate-decision == 'approve'` when present and `''` when absent. Falsifying edit: drop the `indented_scalar` call — the present assertion sees `''` instead of `'approve'`.
+- DONE: sdBlock renders the display info list; SKILL.md not touched
+  `sdInfo()` in regular.js renders non-attributed `info` fields after the spine, em-dash for empty values; `SD_ATTRIBUTED` set skips slug/stage/cycle so the default-set row renders byte-identical. `test_sd_block_renders_declared_info_fields` asserts declared values (`#1573`, `approve`) appear, absent renders `—`, and the default-set row has no `sd-info` class. SKILL.md was not modified; `validate_plugins.py` passes. Falsifying edit: make `sdBlock` ignore `info` — the value substrings are absent from the output.
+- DONE: Pre-PR suite green
+  `ruff check` (ALL, curated ignores), `ruff format --check`, `mypy --strict` (3 source files), `lint_embedded.py`, `validate_plugins.py` all pass. Full unittest suite (182 tests across test_spacedock + test_page + test_lifecycle) passes. Byte oracles in test_page.py and test_lifecycle.py updated for the changed JS/CSS sizes. Coverage: 4 new Python tests + 1 new JS test, all under the existing `coverage` run.
+
+### Summary
+
+Implementation adds `display:` parsing in `read_workflow` (one `scalar()` call on already-read lines), an `indented_scalar()` helper for gate-derived fields from the nested `gates:` block, per-entity `info` extraction in `session_workflows` (reusing the `entity_frontmatter` cache that `entity_stage` warms), and `sdInfo()` rendering in `sdBlock` that shows only non-attributed fields so the default-set row is byte-identical to the pre-feature strip. Net: +443/-26 across 8 files; SKILL.md untouched. All four acceptance criteria pass their falsifiable tests.
