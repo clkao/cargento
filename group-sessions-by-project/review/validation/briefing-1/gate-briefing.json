@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:zp7z36m3am49jyqrp685nhz9:validation:attempt-1:revision-1",
+  "question": "Approve the group-sessions-by-project validation — to proceed to done (merge)?",
+  "artifacts": [
+    {
+      "id": "artifact:zp7z36m3am49jyqrp685nhz9:validation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/d12f45591b26152558dd35c57ba122a320a56546/group-sessions-by-project/index.md",
+      "rev": "sha256:6d6798a4e5351ee3f776b3315870c9c29c876156383670d9296d2135e4eaf3fb",
+      "mediaType": "text/markdown",
+      "summary": "Implementation verified: all checklist items DONE, suite green, commit landed. See artifact."
+    }
+  ]
+}

@@ -46,6 +46,15 @@ gates:
               application:
                 target-stage: implementation
                 state: consumed
+        - id: gate:zp7z36m3am49jyqrp685nhz9:validation
+          stage: validation
+          attempts:
+            - id: gate-attempt:zp7z36m3am49jyqrp685nhz9-validation-1
+              briefing:
+                id: briefing:zp7z36m3am49jyqrp685nhz9:validation:attempt-1:revision-1
+                digest: sha256:d0002c0ab509d38615d599845e682b30333cd70432f86f8f2fed5d89468c15ff
+                request-digest: sha256:1ef1a96b6e3f801103c9bb7466a83efcd0735e9f5f22ec32d4dba3daaf914109
+                room-ref: ./review/validation/briefing-1
 started: 2026-08-21T08:07:14Z
 worktree: .worktrees/spacedock-ensign-group-sessions-by-project
 ---
