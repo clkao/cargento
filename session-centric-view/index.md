@@ -1,6 +1,6 @@
 ---
 title: Session view should carry the session card, then improve session-centric from there
-status: backlog
+status: ideation
 source: captain dogfood — "we could at least have the card in the session view, and improve from there"
 id: 0c3re8kepj1984gnaenr5a7f
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: 'conn granted. Captain: ''at least have the card in the session view, and improve from there.'''
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 
 The session view (the third `session` display mode, reached via `#session=...`) renders the workflow's entity roster without the session card. The regular board view already has a rich per-session card — title, project, sid, model, provider, rate (tok/min), state, state_detail, elapsed/eta. The session view should at least show that card, then improve toward session-centric.
