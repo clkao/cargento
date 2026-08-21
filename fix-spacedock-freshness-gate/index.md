@@ -46,6 +46,15 @@ gates:
               application:
                 target-stage: implementation
                 state: consumed
+        - id: gate:tzrvnebvdb10fddfr40szvtm:validation
+          stage: validation
+          attempts:
+            - id: gate-attempt:tzrvnebvdb10fddfr40szvtm-validation-1
+              briefing:
+                id: briefing:tzrvnebvdb10fddfr40szvtm:validation:attempt-1:revision-1
+                digest: sha256:050dc55277f0a018263ebafd8b6979e2eb8bf6afce3c8a7cfb44dac6f6d45b36
+                request-digest: sha256:06c14963cdb215050c0dcfba201acb45622dbfea05f85c9f17ef0eca2567dcdb
+                room-ref: ./review/validation/briefing-1
 started: 2026-08-21T07:28:35Z
 worktree: .worktrees/spacedock-ensign-fix-spacedock-freshness-gate
 ---
