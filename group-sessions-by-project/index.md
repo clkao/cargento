@@ -58,3 +58,186 @@ total requires scanning every row.
 
 Whether `session.project` is reliably populated across all harnesses, and
 whether the grouping control can reuse the existing mode-bar pattern.
+
+## Approach
+
+Client-side project filter and grouping, frontend-only.
+
+A `projectFilter` state variable (persisted in `localStorage`, the same way
+`displayMode` is) holds either `null` (all projects) or a specific project
+string. A project selector bar renders above the session list in both views
+when two or more distinct projects are present. Selecting a project narrows
+the rows shown to that project's sessions; selecting "all" restores the full
+list.
+
+In the regular view, sessions within each section (Working, Idle) are grouped
+under project-header dividers — the same divider pattern calm mode's "repo"
+sort already uses (`.cm-div` in calm, a new `.pg-head` in regular). When a
+filter is active, only the matching project's group renders.
+
+In calm mode, the existing "repo" sort already groups by project with dividers.
+The project filter narrows the rows calm passes through `calmFilter`; the
+sort and filter are independent — a reader can filter to one project under any
+sort, and the "repo" sort groups within an unfiltered list.
+
+No backend changes. The project set is derived from `d.sessions` on each
+render — `Array.from(new Set(d.sessions.map(s => s.project)))` — so it tracks
+the payload without a server round-trip.
+
+### Simplest rejected alternative
+
+Server-side project filtering via a query parameter (e.g. `?project=cargento`).
+
+Cannot deliver the MVP value because:
+
+1. Switching projects requires a full page reload, killing the SSE stream and
+   losing scroll position and cursor state. The existing controls (mode
+   switch, sort, filter) all update in place without a reload; a reload-based
+   filter would be the only one that doesn't, and it would feel broken beside
+   them.
+2. Grouping (seeing all projects organized at once) is impossible when the
+   server returns only one project's rows. The entity scope names both group
+   and filter; a server filter can do one but not both.
+3. The data is already all client-side — every session row is already in
+   `d.sessions`. There is no data-fetching cost to filtering client-side, so
+   the reload buys nothing.
+
+### Risk evidence (proof-needed)
+
+**`session.project` is reliably populated across all harnesses — confirmed.**
+
+All ten collectors call `sessions.base_session(harness, sid, project)` with a
+non-empty project string. Each derives it from `sessions.project_from_cwd`
+and falls back to either the harness name (cursor, codex, copilot, goose,
+opencode, antigravity, pi) or a label from the store path (claude, droid,
+gemini) when the cwd is absent or empty. `project_from_cwd` returns
+`<parent>/<basename>` — two segments, not a bare basename, so sibling
+worktrees under the same repository name stay distinguishable. The project is
+never `None` or `""`; the worst case is a single-segment harness-name fallback,
+which still groups meaningfully.
+
+Confirmed by reading every `base_session(` call site in
+`cargento_runtime/collectors/*.py` — all ten pass a third argument with an
+`or "<harness>"` or `or project_label(...)` fallback.
+
+**The grouping control reuses the existing control-bar pattern — confirmed.**
+
+Calm mode already has a segmented sort control (`.cm-seg` / `.cm-segb` in
+`calm.js` / `styles.css`) that includes a "repo" sort grouping sessions by
+project under dividers. The mode bar (`modeBar()` in `controls.js`) uses the
+same segmented-button pattern. A project filter bar follows the same shape:
+a label, a segmented group of chips, persisted to `localStorage` exactly as
+`DISPLAY_MODE_KEY` is. No new UI primitive is needed.
+
+No spike needed: both mechanisms (`session.project` population, the
+segmented-control + localStorage pattern) are proven by existing code.
+
+### Expected surface and tolerance
+
+| File | Change | Lines (est.) |
+|---|---|---|
+| `web/mode.js` | `projectFilter` state + `localStorage` key + `setProjectFilter()` | ~15 |
+| `web/controls.js` | `projectBar()` rendering the chip group, inserted into `modeBar()` output | ~25 |
+| `web/regular.js` | Project-group dividers in `workingCard` / `idleRow` sections in `render()` | ~30 |
+| `web/calm.js` | `calmFilter` respects `projectFilter`; existing "repo" sort unchanged | ~5 |
+| `web/main.js` | `render()` calls `projectBar()` and applies `projectFilter` to session lists | ~15 |
+| `web/styles.css` | `.projbar`, `.proj-seg`, `.proj-chip`, `.pg-head` styles | ~25 |
+| `tests/test_page.py` | New test: project filter narrows regular view; persistence | ~40 |
+| `tests/test_page_calm.py` | New test: project filter narrows calm view | ~30 |
+
+Total: ~185 lines, ±50. Frontend-only; no Python backend, no collector, no
+schema change.
+
+### Mock
+
+`mock.html` — a static HTML sketch of the regular view with the project bar
+and project-group dividers. Open in a browser to see the target shape:
+
+- The project bar sits between the mode bar and the session list, showing a
+  chip per project with session counts.
+- "all" is selected by default; clicking a project narrows the list.
+- Working and Idle sections gain `.pg-head` project dividers.
+
+### Acceptance criteria
+
+**AC-1: A project filter narrows the session list to one project in both
+regular and calm views.**
+
+Verified by: a page-JS test that renders a payload with sessions across three
+projects, sets the filter to one project via `setProjectFilter("cargento")`,
+and asserts that only `cargento` sessions appear in the rendered `#app`
+innerHTML (regular) and `cm-body` (calm). Falsifying edit: remove the
+`projectFilter` check from `calmFilter` — the test fails because non-cargento
+rows still render.
+
+**AC-2: The filter persists across reloads.**
+
+Verified by: a page-JS test that sets `localStorage` to
+`{"cargento.projectFilter":"cargento"}` in the prelude, renders the page, and
+asserts that the `cargento` chip has `class="proj-chip on"` and non-cargento
+sessions are absent. Falsifying edit: remove the `localStorage.getItem` call
+in `mode.js` — the test fails because the filter defaults to "all".
+
+**AC-3: The project bar appears only when two or more distinct projects are
+present.**
+
+Verified by: a page-JS test that renders a payload where all sessions share
+one project, and asserts `projectBar()` output is empty (no `.projbar` in the
+DOM). Falsifying edit: remove the `>= 2` guard — the test fails because the
+bar renders for a single project.
+
+**AC-4: With no filter selected, the regular view groups sessions under
+project dividers.**
+
+Verified by: a page-JS test that renders a multi-project payload with
+`projectFilter` unset and asserts `.pg-head` dividers appear in the Working
+and Idle sections, each carrying the correct project name. Falsifying edit:
+remove the divider emission from `render()` — the test fails because no
+`.pg-head` elements exist.
+
+**AC-5: The filter does not regress the session count or the needs-input
+gate.**
+
+Verified by: a page-JS test that filters to a project with no needs-input
+sessions and asserts the gate band is empty (`needs.length === 0`), and that
+filtering to a project with needs-input sessions still renders the band.
+Falsifying edit: filter the `gateQueue` input but not the rendered sessions —
+the test fails because the band shows sessions from other projects.
+
+### Test plan
+
+All tests are page-JS tests under the existing `PageJsHarness` (node + DOM
+stub), matching the pattern in `test_page.py` and `test_page_calm.py`:
+
+1. **Filter narrows rows (regular):** payload with 3 projects, set filter,
+   assert only matching project's sessions in `#app`. (AC-1)
+2. **Filter narrows rows (calm):** same payload, switch to calm, set filter,
+   assert only matching rows in `cm-body`. (AC-1)
+3. **Persistence:** prelude sets `localStorage`, render, assert chip state and
+   row filtering match the saved filter. (AC-2)
+4. **Bar hidden for single project:** payload with one project, assert no
+   `.projbar` in DOM. (AC-3)
+5. **Group dividers render (regular):** multi-project payload, no filter,
+   assert `.pg-head` dividers with correct labels in Working and Idle. (AC-4)
+6. **Gate band respects filter:** filter to project with no blocked sessions,
+   assert empty band; filter to project with blocked sessions, assert band
+   renders. (AC-5)
+
+Each test asserts on rendered DOM output (behaviour), not on string
+substring matches in source — per the page-test discipline in
+`page_harness.py`.
+
+## Stage Report: ideation
+
+- DONE: Approach names the simplest rejected alternative and why it cannot deliver the MVP value
+  Server-side `?project=` query-param filter — needs a full reload (kills SSE/scroll), can't group (scope requires both), and the data is already client-side so the reload buys nothing.
+- DONE: Riskiest mechanism exercised first (the proof-needed spike)
+  No spike needed — both mechanisms proven by reading existing code: all 10 collectors populate `session.project` with a non-empty fallback; calm's `.cm-seg`/`cm-div` "repo" sort and `modeBar()`'s segmented pattern + `localStorage` prove the control reuses an existing primitive.
+- DONE: Each acceptance criterion carries an external Verified-by clause with the concrete falsifying edit
+  AC-1 through AC-5 each name a page-JS test, the rendered DOM assertion, and the specific code removal that makes it fail.
+- DONE: Whether
+  Confirmed: `session.project` is never `None` or `""` across all ten collectors; the control-bar pattern is already in `calm.js` and `controls.js`.
+
+### Summary
+
+Proposed a client-side project filter and grouping: a `projectFilter` preference persisted in `localStorage` (like `displayMode`), a project chip bar reusing the existing segmented-control pattern, and project-group dividers in the regular view. The calm "repo" sort already groups by project, so calm only needs the filter wired into `calmFilter`. No backend changes — the project set is derived from `d.sessions` per render. A static HTML mock (`mock.html`) renders the target shape. All five ACs have page-JS falsifying edits.

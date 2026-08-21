@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargento — project grouping mock</title>
+<style>
+  :root{
+    --bg:#fafafa;--ink:#1a1a1a;--ink2:#666;--ink3:#999;--line:#e0e0e0;--line2:#d0d0d0;
+    --accent:#4a90d9;--accent-ink:#1a5b9e;--sel-bg:#eef3f9;--sel-bd:#c5d8ec;
+    --alert:#c0392b;--warn:#d48806;--sunk:#f4f4f4;--mono:ui-monospace,monospace;
+    --fs-xs:11px;--fs-2xs:10px;--fs-sm:13px;--fs-lg:20px;
+  }
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif}
+  .wrap{max-width:780px;margin:0 auto;padding:20px}
+  /* ── mode bar ── */
+  .modebar{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-bottom:16px}
+  .modebar-k{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+  .modeseg{display:flex;align-items:center;gap:2px;padding:3px;border-radius:10px;border:1px solid var(--line2);background:var(--bg)}
+  .modebtn{font-family:var(--mono);font-size:var(--fs-xs);font-weight:700;letter-spacing:.03em;padding:6px 15px;border:0;border-radius:7px;cursor:pointer;color:var(--ink3);background:transparent;transition:color .12s,background .12s}
+  .modebtn:hover{color:var(--ink)}
+  .modebtn.on{color:var(--ink);background:var(--sel-bg);box-shadow:inset 0 0 0 1px var(--sel-bd)}
+  .modebar-split{width:1px;height:20px;background:var(--line2);margin:0 6px}
+  .stopbtn{font-family:var(--mono);font-size:var(--fs-xs);font-weight:700;padding:6px 15px;border:1px solid var(--line2);border-radius:7px;cursor:pointer;color:var(--ink2);background:var(--bg)}
+  /* ── project filter bar (new control) ── */
+  .projbar{display:flex;align-items:center;gap:8px;padding:0 0 12px}
+  .projbar-k{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+  .proj-seg{display:flex;align-items:center;gap:2px;padding:3px;border-radius:9px;border:1px solid var(--line2);flex-wrap:wrap}
+  .proj-chip{font-family:var(--mono);font-size:var(--fs-xs);font-weight:700;letter-spacing:.03em;padding:4px 11px;border:0;border-radius:6px;cursor:pointer;color:var(--ink3);background:transparent;transition:color .12s,background .12s;white-space:nowrap}
+  .proj-chip:hover{color:var(--ink)}
+  .proj-chip.on{color:var(--ink);background:var(--sel-bg);box-shadow:inset 0 0 0 1px var(--sel-bd)}
+  .proj-chip .cnt{color:var(--ink3);font-weight:400;margin-left:5px}
+  /* ── regular view cards ── */
+  .stack{margin-bottom:18px}
+  .sec{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .sec-k{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+  .sec-count{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .sec-rule{flex:1;height:1px;background:var(--line2)}
+  /* project group header (new) */
+  .pg-head{display:flex;align-items:center;gap:10px;margin:10px 0 6px}
+  .pg-k{font-family:var(--mono);font-size:var(--fs-xs);font-weight:700;color:var(--accent-ink);letter-spacing:.02em}
+  .pg-n{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .pg-rule{flex:1;height:1px;background:var(--line)}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:flex-start}
+  .card-main{flex:1}
+  .card-headrow{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .pill{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;padding:3px 8px;border-radius:6px}
+  .pill-work{background:color-mix(in oklab,var(--accent) 14%,transparent);color:var(--accent-ink)}
+  .pill-dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  .bmono{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;padding:2px 6px;border:1px solid var(--line2);border-radius:5px;color:var(--ink2)}
+  .card-title{font-size:var(--fs-sm);font-weight:600;margin-bottom:2px}
+  .card-meta{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .rate-num{font-family:var(--mono);font-size:var(--fs-sm);font-weight:700;color:var(--accent-ink)}
+  .rate-lab{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .idle-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:var(--fs-sm)}
+  .idle-dot{width:7px;height:7px;border-radius:50%;border:2px solid var(--line2)}
+  .idle-title{font-weight:600}
+  .idle-proj{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);flex:1}
+  .idle-age{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .empty{color:var(--ink3);font-size:var(--fs-sm);padding:8px 0}
+  .hint{color:var(--ink3);font-size:var(--fs-2xs);font-family:var(--mono);margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+
+  <!-- mode bar (unchanged) -->
+  <div class="modebar">
+    <span class="modebar-k">display</span>
+    <div class="modeseg"><button class="modebtn on">regular</button><button class="modebtn">calm</button></div>
+    <span class="modebar-split"></span>
+    <button class="stopbtn">stop</button>
+  </div>
+
+  <!-- ═══ NEW: project filter bar ═══
+       Appears when 2+ distinct projects exist. "all" is the default.
+       Clicking a project filters the session list to just that project.
+       Selection persists in localStorage (like display mode). -->
+  <div class="projbar">
+    <span class="projbar-k">project</span>
+    <div class="proj-seg">
+      <button class="proj-chip on">all<span class="cnt">18</span></button>
+      <button class="proj-chip">cargento<span class="cnt">6</span></button>
+      <button class="proj-chip">subspace-ssh<span class="cnt">3</span></button>
+      <button class="proj-chip">subspace-v0<span class="cnt">2</span></button>
+      <button class="proj-chip">tycho<span class="cnt">3</span></button>
+      <button class="proj-chip">spacedock<span class="cnt">3</span></button>
+      <button class="proj-chip">tmp<span class="cnt">1</span></button>
+    </div>
+  </div>
+
+  <!-- ═══ Regular view with project grouping (NEW: .pg-head dividers) ═══ -->
+  <div class="stack">
+    <div class="sec"><span class="sec-k">Working now</span><span class="sec-count">3</span><span class="sec-rule"></span></div>
+
+    <!-- project group: cargento -->
+    <div class="pg-head"><span class="pg-k">cargento</span><span class="pg-n">2</span><span class="pg-rule"></span></div>
+    <div class="card">
+      <div class="card-main">
+        <div class="card-headrow"><span class="pill pill-work"><span class="pill-dot"></span>Working</span><span class="bmono">CL</span></div>
+        <div class="card-title">Add project filter to session list</div>
+        <div class="card-meta">cargento · a1b2c3d4</div>
+      </div>
+      <div><span class="rate-num">842</span><br><span class="rate-lab">tok / min</span></div>
+    </div>
+    <div class="card">
+      <div class="card-main">
+        <div class="card-headrow"><span class="pill pill-work"><span class="pill-dot"></span>Working</span><span class="bmono">CX</span></div>
+        <div class="card-title">Sync docs after runtime split</div>
+        <div class="card-meta">cargento · e5f6g7h8</div>
+      </div>
+      <div><span class="rate-num">310</span><br><span class="rate-lab">tok / min</span></div>
+    </div>
+
+    <!-- project group: spacedock -->
+    <div class="pg-head"><span class="pg-k">spacedock</span><span class="pg-n">1</span><span class="pg-rule"></span></div>
+    <div class="card">
+      <div class="card-main">
+        <div class="card-headrow"><span class="pill pill-work"><span class="pill-dot"></span>Working</span><span class="bmono">PI</span></div>
+        <div class="card-title">Ideation stage: group sessions</div>
+        <div class="card-meta">spacedock · i9j0k1l2</div>
+      </div>
+      <div><span class="rate-num">1.2k</span><br><span class="rate-lab">tok / min</span></div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="sec"><span class="sec-k">Idle</span><span class="sec-count">15</span><span class="sec-rule"></span></div>
+
+    <!-- project group: cargento -->
+    <div class="pg-head"><span class="pg-k">cargento</span><span class="pg-n">4</span><span class="pg-rule"></span></div>
+    <div class="idle-row"><span class="idle-dot"></span><span class="bmono">CL</span><span class="idle-title">Validate plugins</span><span class="idle-proj">cargento · c3d4e5f6</span><span class="idle-age">idle 12m</span></div>
+    <div class="idle-row"><span class="idle-dot"></span><span class="bmono">CX</span><span class="idle-title">Fix collector test</span><span class="idle-proj">cargento · g7h8i9j0</span><span class="idle-age">idle 1h</span></div>
+    <div class="idle-row"><span class="idle-dot"></span><span class="bmono">CL</span><span class="idle-title">Update AGENTS.md</span><span class="idle-proj">cargento · k1l2m3n4</span><span class="idle-age">idle 3h</span></div>
+    <div class="idle-row"><span class="idle-dot"></span><span class="bmono">GO</span><span class="idle-title">Refactor io module</span><span class="idle-proj">cargento · o5p6q7r8</span><span class="idle-age">idle 5h</span></div>
+
+    <!-- project group: subspace-ssh -->
+    <div class="pg-head"><span class="pg-k">subspace-ssh</span><span class="pg-n">3</span><span class="pg-rule"></span></div>
+    <div class="idle-row"><span class="idle-dot"></span><span class="bmono">CL</span><span class="idle-title">SSH tunnel tests</span><span class="idle-proj">subspace-ssh · s9t0u1v2</span><span class="idle-age">idle 20m</span></div>
+    <div class="idle-row"><span class="idle-dot"></span><span class="bmono">CX</span><span class="idle-title">Config parsing</span><span class="idle-proj">subspace-ssh · w3x4y5z6</span><span class="idle-age">idle 2h</span></div>
+    <div class="idle-row"><span class="idle-dot"></span><span class="bmono">GE</span><span class="idle-title">Connection retry</span><span class="idle-proj">subspace-ssh · a7b8c9d0</span><span class="idle-age">idle 6h</span></div>
+
+    <!-- project group: tycho -->
+    <div class="pg-head"><span class="pg-k">tycho</span><span class="pg-n">3</span><span class="pg-rule"></span></div>
+    <div class="idle-row"><span class="idle-dot"></span><span class="bmono">CL</span><span class="idle-title">Star catalog import</span><span class="idle-proj">tycho · e1f2g3h4</span><span class="idle-age">idle 45m</span></div>
+    <div class="idle-row"><span class="idle-dot"></span><span class="bmono">CO</span><span class="idle-title">PR review pass</span><span class="idle-proj">tycho · i5j6k7l8</span><span class="idle-age">idle 4h</span></div>
+    <div class="idle-row"><span class="idle-dot"></span><span class="bmono">CL</span><span class="idle-title">Database migration</span><span class="idle-proj">tycho · m9n0o1p2</span><span class="idle-age">idle 8h</span></div>
+  </div>
+
+  <div class="hint">
+    The project bar appears only when 2+ distinct projects exist. It persists
+    in localStorage. Calm mode gets the same bar; its "repo" sort already
+    groups by project — the filter narrows the rows shown.
+  </div>
+
+</div>
+</body>
+</html>
