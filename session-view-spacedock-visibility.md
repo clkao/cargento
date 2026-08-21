@@ -1,6 +1,6 @@
 ---
 title: Session view with Spacedock visibility
-status: ideation
+status: implementation
 source: captain seed
 id: 6s6ft835wwg0q9hb8505rkz6
 gates:
@@ -45,7 +45,7 @@ gates:
                 reason: Captain approved the 6s ideation via Subspace (binding resolution, decision approve, no annotations).
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
 started: 2026-08-21T02:50:26Z
 ---
 
