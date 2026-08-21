@@ -55,6 +55,17 @@ gates:
                 digest: sha256:842fa654730e5336ebdcf64318568c3f520545dff03fdfab75950e5e2f95c925
                 request-digest: sha256:d9b06f41d13ecf758412fa88836cbf13231f62561a59c83910c017ce3e4be64d
                 room-ref: ./review/validation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:bkjcbqac4d34rtsn7a0vy1kz:validation:1
+                briefing: briefing:bkjcbqac4d34rtsn7a0vy1kz:validation:attempt-1:revision-1
+                by: person:captain
+                at: "2026-08-21T06:07:31.123369436Z"
+                decision: approve
+                reason: Captain approved validation via Subspace (binding resolution, decision approve, no annotations). The Polish finding (AC-1 Verified-by overstated — socket tests bypass cli.main) stands declined as non-blocking; no fix authorized. All 5 ACs independently reproduced with falsifying edits, default loopback byte-identical, pre-PR suite green. Delivery can proceed to done.
+              application:
+                target-stage: done
+                state: pending
 started: 2026-08-21T04:12:22Z
 worktree: .worktrees/spacedock-ensign-cli-host-flag
 ---
