@@ -425,8 +425,6 @@ class SpacedockReadContractTest(unittest.TestCase):
                 state,
                 str(entity_state),
                 ["intake", "review", "posted"],
-                1_700_000_200,
-                3600,
             ),
         )
 
@@ -449,7 +447,7 @@ class SpacedockReadContractTest(unittest.TestCase):
         self.assertEqual(
             [("drc-1", "review")],
             spacedock.read_entities(
-                config, state, str(entity_state), ["intake", "review", "posted"], time.time(), 3600
+                config, state, str(entity_state), ["intake", "review", "posted"]
             ),
         )
 
@@ -511,14 +509,17 @@ class SpacedockReadContractTest(unittest.TestCase):
                     state,
                     str(entity_state),
                     ["intake", "review", "posted"],
-                    time.time(),
-                    3600,
                 ),
             )
 
     def test_entity_state_older_than_the_window_is_history_not_work(self) -> None:
         """A first officer discovers every workflow in the project. One retired
-        months ago still has entities frozen mid-pipeline."""
+        months ago still has entities frozen mid-pipeline — but mtime is not the
+        signal that separates history from work in flight: a long-running first
+        officer whose entity state was committed hours ago has stale mtime even
+        while the workflow is active. The session's own freshness and the boot
+        envelope gate liveness; ``read_entities`` no longer filters by mtime, so
+        a stale-mtime entity whose ``status`` is a declared stage is returned."""
         config, state = runtime()
         root = self.workflow(self.README)
         entity_state = root / ".spacedock-state"
@@ -526,14 +527,35 @@ class SpacedockReadContractTest(unittest.TestCase):
         os.utime(stale, (1_700_000_000, 1_700_000_000))
 
         self.assertEqual(
-            [],
+            [("drc-1", "review")],
             spacedock.read_entities(
                 config,
                 state,
                 str(entity_state),
                 ["intake", "review", "posted"],
-                1_700_000_000 + 90_000,
-                86_400,
+            ),
+        )
+
+    def test_entity_state_shows_regardless_of_mtime_when_stage_is_declared(self) -> None:
+        """Both a file committed hours ago (stale mtime) and a file just written
+        (fresh mtime) appear on the strip, as long as their ``status`` is a
+        stage the workflow declares. mtime is not a freshness signal for
+        git-committed entity state, so neither file is filtered out."""
+        config, state = runtime()
+        root = self.workflow(self.README)
+        entity_state = root / ".spacedock-state"
+        stale = self.entity(entity_state, "drc-1", "review")
+        fresh = self.entity(entity_state, "drc-2", "posted")
+        os.utime(stale, (1_700_000_000, 1_700_000_000))
+        os.utime(fresh, (1_700_001_000, 1_700_001_000))
+
+        self.assertEqual(
+            [("drc-2", "posted"), ("drc-1", "review")],
+            spacedock.read_entities(
+                config,
+                state,
+                str(entity_state),
+                ["intake", "review", "posted"],
             ),
         )
 
@@ -551,7 +573,7 @@ class SpacedockReadContractTest(unittest.TestCase):
         self.assertEqual(
             [("drc-1", "review")],
             spacedock.read_entities(
-                config, state, str(entity_state), ["intake", "review", "posted"], time.time(), 3600
+                config, state, str(entity_state), ["intake", "review", "posted"]
             ),
         )
 
@@ -572,14 +594,14 @@ class SpacedockReadContractTest(unittest.TestCase):
             return lines
 
         with mock.patch.object(spacedock, "read_frontmatter", counting):
-            spacedock.read_entities(config, state, str(entity_state), stages, now, 3600)
-            spacedock.read_entities(config, state, str(entity_state), stages, now, 3600)
+            spacedock.read_entities(config, state, str(entity_state), stages)
+            spacedock.read_entities(config, state, str(entity_state), stages)
             self.assertEqual(1, len(reads))
             self.entity(entity_state, "drc-1", "posted")
             os.utime(path, (now + 1, now + 1))
             self.assertEqual(
                 [("drc-1", "posted")],
-                spacedock.read_entities(config, state, str(entity_state), stages, now + 2, 3600),
+                spacedock.read_entities(config, state, str(entity_state), stages),
             )
         self.assertEqual(2, len(reads))
 

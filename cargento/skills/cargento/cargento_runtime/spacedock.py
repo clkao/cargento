@@ -14,7 +14,6 @@ import re
 import stat as stat_module
 from typing import TYPE_CHECKING, Any
 
-from cargento_runtime import sessions
 from cargento_runtime import state as runtime_state
 
 if TYPE_CHECKING:
@@ -549,8 +548,6 @@ def read_entities(
     state: RuntimeState,
     entity_dir: str,
     stages: list[str],
-    now: float,
-    window_sec: float,
 ) -> list[tuple[str, str]]:
     """``[(slug, stage)]`` for one workflow's recent entity state, newest first.
 
@@ -558,20 +555,24 @@ def read_entities(
     the boot envelope's ``dispatchable`` snapshot is only a stale hint. An entity
     counts only when:
 
-    - its state file was written within ``window_sec`` — the same freshness
-      window every collector applies to a session. A first officer discovers
-      every workflow in the project, and a workflow retired months ago still has
-      entities frozen mid-pipeline; those are history, not work in flight.
     - its frontmatter ``status`` names a stage this workflow declares — the
       per-file discriminator that stands in for the containment check
       :func:`read_workflow` performs, since a ``split-root`` workflow may
       legitimately keep its state outside the definition directory.
+
+    Filesystem mtime is deliberately *not* a gate here. Spacedock entity state
+    is committed via git, so a file's mtime reflects the last checkout/write,
+    not the last logical change; a first officer whose entity state was
+    committed hours ago has stale mtime even while the workflow is active. The
+    session's own freshness (transcript mtime within the window) already gates
+    whether the session appears on the dashboard at all, and the boot envelope
+    names the ``entity_dir`` only for a workflow that was booted — a retired
+    workflow would not be. Those are the real gates; mtime was a false negative
+    on long-running sessions.
     """
     declared = set(stages)
     out: list[tuple[str, str]] = []
     for slug, path, info in entity_files(config, entity_dir):
-        if not sessions.is_fresh(config, now, info.st_mtime, window_sec):
-            continue
         stage = entity_stage(config, state, path, info)
         if stage in declared:
             out.append((slug, stage))
@@ -631,6 +632,11 @@ def session_workflows(
     is Spacedock's own statement that they are next to move.
     """
     out: list[dict[str, Any]] = []
+    # `now`/`window_sec` gate the session itself (the collector only reaches
+    # this render for a fresh session); read_entities no longer forwards them,
+    # since entity-file mtime is not a freshness signal for git-committed state.
+    # Kept on the signature for the render API contract.
+    del now, window_sec
     for workflow_dir in workflow_dirs(config, boot):
         info = read_workflow(config, state, workflow_dir)
         if info is None:
@@ -639,9 +645,7 @@ def session_workflows(
         resting: set[str] = set(info["resting"])
         booted = boot_entities(boot, workflow_dir)
         entity_dir = boot_entity_dir(boot, workflow_dir)
-        roster = (
-            read_entities(config, state, entity_dir, stages, now, window_sec) if entity_dir else []
-        )
+        roster = read_entities(config, state, entity_dir, stages) if entity_dir else []
         # Live worker names carry a stage but not a slug boundary, so the slug
         # has to come from a roster. The state directory is what makes that
         # roster non-empty for a first officer that booted an empty queue.
