@@ -69,6 +69,17 @@ gates:
                 digest: sha256:2ecc4e22ecc903570e034c750ec2f126a9ffc88aa1b32998fe3a60bdf3f85dbd
                 request-digest: sha256:0de2f6f8ee7c8c44154b3352631eba514868d17aac3243ab036881c679ebdc1e
                 room-ref: ./observer-agent-pattern/review/validation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:9t63gp52zec23rh0k9t160ft:validation:1
+                briefing: briefing:9t63gp52zec23rh0k9t160ft:validation:attempt-1:revision-1
+                by: person:captain
+                at: "2026-08-21T04:55:17.142065629Z"
+                decision: approve
+                reason: 'Captain approved validation via Subspace (binding resolution, decision approve). Captain''s appended question ''net loc change?'' answered: +734 net (737 insertions, 3 deletions) across 10 files — observer.py 342, test_observer.py 290, http_api.py 32, observer.js 37, config.py 12, plus small wiring. All 4 ACs independently reproduced with falsifying edits, no-goal sentinel not overridable by a fabricating model, panel renders from sidecar with no hardcoded fallback, pre-PR suite green. Delivery can proceed to done.'
+              application:
+                target-stage: done
+                state: pending
 started: 2026-08-20T18:30:00Z
 worktree: .worktrees/spacedock-ensign-observer-agent-pattern
 ---
