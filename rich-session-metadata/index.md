@@ -55,6 +55,17 @@ gates:
                 digest: sha256:986205361e852a736539ab23e1fdefed5cd2324693a9df943970cacd262ee4c7
                 request-digest: sha256:95d944c41ca29ba38e202c94d0a3cd600e3e689ed7998e23c19c0270d5bcc855
                 room-ref: ./review/validation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:z4tjfzz9y4dz1vvaz588mc81:validation:1
+                briefing: briefing:z4tjfzz9y4dz1vvaz588mc81:validation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T09:10:59.35454227Z"
+                decision: approve
+                reason: 'conn granted: ''you have the conn to push to the forked repo and open PR'' (re-granted). Per captain: when you have the conn, no presentation — just record the gate and resolution. Implementation verified: 1182 tests green, commit landed. Delivery proceeds to done.'
+              application:
+                target-stage: done
+                state: pending
 started: 2026-08-21T08:07:11Z
 worktree: .worktrees/spacedock-ensign-rich-session-metadata
 mod-block:
