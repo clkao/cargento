@@ -26,6 +26,7 @@ gates:
               application:
                 target-stage: ideation
                 state: consumed
+started: 2026-08-21T07:28:35Z
 ---
 
 A long-running first-officer session that has been driving a workflow for hours
