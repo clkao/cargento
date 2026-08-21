@@ -243,3 +243,18 @@ the boot envelope's `entity_dir`, the `resting` filter, and the
 "don't show retired workflows" intent. One function changes in
 `spacedock.py`; the existing stale-mtime test is inverted, one new test
 added, and the rest of the suite passes unchanged.
+
+## Stage Report: implementation
+
+- DONE: Change satisfies the ideation ACs: drop the mtime freshness gate in read_entities; session freshness + boot entity_dir + resting filter + status-in-declared already gate correctly
+  Removed `sessions.is_fresh(config, now, info.st_mtime, window_sec)` from `read_entities` and dropped its `now`/`window_sec` params. Falsifying edit: re-adding the `is_fresh` check makes the inverted stale-mtime test fail (returns `[]`).
+- DONE: Tests written first and watched fail for the right reason: existing stale-mtime test inverted (now asserts entities show despite stale mtime), one new test for the no-mtime path
+  `test_entity_state_older_than_the_window_is_history_not_work` now asserts `[("drc-1","review")]` for a stale-mtime file (was `[]`); new `test_entity_state_shows_regardless_of_mtime_when_stage_is_declared` asserts both a stale-mtime and a fresh-mtime entity appear. Falsified by re-adding `is_fresh`.
+- DONE: No git dependency introduced (subprocess git rejected); pure-parser design preserved
+  `grep -rn 'import git\|subprocess.*git\|from git' cargento/skills/cargento/cargento_runtime/` returns no results. The `from cargento_runtime import sessions` import was removed (no longer needed); no subprocess/git added.
+- DONE: Pre-PR suite run green: ruff check, ruff format --check, mypy, lint_embedded.py, validate_plugins.py, coverage
+  ruff check . / format --check . pass; mypy --strict clean (80 files); lint_embedded.py clean; validate_plugins.py validated 1 skill; bump_version --current 0.11.0; coverage TOTAL 89.3% (fail_under=73). Full unittest discover OK (skipped=1). The import-graph allowlist was updated to drop `cargento_runtime.sessions` from `spacedock` (mechanical consequence of the removed import).
+
+### Summary
+
+Dropped the mtime freshness gate from `read_entities` in `cargento_runtime/spacedock.py`: the `is_fresh(config, now, info.st_mtime, window_sec)` check and its `now`/`window_sec` parameters are gone, and the now-unused `from cargento_runtime import sessions` import was removed. `session_workflows` keeps its `now`/`window_sec` signature (the render API contract the collector and tests call) but stops forwarding them, marking them unused with the codebase's `del` idiom. The stale-mtime test is inverted and a new no-mtime-path test added; the import-graph allowlist in `test_contracts.py` drops the `sessions` dependency. One pre-existing flaky wall-clock linearity test (`test_reverse_lines_stays_linear_on_one_long_record` in `test_transcripts.py`) intermittently fails under VM scheduling jitter both with and without this change — unrelated to Spacedock. Commit `2bfff08` on `spacedock-ensign/fix-spacedock-freshness-gate`.
