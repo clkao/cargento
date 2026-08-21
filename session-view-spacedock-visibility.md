@@ -1,6 +1,6 @@
 ---
 title: Session view with Spacedock visibility
-status: backlog
+status: ideation
 source: captain seed
 id: 6s6ft835wwg0q9hb8505rkz6
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: captain directs the backlog seed to advance to ideation for design
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 
 Cargento's dashboard has two overview modes — `regular` and `calm` — that summarize all sessions. There is no per-session view. The reference (`/private/tmp/image (1).png`) shows a "Task Map": a dispatch tree of work items connected by dependency edges with stage-colored nodes, plus panels for recent completions, active claims, available, and blocked. A session view should render that dispatch tree for one session and add a high-level goal — a sprint or stated objective — if the session carries one (stated in its workflow/roadmap context, or derived from the entities it is driving).
