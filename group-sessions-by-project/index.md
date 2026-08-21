@@ -15,6 +15,17 @@ gates:
                 digest: sha256:68fa4cb3effa8122696f1f000bcff806ca965d6db554fb50c212d8c506fbaf78
                 request-digest: sha256:39c3dfaaa1ea1469b26014559e550636b79beaa0e91b4357348dc82039367df0
                 room-ref: ./review/backlog/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:zp7z36m3am49jyqrp685nhz9:backlog:1
+                briefing: briefing:zp7z36m3am49jyqrp685nhz9:backlog:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T07:28:23.625094496Z"
+                decision: approve
+                reason: 'FO autonomous approval (conn granted: ''you have the conn to push to the forked repo and open PR''; reinforced: ''when you have the conn, you should still do gate attempt and record your autonomous approval as resolution''). Backlog seed names a user-facing end value and a concrete dashboard surface; proof-needed well-scoped. Advancing to ideation.'
+              application:
+                target-stage: ideation
+                state: pending
 ---
 
 With 18 sessions across cargento, subspace-ssh, subspace-v0, tycho, spacedock,
