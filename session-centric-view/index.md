@@ -35,6 +35,17 @@ gates:
                 digest: sha256:50b005b46a4aa9666320dda98e9fc6ce885c5497c048ee3918ac9bf64fff243a
                 request-digest: sha256:75d412db405d9af4f3671465e80982f386fc3c66b9f09d27d2f04ce1093b2aaa
                 room-ref: ./review/validation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:0c3re8kepj1984gnaenr5a7f:validation:1
+                briefing: briefing:0c3re8kepj1984gnaenr5a7f:validation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T15:06:52.753482166Z"
+                decision: approve
+                reason: 'conn granted: ''you have the conn''. Per captain: no presentation — just record the gate and resolution. USER IMPACT VERIFIED (server-check, not just suite): session card renders in the session view (sessionCardCore in page, sessionCard calls it), ''other workflow entities'' label replaces ''NOT TOUCHED'', entities carry decision/timestamp. dispatch_history computed but not published to API — filed as separate follow-up task. Core impact delivered; advancing to done.'
+              application:
+                target-stage: done
+                state: pending
 started: 2026-08-21T14:15:39Z
 worktree: .worktrees/spacedock-ensign-session-centric-view
 ---
