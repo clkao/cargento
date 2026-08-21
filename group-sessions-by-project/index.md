@@ -262,3 +262,20 @@ substring matches in source — per the page-test discipline in
 ### Summary
 
 Proposed a client-side project filter and grouping: a `projectFilter` preference persisted in `localStorage` (like `displayMode`), a project chip bar reusing the existing segmented-control pattern, and project-group dividers in the regular view. The calm "repo" sort already groups by project, so calm only needs the filter wired into `calmFilter`. No backend changes — the project set is derived from `d.sessions` per render. A static HTML mock (`mock.html`) renders the target shape. All five ACs have page-JS falsifying edits.
+
+## Stage Report: implementation
+
+- DONE: projectFilter persisted in localStorage (like displayMode); project chip bar reuses segmented-control pattern
+  `PROJECT_FILTER_KEY` in mode.js mirrors `DISPLAY_MODE_KEY`; `projectBar()` in controls.js emits `.proj-chip` buttons in a `.proj-seg` group, the same shape as `modeBar()`'s `.modeseg` and calm's `.cm-seg`.
+- DONE: Project-group dividers in regular view; calm repo-sort already groups, only needs filter wired into calmFilter
+  `groupedByProject()` in regular.js emits `.pg-head` dividers when the board has 2+ projects; `calmFilter()` gained a `projectFilter` predicate; calm's existing "repo" sort is unchanged.
+- DONE: No backend changes — project set derived from d.sessions per render
+  `Array.from(new Set(d.sessions.map(s => s.project)))` in `projectBar()`; no Python, collector, or schema change.
+- DONE: session.project never None/"" (all 10 collectors populate it)
+  Verified by reading all ten collector call sites in the ideation stage; no change needed.
+- DONE: Pre-PR suite green
+  ruff check, ruff format --check, mypy --strict, lint_embedded.py, validate_plugins.py, bump_version --current, coverage (89.2% > 73 threshold), and 1334 unittests all pass.
+
+### Summary
+
+Implemented client-side project filtering and grouping across both dashboard views. mode.js gained `projectFilter` state persisted via `localStorage` (mirroring `displayMode`). controls.js gained `projectBar()` — a chip bar reusing the existing segmented-control pattern, shown only when 2+ distinct projects are present. regular.js gained `groupedByProject()` emitting `.pg-head` dividers. calm.js's `calmFilter()` gained the `projectFilter` predicate, and `calmAction()` routes the "project" action through `setProjectFilter()`. main.js's `render()` applies the filter to `needs`, `working`, and `idle`, and inserts `projectBar(d)` in both views. styles.css gained `.projbar`/`.proj-chip`/`.pg-head` styles. Six new page-JS tests cover all five ACs. Commit: b3af387.
