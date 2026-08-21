@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:rj497exc44z5es90d7a2bg49:ideation:attempt-1:revision-1",
+  "question": "Approve pi-live-worker-attribution ideation to proceed to implementation?",
+  "artifacts": [
+    {
+      "id": "artifact:rj497exc44z5es90d7a2bg49:ideation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/f6f61690d57e2e448e28d03d152639a38724b64d/pi-live-worker-attribution/index.md",
+      "rev": "sha256:e78e9487fc7da1473bc08c920b7702e0f092c4ca0bdceee2c9070a91f4125eea",
+      "mediaType": "text/markdown",
+      "summary": "Spike confirmed: 22 subagent dispatches parsed from FO transcript, 21 distinct (slug, stage) extracted. attribute_worker needs extension. Depends on pi-agent-spacedock-state (hd) + boot-scan-window."
+    }
+  ]
+}
