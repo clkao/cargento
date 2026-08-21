@@ -29,9 +29,8 @@
    - in-flight: a live worker with no decision yet — something is happening,
      no action required.
 
-   Only entities the session actually touched (present in dispatch_history) are
-   counted — an entity the session never dispatched is not this session's
-   responsibility to flag. */
+   All entities in the workflow are counted because the first officer oversees
+   the entire workflow, not just the entities it dispatched. */
 function sessionNeeds(sd){
   const wfs = (sd && sd.workflows) || [];
   let approvedMerge = 0, awaitingCaptain = 0, inFlight = 0;
@@ -85,7 +84,14 @@ function sessionCardWithGoal(d, sess){
         `<span class="sv-goal-v">${esc(wfGoals.join(" · "))}</span></div>`;
     }
   }
-  return card + lastPrompt + goal;
+  /* Collapsed latest response: the most recent assistant message text,
+     shown in a <details> element so it's collapsed by default and expands on
+     click. Gives the user a quick peek at what the session last said without
+     opening the transcript. */
+  const lastResponse = sess.last_response ?
+    `<details class="sv-last-resp"><summary>latest response</summary>` +
+    `<div class="sv-last-resp-body">${esc(sess.last_response)}</div></details>` : "";
+  return card + lastPrompt + goal + lastResponse;
 }
 
 /* The session picker: rendered when session mode is entered with no target
@@ -148,18 +154,29 @@ function sessionWorkflow(wf, sd){
   if(history.length){
     const dispatchedSlugs = new Set();
     const histRows = [];
-    for(const disp of history){
+    /* Deduplicate: show only the latest dispatch per (slug) so the user sees
+       where each entity is now, not the full chronological log of every
+       dispatch. Earlier dispatches of the same entity are noise — the user
+       cares about the current state, not the history of how it got there. */
+    const seen = new Set();
+    for(let i = history.length - 1; i >= 0; i--){
+      const disp = history[i];
       if(!(disp.slug in entMap)) continue;
-      dispatchedSlugs.add(disp.slug);
+      if(seen.has(disp.slug)) continue;
+      seen.add(disp.slug);
       const ent = entMap[disp.slug];
+      dispatchedSlugs.add(disp.slug);
       const live = ent && ent.live;
       const cls = live ? " sd-live" : "";
       const cyc = ent && ent.cycle ? ` <span class="sv-cyc">${esc(ent.cycle)}</span>` : "";
       const decBadge = ent && ent.decision ? sdDecisionBadge(ent.decision) : "";
       const when = disp.ts ? fmtDur(nowSec() - disp.ts) + " ago" : "";
-      histRows.push(`<div class="sv-disp${cls}">` +
+      /* Show the entity's current stage (from the entity, not the dispatch) so
+         the user sees where it is NOW, not where it was dispatched to. */
+      const curStage = ent ? ent.stage : disp.stage;
+      histRows.unshift(`<div class="sv-disp${cls}">` +
         `<span class="sv-disp-slug" title="${esc(disp.slug)}">${esc(sdSlug(disp.slug))}${cyc}</span>` +
-        `<span class="sv-disp-stage">${esc(disp.stage)}</span>` +
+        `<span class="sv-disp-stage">${esc(curStage)}</span>` +
         (decBadge ? `<span class="sv-dec">${decBadge}</span>` : "") +
         (when ? `<span class="sv-disp-when">${esc(when)}</span>` : "") +
         `</div>`);

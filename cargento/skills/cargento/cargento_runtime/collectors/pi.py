@@ -67,6 +67,7 @@ def _projection(record: Any) -> dict[str, Any] | None:
     role = message.get("role")
     prompt = None
     tool = None
+    response = None
     provider = None
     model = None
     dispatches: list[tuple[str, str]] = []
@@ -83,21 +84,26 @@ def _projection(record: Any) -> dict[str, Any] | None:
             provider = _text(message.get("provider"))
             model = _text(message.get("model"))
             for block in records.as_list(message.get("content")):
-                if not isinstance(block, dict) or block.get("type") != "toolCall":
+                if not isinstance(block, dict):
                     continue
-                tool_name = block.get("name")
-                if isinstance(tool_name, str) and tool_name:
-                    tool = tool_name
-                # An async subagent dispatch fans ensigns out via a
-                # ``workflowScript`` whose per-run ``task:`` names a dispatch
-                # file ``spacedock-ensign-{slug}-{stage}.md``. Those (slug,
-                # stage) pairs are the ground truth of what this first officer
-                # is doing right now; they feed ``session_workflows`` as
-                # pre-attributed live workers. Sync calls and non-ensign tasks
-                # (rebases, management ``list``/``status``) carry no dispatch
-                # file, so they match nothing.
-                if tool_name == "subagent":
-                    dispatches = _subagent_dispatches(block)
+                if block.get("type") == "toolCall":
+                    tool_name = block.get("name")
+                    if isinstance(tool_name, str) and tool_name:
+                        tool = tool_name
+                    # An async subagent dispatch fans ensigns out via a
+                    # ``workflowScript`` whose per-run ``task:`` names a dispatch
+                    # file ``spacedock-ensign-{slug}-{stage}.md``. Those (slug,
+                    # stage) pairs are the ground truth of what this first
+                    # officer is doing right now; they feed ``session_workflows``
+                    # as pre-attributed live workers. Sync calls and non-ensign
+                    # tasks (rebases, management ``list``/``status``) carry no
+                    # dispatch file, so they match nothing.
+                    if tool_name == "subagent":
+                        dispatches = _subagent_dispatches(block)
+                elif block.get("type") == "text":
+                    txt = records.extract_text(block).strip()
+                    if txt:
+                        response = txt[:500]
     elif kind == "model_change":
         # A switch the user has made but may not have spent yet. Newer than any
         # message right after a switch, which is when it matters most.
@@ -114,6 +120,7 @@ def _projection(record: Any) -> dict[str, Any] | None:
         "parent_id": parent_id,
         "timestamp": records.parse_ts(record.get("timestamp") or "") or 0,
         "prompt": prompt,
+        "response": response,
         "usage": usage,
         "tool": tool,
         "name": name,
@@ -327,6 +334,7 @@ def _info(config: RuntimeConfig, scan: dict[str, Any]) -> dict[str, Any] | None:
         return None
     provider, model = _authority(path_entries)
     prompts = [entry["prompt"] for entry in path_entries if entry["prompt"]]
+    responses = [entry["response"] for entry in path_entries if entry.get("response")]
     name = scan["name"]
     title = (
         name
@@ -362,6 +370,7 @@ def _info(config: RuntimeConfig, scan: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "title": title,
         "last_prompt": prompts[-1] if prompts else None,
+        "last_response": responses[-1] if responses else None,
         "usage_events": usage_events,
         "last_tool": tools[-1] if tools else None,
         "last_event_ts": max((entry["timestamp"] for entry in path_entries), default=0),
@@ -542,6 +551,7 @@ def collect(
             {
                 "title": (info or {}).get("title"),
                 "last_prompt": ((info or {}).get("last_prompt") or "")[:140],
+                "last_response": ((info or {}).get("last_response") or "")[:500],
                 "provider": (info or {}).get("provider"),
                 "model": (info or {}).get("model"),
                 "state": session_state,

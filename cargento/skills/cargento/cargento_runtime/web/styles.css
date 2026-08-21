@@ -596,3 +596,11 @@
   .session .sv-goal-line{display:flex;align-items:baseline;gap:8px;padding:0 16px;margin-bottom:10px}
   .session .sv-goal-k{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);flex:none}
   .session .sv-goal-v{font-size:var(--fs-sm);color:var(--accent-ink);font-weight:600}
+  .session .sv-last-resp{padding:0 16px;margin-bottom:10px}
+  .session .sv-last-resp>summary{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);cursor:pointer;list-style:none}
+  .session .sv-last-resp>summary::-webkit-details-marker{display:none}
+  .session .sv-last-resp>summary::before{content:"▸ "}
+  .session .sv-last-resp[open]>summary::before{content:"▾ "}
+  .session .sv-last-resp>summary::after{content:"";flex:1;border-bottom:1px dashed var(--line2);margin-left:8px}
+  .session .sv-last-resp>summary{display:flex;align-items:center}
+  .session .sv-last-resp-body{font-size:var(--fs-xs);color:var(--ink2);line-height:1.5;padding:8px 0;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto}
