@@ -1,6 +1,6 @@
 ---
 title: Session view with Spacedock visibility
-status: implementation
+status: validation
 source: captain seed
 id: 6s6ft835wwg0q9hb8505rkz6
 gates:
