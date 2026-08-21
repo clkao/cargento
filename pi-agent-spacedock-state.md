@@ -1,6 +1,6 @@
 ---
 title: Pi agent view shows Spacedock state
-status: validation
+status: implementation
 source: captain seed
 id: hdz7pr9bmw5vpc5ah52sbcmb
 gates:
@@ -65,11 +65,11 @@ gates:
                 reason: Captain approved validation via Subspace (binding resolution, decision approve, no annotations). Both ACs reproduced with falsifying edits, toolResult additive, pre-PR suite green, diff purely additive. Delivery can proceed to done.
               application:
                 target-stage: done
-                state: pending
+                state: superseded
 started: 2026-08-21T02:46:39Z
 worktree: .worktrees/spacedock-ensign-pi-agent-spacedock-state
-mod-block: merge:pr-merge
-pr: spacedock-dev/cargento#127
+mod-block:
+pr:
 ---
 
 Cargento already derives Spacedock workflow cartography for Claude first officers — `collectors/claude.py` decides a session is a first officer from its transcript's `agentSetting`, then asks `cargento_runtime/spacedock.py` for the workflow strip. The Pi collector (`collectors/pi.py`) does not yet surface this, so a Pi first officer renders on the dashboard without the workflow context a Claude officer gets.
