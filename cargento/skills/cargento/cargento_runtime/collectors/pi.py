@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from cargento_runtime import io as runtime_io
 from cargento_runtime import records, sessions, transcripts, turns
+from cargento_runtime import spacedock as runtime_spacedock
 
 if TYPE_CHECKING:
     from cargento_runtime.config import RuntimeConfig
@@ -390,6 +391,36 @@ def discover(config: RuntimeConfig, state: RuntimeState) -> bool:
     return False
 
 
+def session_spacedock(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    path: str,
+    now: float,
+    window_sec: float,
+) -> dict[str, Any] | None:
+    """Spacedock role and workflow strips for one Pi session, or None.
+
+    Pi has no ``agentSetting``: a first officer is classified by finding a
+    Spacedock boot envelope in its transcript — the same ``definition_dir`` /
+    ``entity_dir`` payload ``spacedock status --boot`` writes, which only a
+    first officer runs. The boot envelope is both the classifier and the data
+    source: its presence proves the session is a first officer, and its paths
+    feed ``session_workflows`` directly. No envelope means a non-FO session,
+    which gets no strip.
+    """
+    boot = runtime_spacedock.transcript_boot(config, state, path)
+    if not boot:
+        return None
+    if not config.spacedock_enabled:
+        # The switch withdraws the project reads, not the role: the boot
+        # envelope is a transcript read, so the classification survives it.
+        return {"role": "first-officer", "workflows": []}
+    return {
+        "role": "first-officer",
+        "workflows": runtime_spacedock.session_workflows(config, state, boot, [], now, window_sec),
+    }
+
+
 def collect(
     config: RuntimeConfig,
     state: RuntimeState,
@@ -440,6 +471,7 @@ def collect(
                 "last_activity": last_activity,
                 "rate_per_min": sessions.rate_from(info, now, config),
                 "turn": turns.turn_progress((info or {}).get("turn"), session_state, now, config),
+                "spacedock": session_spacedock(config, state, path, now, window_hours * 3600),
             }
         )
         out.append(session)

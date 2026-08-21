@@ -929,6 +929,7 @@ class RuntimeImportGraphTest(unittest.TestCase):
             "cargento_runtime.io",
             "cargento_runtime.records",
             "cargento_runtime.sessions",
+            "cargento_runtime.spacedock",
             "cargento_runtime.state",
             "cargento_runtime.transcripts",
             "cargento_runtime.turns",

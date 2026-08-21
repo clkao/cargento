@@ -204,6 +204,37 @@ class SpacedockParserTest(unittest.TestCase):
         self.assertEqual([], spacedock.boot_records(config, line("text")))
         self.assertEqual([], spacedock.boot_records(config, b'{"not":"jsonl definition_dir"}'))
 
+    def test_boot_records_finds_pi_tool_result_format(self) -> None:
+        """Pi writes tool results as a ``toolResult`` role message whose
+        ``content`` blocks carry ``type: "text"`` — the same provenance as
+        Claude's ``tool_result`` content blocks in a different transcript
+        shape. The boot reader must find the envelope in that format.
+        Falsifying edit: remove the ``toolResult`` branch from
+        ``tool_result_text`` — ``boot_records`` returns []."""
+        config, _runtime = runtime()
+        envelope = (
+            '{"command":"boot","id_style":"slug",'
+            '"definition_dir":"/w/one","entity_dir":"/w/one",'
+            '"dispatchable":[]}'
+        )
+        record = json.dumps(
+            {
+                "type": "message",
+                "id": "tr1",
+                "parentId": "call-1",
+                "timestamp": "2026-08-21T00:00:00Z",
+                "message": {
+                    "role": "toolResult",
+                    "content": [{"type": "text", "text": "=== BOOT ===\n" + envelope}],
+                },
+            }
+        ).encode()
+
+        records = spacedock.boot_records(config, record)
+
+        self.assertEqual(1, len(records))
+        self.assertEqual("/w/one", records[0]["definition_dir"])
+
     def test_boot_scan_is_bounded_against_decoy_candidates(self) -> None:
         """Every unbalanced candidate used to rescan to the end of the blob."""
         config, _runtime = runtime()

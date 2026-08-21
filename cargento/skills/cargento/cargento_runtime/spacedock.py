@@ -183,6 +183,13 @@ def tool_result_text(record: dict[str, Any]) -> list[str]:
     it arrives in a tool result. Scanning the raw line would let ordinary
     conversation text — anything a user pasted or a model echoed — nominate an
     absolute path for Cargento to open.
+
+    Two transcript shapes carry that provenance. Claude writes tool results
+    as ``content`` blocks with ``type: "tool_result"``. Pi writes them as a
+    ``toolResult`` role message whose ``content`` blocks carry ``type: "text"``
+    — the same authority in a different envelope. The branch below is
+    additive: Claude transcripts carry ``tool_result`` content blocks, not
+    ``toolResult`` role messages, so existing behaviour is unchanged.
     """
     message = record.get("message")
     if not isinstance(message, dict):
@@ -191,6 +198,17 @@ def tool_result_text(record: dict[str, Any]) -> list[str]:
     if not isinstance(content, list):
         return []
     out: list[str] = []
+    # Pi writes tool results as a ``toolResult`` role message whose ``content``
+    # blocks carry ``type: "text"`` — the same provenance as Claude's
+    # ``tool_result`` content blocks in a different transcript shape.
+    if message.get("role") == "toolResult":
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            text = block.get("text")
+            if isinstance(text, str):
+                out.append(text)
+        return out
     for block in content:
         if not isinstance(block, dict) or block.get("type") != "tool_result":
             continue
