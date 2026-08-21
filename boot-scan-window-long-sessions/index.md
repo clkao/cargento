@@ -1,6 +1,6 @@
 ---
 title: Boot envelope scan window too small for long-running Pi FO sessions
-status: ideation
+status: implementation
 source: dogfood finding — this session lost its Spacedock strip
 id: gr210bdejn62ssjq7t97dfd3
 gates:
