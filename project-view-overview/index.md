@@ -26,6 +26,7 @@ gates:
               application:
                 target-stage: ideation
                 state: consumed
+started: 2026-08-21T08:07:15Z
 ---
 
 In a project with multiple sessions (e.g. cargento has this FO session plus two
