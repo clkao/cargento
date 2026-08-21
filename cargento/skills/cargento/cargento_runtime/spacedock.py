@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from cargento_runtime import sessions
 from cargento_runtime import state as runtime_state
+from cargento_runtime.config import DEFAULT_SPACEDOCK_DISPLAY
 
 if TYPE_CHECKING:
     from cargento_runtime.config import RuntimeConfig
@@ -105,6 +106,39 @@ def scalar(lines: list[str], key: str) -> str:
 def truthy(value: str) -> bool:
     """YAML's true-ish scalars, quoted or bare. Anything else is false."""
     return value.strip().strip("\"'").lower() in {"true", "yes", "on"}
+
+
+def indented_scalar(lines: list[str], key: str) -> str:
+    """The last indented ``<key>: value`` scalar from frontmatter lines.
+
+    The entity's ``gates:`` block is nested YAML that ``scalar()`` (a column-0
+    reader) cannot reach. This scan finds every line indented under any block
+    whose key matches, and returns the last occurrence — the newest gate record
+    is appended last, so the last match is the current state.
+    """
+    prefix = key + ":"
+    out = ""
+    for raw in lines:
+        if raw.startswith(prefix) or not raw[:1].isspace():
+            continue
+        body = raw.strip()
+        if body.startswith(prefix):
+            out = body[len(prefix) :].strip().strip("\"'")
+    return out
+
+
+def display_list(lines: list[str]) -> list[str]:
+    """The ordered field names a workflow's README declares for the strip.
+
+    A column-0 ``display:`` scalar holding a space-delimited list, read where
+    ``read_workflow`` already reads. Falls back to the default set so workflows
+    without the declaration render unchanged.
+    """
+    raw = scalar(lines, "display")
+    if not raw:
+        return list(DEFAULT_SPACEDOCK_DISPLAY)
+    fields = [f for f in raw.split() if f]
+    return fields or list(DEFAULT_SPACEDOCK_DISPLAY)
 
 
 def stage_entries(config: RuntimeConfig, lines: list[str]) -> list[dict[str, Any]]:
@@ -459,12 +493,37 @@ def read_workflow(
                 "resting": [
                     entry["name"] for entry in entries if entry["initial"] or entry["terminal"]
                 ],
+                "display": display_list(lines),
             }
     with state.cache_lock:
         runtime_state.bounded_put(
             state.spacedock_workflow_cache, key, result, limit=config.max_cache_entries
         )
     return result
+
+
+def entity_frontmatter(
+    config: RuntimeConfig, state: RuntimeState, path: str, info: os.stat_result
+) -> list[str]:
+    """The cached frontmatter lines of one entity file, or [].
+
+    Shares the cache ``entity_stage`` warms, so a second consumer of the same
+    entity's frontmatter — the per-entity ``info`` extraction — costs no new read.
+    """
+    key = (path, info.st_mtime_ns, info.st_size)
+    with state.cache_lock:
+        cached = state.spacedock_entity_cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        lines = read_frontmatter(config, path, config.spacedock_entity_bytes, info)
+    except SdMismatchError:
+        return []
+    with state.cache_lock:
+        runtime_state.bounded_put(
+            state.spacedock_entity_cache, key, lines, limit=config.max_cache_entries
+        )
+    return lines
 
 
 def entity_stage(
@@ -475,21 +534,8 @@ def entity_stage(
     Cached on ``(path, st_mtime_ns, st_size)``, so a state directory in which
     only one entity is moving costs one read per refresh and a stat per file.
     """
-    key = (path, info.st_mtime_ns, info.st_size)
-    with state.cache_lock:
-        cached = state.spacedock_entity_cache.get(key)
-    if cached is not None:
-        return cached
-    try:
-        lines = read_frontmatter(config, path, config.spacedock_entity_bytes, info)
-    except SdMismatchError:
-        return ""
-    stage = scalar(lines, "status")
-    with state.cache_lock:
-        runtime_state.bounded_put(
-            state.spacedock_entity_cache, key, stage, limit=config.max_cache_entries
-        )
-    return stage
+    lines = entity_frontmatter(config, state, path, info)
+    return scalar(lines, "status")
 
 
 def entity_files(config: RuntimeConfig, entity_dir: str) -> list[tuple[str, str, os.stat_result]]:
@@ -578,6 +624,49 @@ def read_entities(
     return out
 
 
+# Fields that come from the existing attribution rather than entity frontmatter.
+# When the default display declares only these, no frontmatter read is needed.
+_ATTRIBUTED_FIELDS = {"slug", "stage", "cycle"}
+
+
+def extract_info(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    display: list[str],
+    slug: str,
+    stage: str,
+    cycle: str,
+    path: str | None,
+    info: os.stat_result | None,
+) -> dict[str, str]:
+    """The declared fields' values for one entity, for the strip's ``info`` block.
+
+    ``slug``/``stage``/``cycle`` come from the attribution. Other declared fields
+    are read from the entity's cached frontmatter via ``scalar()`` (column-0
+    scalars) or ``indented_scalar()`` (``gate-*`` fields nested under ``gates:``).
+    An absent value is "" so the frontend can render it as an em-dash.
+    """
+    info_map: dict[str, str] = {}
+    lines: list[str] = []
+    for field in display:
+        if field == "slug":
+            info_map[field] = slug
+        elif field == "stage":
+            info_map[field] = stage
+        elif field == "cycle":
+            info_map[field] = cycle
+        elif path is not None and info is not None:
+            if not lines:
+                lines = entity_frontmatter(config, state, path, info)
+            if field.startswith("gate-"):
+                info_map[field] = indented_scalar(lines, field.removeprefix("gate-"))
+            else:
+                info_map[field] = scalar(lines, field)
+        else:
+            info_map[field] = ""
+    return info_map
+
+
 def attribute_worker(name: str, slugs: list[str], stages: list[str]) -> tuple[str, str, str] | None:
     """``(slug, stage, cycle)`` for a worker, anchored on a *known* slug.
 
@@ -632,16 +721,23 @@ def session_workflows(
     """
     out: list[dict[str, Any]] = []
     for workflow_dir in workflow_dirs(config, boot):
-        info = read_workflow(config, state, workflow_dir)
-        if info is None:
+        wf_info = read_workflow(config, state, workflow_dir)
+        if wf_info is None:
             continue
-        stages: list[str] = info["stages"]
-        resting: set[str] = set(info["resting"])
+        stages: list[str] = wf_info["stages"]
+        resting: set[str] = set(wf_info["resting"])
+        display: list[str] = wf_info.get("display", list(DEFAULT_SPACEDOCK_DISPLAY))
         booted = boot_entities(boot, workflow_dir)
         entity_dir = boot_entity_dir(boot, workflow_dir)
         roster = (
             read_entities(config, state, entity_dir, stages, now, window_sec) if entity_dir else []
         )
+        # A slug → (path, stat) lookup so the per-entity info extraction can read
+        # frontmatter the entity_stage read already cached, without a new scandir.
+        entity_paths: dict[str, tuple[str, os.stat_result]] = {}
+        if entity_dir:
+            for slug, path, stat in entity_files(config, entity_dir):
+                entity_paths[slug] = (path, stat)
         # Live worker names carry a stage but not a slug boundary, so the slug
         # has to come from a roster. The state directory is what makes that
         # roster non-empty for a first officer that booted an empty queue.
@@ -656,22 +752,76 @@ def session_workflows(
             if slug in seen:
                 continue
             seen.add(slug)
-            entities.append({"slug": slug, "stage": stage, "cycle": cycle, "live": True})
+            path_stat = entity_paths.get(slug)
+            entities.append(
+                {
+                    "slug": slug,
+                    "stage": stage,
+                    "cycle": cycle,
+                    "live": True,
+                    "info": extract_info(
+                        config,
+                        state,
+                        display,
+                        slug,
+                        stage,
+                        cycle,
+                        path_stat[0] if path_stat else None,
+                        path_stat[1] if path_stat else None,
+                    ),
+                }
+            )
         for slug, stage in roster:
             if slug in seen or stage in resting:
                 continue
             seen.add(slug)
-            entities.append({"slug": slug, "stage": stage, "cycle": "", "live": False})
+            path_stat = entity_paths.get(slug)
+            entities.append(
+                {
+                    "slug": slug,
+                    "stage": stage,
+                    "cycle": "",
+                    "live": False,
+                    "info": extract_info(
+                        config,
+                        state,
+                        display,
+                        slug,
+                        stage,
+                        "",
+                        path_stat[0] if path_stat else None,
+                        path_stat[1] if path_stat else None,
+                    ),
+                }
+            )
         for slug, stage in booted.items():
             if slug in seen or stage not in stages:
                 continue
             seen.add(slug)
-            entities.append({"slug": slug, "stage": stage, "cycle": "", "live": False})
+            path_stat = entity_paths.get(slug)
+            entities.append(
+                {
+                    "slug": slug,
+                    "stage": stage,
+                    "cycle": "",
+                    "live": False,
+                    "info": extract_info(
+                        config,
+                        state,
+                        display,
+                        slug,
+                        stage,
+                        "",
+                        path_stat[0] if path_stat else None,
+                        path_stat[1] if path_stat else None,
+                    ),
+                }
+            )
         if not entities:
             continue
         out.append(
             {
-                "workflow": info["name"],
+                "workflow": wf_info["name"],
                 "stages": stages,
                 "entities": entities[: config.spacedock_max_entities],
             }

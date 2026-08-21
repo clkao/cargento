@@ -68,8 +68,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "287f0971ff09de7a7df3869cdfe93ad002a74450ff0e97f87b9500324acc385c",
             ),
             "regular.js": (
-                37_479,
-                "b519bc26d48488a6121de581057c5249d676832305165ce6bf7782e5d5f054e2",
+                38_136,
+                "89848a3eed37b2ec4ef49f695cb4fa8973638e46832e1959c750a5131acdfc41",
             ),
             "mode.js": (
                 1_938,
@@ -108,16 +108,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(44_998, len(styles))
+        self.assertEqual(45_245, len(styles))
         self.assertEqual(
-            "505bdf665d67465e48364105c43f211c7a59102309c6c4be7e53dedff92ba1f0",
+            "88a56a53b9c9efc8c4a29374379c5e0ce8ce7b1cfd3386c8d029a70811757548",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(227_688, len(assembled))
+        self.assertEqual(228_592, len(assembled))
         self.assertEqual(
-            "e81de7a1056c4eca5a5a374209f4bf837662547c839281ebcd5421c74246252e",
+            "e621b6c7cea6e8219ab2b46f35616413e5f918399325c6b522bf06ff9919e377",
             hashlib.sha256(assembled).hexdigest(),
         )
 
@@ -448,6 +448,75 @@ class CargentoServerTest(PageJsHarness):
             self.assertTrue(rendered.endswith(full[1:]), rendered)
             self.assertIn("…", rendered)
             self.assertLessEqual(len(rendered), 22)
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_sd_block_renders_declared_info_fields(self) -> None:
+        """AC-4: the dashboard strip shows declared info values per entity row,
+        in declared order, with an em-dash for absent values. A default-set
+        entity renders byte-identical to the pre-feature strip.
+
+        Falsifying edit: make sdBlock ignore `info` and render only
+        slug/stage/cycle — the value substrings are absent from the output."""
+        checks = """
+const out = {};
+const mkSess = (sd) => Object.assign({
+  harness: "claude", session: "s1", sid: "s1", project: "proj", title: "s1",
+  last_prompt: "", state: "working", state_detail: "running Bash", active: true,
+  last_activity: 990, provider: null, model: null, consumption: null,
+  rate_per_min: 10, total: 0, done: 0, open: 0, progress_pct: 0, eta_h: null,
+  turn: null, subagents: [], tasks: [], spacedock: sd
+});
+const board = (sd) => ({
+  generated: 1000, window_hours: 24, show_all: false, rate_window_sec: 600,
+  harnesses: [{key: "claude", label: "Claude", discovered: true, error: null, reports_rate: true}],
+  sessions: [mkSess(sd)],
+  summary: {needs_input: 0, working: 1, rate_per_min: 10, active_sessions: 1,
+            open_tasks: 0, progress_pct: 0, total_tasks: 0, total_done: 0}
+});
+// Declared display with non-default fields.
+const sdDecl = {role: "first-officer", workflows: [{workflow: "wf", stages: ["intake", "review", "posted"],
+  entities: [{slug: "drc-1", stage: "review", cycle: "", live: true,
+    info: {slug: "drc-1", stage: "review", cycle: "", title: "Important thing", pr: "#1573", "gate-decision": "approve"}}]}]};
+__els.app = {innerHTML: "", className: ""};
+render(board(sdDecl));
+const declHtml = __els.app.innerHTML;
+out.declHasTitle = declHtml.includes("Important thing");
+out.declHasPr = declHtml.includes("#1573");
+out.declHasDecision = declHtml.includes("approve");
+out.declHasInfoClass = declHtml.includes('class="sd-info"');
+out.declHasInfoK = declHtml.includes('class="sd-info-k"');
+// An absent value renders as an em-dash.
+const sdAbsent = {role: "first-officer", workflows: [{workflow: "wf", stages: ["intake", "review", "posted"],
+  entities: [{slug: "drc-2", stage: "review", cycle: "", live: true,
+    info: {slug: "drc-2", stage: "review", cycle: "", title: "", pr: "#1587", "gate-decision": ""}}]}]};
+__els.app = {innerHTML: "", className: ""};
+render(board(sdAbsent));
+const absentHtml = __els.app.innerHTML;
+out.absentEmDash = absentHtml.includes(">\u2014<");
+// Default display: no info extras, byte-identical to pre-feature.
+const sdDefault = {role: "first-officer", workflows: [{workflow: "wf", stages: ["intake", "review", "posted"],
+  entities: [{slug: "drc-3", stage: "review", cycle: "c1", live: true,
+    info: {slug: "drc-3", stage: "review", cycle: "c1"}}]}]};
+__els.app = {innerHTML: "", className: ""};
+render(board(sdDefault));
+const defHtml = __els.app.innerHTML;
+out.defaultNoInfo = !defHtml.includes('class="sd-info"');
+out.defaultHasSlug = defHtml.includes(">drc-3<");
+out.defaultHasCyc = defHtml.includes('class="sd-cyc">c1');
+out.defaultHasSpine = defHtml.includes('class="sd-spine"');
+console.log(JSON.stringify(out));
+"""
+        out = self._run_page_js(checks)
+        self.assertTrue(out["declHasTitle"], "declared title not rendered")
+        self.assertTrue(out["declHasPr"], "declared pr not rendered")
+        self.assertTrue(out["declHasDecision"], "declared gate-decision not rendered")
+        self.assertTrue(out["declHasInfoClass"], "info block class missing")
+        self.assertTrue(out["declHasInfoK"], "info key class missing")
+        self.assertTrue(out["absentEmDash"], "absent value did not render as em-dash")
+        self.assertTrue(out["defaultNoInfo"], "default display rendered an info block")
+        self.assertTrue(out["defaultHasSlug"], "default display lost the slug")
+        self.assertTrue(out["defaultHasCyc"], "default display lost the cycle")
+        self.assertTrue(out["defaultHasSpine"], "default display lost the spine")
 
     def test_output_rate_rows_use_hoverable_harness_badges(self) -> None:
         self.assertIn(
