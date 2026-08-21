@@ -46,6 +46,15 @@ gates:
               application:
                 target-stage: implementation
                 state: consumed
+        - id: gate:rj497exc44z5es90d7a2bg49:validation
+          stage: validation
+          attempts:
+            - id: gate-attempt:rj497exc44z5es90d7a2bg49-validation-1
+              briefing:
+                id: briefing:rj497exc44z5es90d7a2bg49:validation:attempt-1:revision-1
+                digest: sha256:5944366ceb8930b28b8f88690454edefdd0a388c69c4740564f73ac7790153d2
+                request-digest: sha256:55b3152705fa19e45101345b34b0431acd37ec62c421e9e9a9ba27a1f03d9af5
+                room-ref: ./review/validation/briefing-1
 started: 2026-08-21T08:42:31Z
 worktree: .worktrees/spacedock-ensign-pi-live-worker-attribution
 ---
