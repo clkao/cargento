@@ -66,6 +66,12 @@ gates:
               application:
                 target-stage: done
                 state: superseded
+            - id: gate-attempt:hdz7pr9bmw5vpc5ah52sbcmb-validation-2
+              briefing:
+                id: briefing:hdz7pr9bmw5vpc5ah52sbcmb:validation:attempt-2:revision-1
+                digest: sha256:10fc2f73a53b3b6cb2f2375c5243be37541965ceceeabf1fe605cfc74e534077
+                request-digest: sha256:8cdebdfb2c5816168f1f92854d944bb450993ce8992b98973f8a9a4dfb80f130
+                room-ref: ./pi-agent-spacedock-state/review/validation/briefing-2
 started: 2026-08-21T02:46:39Z
 worktree: .worktrees/spacedock-ensign-pi-agent-spacedock-state
 mod-block:

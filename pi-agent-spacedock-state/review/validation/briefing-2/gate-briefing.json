@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:hdz7pr9bmw5vpc5ah52sbcmb:validation:attempt-2:revision-1",
+  "question": "Approve the pi-agent-spacedock-state validation (rework cycle 2) — both ACs independently reproduced, capture confirms toolResult is a message role, surrogate-path fix verified, toolResult branch additive, pre-PR suite green — to proceed to done (merge)?",
+  "artifacts": [
+    {
+      "id": "artifact:hdz7pr9bmw5vpc5ah52sbcmb:validation:attempt-2:revision-1:item-1",
+      "uri": "git-root://state/17d72fae78de603210859127046468dd47de3c0b/pi-agent-spacedock-state.md",
+      "rev": "sha256:86d4768bfa2edc6a9b4a10e19929e59e01963fe0cc1d1756e913f51e28131cd9",
+      "mediaType": "text/markdown",
+      "summary": "Validation cycle-2 PASSED (after rework). Both ACs reproduced independently with falsifying edits: AC1 Pi FO strip fails when toolResult branch removed; AC2 non-FO no strip fails when spacedock set unconditionally. Capture at docs/captures/pi/ confirms toolResult is a message role (223 records, content blocks type:text) — settles the blocking review finding. Reviewer surrogate-path fix verified (UnicodeEncodeError/ValueError caught, one strip not the harness). toolResult branch additive (Claude tool_result blocks unchanged). Pre-PR suite green (ruff, mypy 80 files, lint_embedded, validate_plugins, coverage 89.2%, 1188 tests). All 3 reviewer commits confirmed green and load-bearing. Recommendation PASSED."
+    }
+  ]
+}
