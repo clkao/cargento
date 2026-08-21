@@ -969,7 +969,6 @@ class RuntimeImportGraphTest(unittest.TestCase):
         },
         "cargento_runtime.spacedock": {
             "cargento_runtime.config",
-            "cargento_runtime.sessions",
             "cargento_runtime.state",
         },
         # `sessions` is a pure leaf inside this package, so depending on it is
