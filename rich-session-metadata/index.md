@@ -288,4 +288,3 @@ to each entity dict in the `session_workflows` payload, and rendered by
 touched (live) and not-touched (non-live) sections. The frontmatter is read
 once per entity (shared cache), never the body. All five acceptance criteria
 satisfied with falsifying edits verified by tests.
-
