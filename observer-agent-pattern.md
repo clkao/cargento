@@ -3,6 +3,18 @@ title: Observer agent pattern beside an active session
 status: backlog
 source: captain seed
 id: 9t63gp52zec23rh0k9t160ft
+gates:
+    version: 1
+    records:
+        - id: gate:9t63gp52zec23rh0k9t160ft:backlog
+          stage: backlog
+          attempts:
+            - id: gate-attempt:9t63gp52zec23rh0k9t160ft-backlog-1
+              briefing:
+                id: briefing:9t63gp52zec23rh0k9t160ft:backlog:attempt-1:revision-1
+                digest: sha256:fbff56f12de99a83492a3bbdb7f509a2dc39df737835a9e92099569b2a4f7cbd
+                request-digest: sha256:8e5e8dab2166b09143c0965f23510b9d53070f1da96e54259ab127c557062a1d
+                room-ref: ./observer-agent-pattern/review/backlog/briefing-1
 ---
 
 An active coding session accumulates context a bystander cannot easily recover: what it set out to do, what it decided, where it got stuck, what it is doing right now. An observer agent — a separate agent that sits beside an active session, reads its transcript read-only, and derives its goal and the important things (decisions, blocks, in-flight work) — would let an operator ask "what is this session for and what matters in it right now?" without interrupting the session or relying on its self-report.

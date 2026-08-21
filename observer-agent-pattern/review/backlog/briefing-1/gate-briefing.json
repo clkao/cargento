@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:9t63gp52zec23rh0k9t160ft:backlog:attempt-1:revision-1",
+  "question": "Should design (ideation) start for this task — an observer agent that sits beside an active session and derives its goal + salience read-only?",
+  "artifacts": [
+    {
+      "id": "artifact:9t63gp52zec23rh0k9t160ft:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/98cbaf80f4b280f985ecf5de38463cff566301a7/observer-agent-pattern.md",
+      "rev": "sha256:cea9a49ec134a195f749839016f0983d5c73a204e40173525f26746d7829e6a1",
+      "mediaType": "text/markdown",
+      "summary": "Design a read-only observer agent that sits beside an active session, reads its transcript, and derives the session's goal and salience (decisions, blocks, in-flight work) without interrupting it or relying on its self-report."
+    }
+  ]
+}
