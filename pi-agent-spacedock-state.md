@@ -37,28 +37,76 @@ A Pi first officer running `spacedock pi` writes the same durable state a Claude
 
 ## Proposed approach
 
-{Ideation: how `collectors/pi.py` classifies a Pi session as a first officer and where `spacedock.read_workflow` plugs into the Pi collection lane, reusing the existing harness-agnostic parser.}
+The Pi collector classifies a session as a first officer by finding a Spacedock boot envelope in its transcript — the same `definition_dir` / `entity_dir` payload `spacedock status --boot` writes, which only a first officer runs. The boot envelope is both the classifier and the data source: its presence proves the session is a FO, and its paths feed `spacedock.session_workflows` directly.
+
+Pi has no `agentSetting` (Claude's `--agent spacedock:first-officer` flag), so the transcript body is the only authority. A Pi FO session records the boot output as a `toolResult` role message whose `content[].text` carries the JSON envelope. The existing `spacedock.tool_result_text` only recognises Claude's `tool_result` content blocks, so it finds nothing in a Pi transcript. The change widens `tool_result_text` with a three-line branch: when `message.role == "toolResult"`, extract text from `content[]` blocks with `type: "text"` — Pi's tool-result shape. This is additive: Claude transcripts are unaffected because their tool results carry `type: "tool_result"` blocks, not `role: "toolResult"`.
+
+With that, `spacedock.transcript_boot` works on Pi transcripts unchanged. The Pi collector gains a `session_spacedock` helper mirroring `collectors/claude.py`'s: call `transcript_boot` on the session path; if it returns envelopes, the session is a first officer; call `session_workflows` with the envelopes and an empty worker-name list (Pi subagents are not tracked as named pills in this task); return `{"role": "first-officer", "workflows": [...]}`. If no envelopes, return `None` — a non-FO session gets no strip. The `collect` function sets the `spacedock` key on the session dict, the same key `sdBlock` in `web/regular.js` already renders harness-agnostically.
+
+The import graph allowlist (`test_contracts.py`) gains `cargento_runtime.spacedock` → `cargento_runtime.collectors.pi`, mirroring the Claude collector's existing dependency.
+
+### Simplest rejected alternative
+
+Classify by the first user prompt containing `"spacedock:first-officer"` or `"$spacedock"`. It cannot deliver the MVP value because the prompt text is what the user typed, not a contract — it varies by harness invocation and is absent from headless (`-p`) launches. More fundamentally, it provides no `definition_dir` or `entity_dir`, so `session_workflows` has nothing to read: without the boot envelope, there is no workflow directory to open and no entity-state directory to scan. The boot envelope is the one artifact that both proves the session is a FO and carries the paths the parser needs.
 
 ## Risk evidence
 
-{Backlog: confirm a Pi FO transcript carries a discoverable first-officer marker and that `spacedock.py`'s inputs are reachable from Pi session metadata.}
+The riskiest mechanism is whether `spacedock.transcript_boot` can find a boot envelope in a real Pi FO transcript. Exercised first against two live Pi FO sessions in `~/.pi/agent/sessions/`:
+
+- **Before the fix:** `transcript_boot` returns `[]` for both sessions. `tool_result_text` looks for `message.content[].type == "tool_result"` (Claude's shape); Pi writes tool results as `message.role == "toolResult"` with `content[].type == "text"` blocks, so no text is extracted and no envelope is found.
+- **After the three-line `toolResult` branch:** `transcript_boot` finds the boot envelope in both sessions — `definition_dir` and `entity_dir` are extracted correctly. `session_workflows` then renders a workflow strip with the correct stage spine (`backlog → ideation → implementation → validation → done`) and live entity slugs from the state directory.
+
+No spike needed beyond the above: `session_workflows`, `read_workflow`, and `read_entities` are already harness-agnostic (they take boot envelopes and paths, not transcripts), and the frontend `sdBlock` reads `sess.spacedock` without knowing which harness produced it. The only unproven link was the boot-envelope extraction from Pi's transcript format, and it is now proven.
 
 ## Expected surface and tolerance
 
-Estimate: {ideation fills}
-Semantics this may change: {ideation fills}
+Estimate: ~3 lines in `spacedock.tool_result_text` (add `toolResult` role branch), ~20 lines in `collectors/pi.py` (`session_spacedock` helper + `spacedock` key in `collect`'s session dict), ~1 line in `tests/test_contracts.py` (add `cargento_runtime.spacedock` to the Pi collector's allowlist entry). Total ~25 lines, tolerance ±10.
+
+Semantics this may change:
+- `tool_result_text` in `spacedock.py` now also extracts text from Pi `toolResult` role messages. This is additive — Claude transcripts carry `tool_result` content blocks, not `toolResult` role messages, so existing behaviour is unchanged. The `boot_records` function that calls it is unchanged.
+- Pi sessions with a boot envelope gain a `spacedock` field (`{"role": "first-officer", "workflows": [...]}`). Non-FO Pi sessions are unchanged (`spacedock` is absent).
+- The import graph allowlist gains one edge: `cargento_runtime.collectors.pi` → `cargento_runtime.spacedock`. This is the same dependency shape `collectors.claude` already has.
 
 ## Acceptance criteria
 
-{Ideation: at least one AC measures the end value — a Pi FO session on the dashboard shows the same workflow strip a Claude FO session does — verified by a test or live scenario, not a grep over `pi.py` or this README.}
+### AC-1: A Pi FO session on the dashboard shows the same workflow strip a Claude FO session does
+
+A Pi session whose transcript contains a Spacedock boot envelope renders with `spacedock.role == "first-officer"` and a non-empty `spacedock.workflows` list whose first entry carries the workflow's ordered `stages` spine and at least one entity. The strip shape matches what a Claude FO session would produce for the same workflow directory and entity state.
+
+**Verified by:** `test_pi_fo_session_renders_spacedock_strip` — builds a Pi session JSONL with a session header, a user prompt, an assistant tool call, and a `toolResult` message whose text is a boot envelope JSON (with `definition_dir` and `entity_dir`); writes a workflow README with `commissioned-by: spacedock@` frontmatter and a `stages.states[]` block; writes an entity state file with `status: ideation`; runs `pi_collector.collect`; asserts the session's `spacedock` field has `role == "first-officer"` and `workflows[0].stages` matches the workflow's declared stage names. **Falsifying edit:** remove the `toolResult` branch from `tool_result_text` — `transcript_boot` returns `[]`, `spacedock` is `None`, the assertion fails.
+
+### AC-2: A non-FO Pi session shows no Spacedock strip — the baseline does not move
+
+A Pi session with no boot envelope in its transcript has no `spacedock` field (or `spacedock` is `None`). This is the same behaviour as today, before the change.
+
+**Verified by:** `test_pi_non_fo_session_has_no_spacedock` — builds a Pi session JSONL with a normal user/assistant exchange and no boot envelope; runs `pi_collector.collect`; asserts `spacedock` is absent from the session dict (or `None`). **Falsifying edit:** unconditionally set `spacedock` on every Pi session regardless of boot presence — the test fails, which is the baseline moving the wrong way: every Pi session would show a Spacedock badge.
 
 ## Test plan
 
-{Ideation fills.}
+1. **`test_pi_fo_session_renders_spacedock_strip`** (new, in `tests/test_pi.py`). The end-value test (AC-1). Constructs a Pi session JSONL with a `toolResult` message carrying a boot envelope, a workflow README with `commissioned-by` and stages, and an entity state file with a non-resting `status`. Runs `pi_collector.collect` and asserts `spacedock.role` and `spacedock.workflows[0].stages`. Fails if the `toolResult` branch is removed from `tool_result_text`.
+2. **`test_pi_non_fo_session_has_no_spacedock`** (new, in `tests/test_pi.py`). The baseline test (AC-2). Same fixture without the boot envelope. Asserts `spacedock` is absent or `None`. Fails if `spacedock` is unconditionally set.
+3. **`test_boot_records_finds_pi_tool_result_format`** (new, in `tests/test_spacedock.py`). Directly tests that `spacedock.boot_records` extracts a boot envelope from a Pi-format `toolResult` record. Fails if the `toolResult` branch is removed from `tool_result_text`.
+4. **Import graph allowlist update** (`tests/test_contracts.py`). Add `cargento_runtime.spacedock` to the `cargento_runtime.collectors.pi` expected-dependency set. The existing `test_runtime_import_graph_matches_the_reviewed_allowlist` test enforces it.
+
+All tests run on every runner (fixtures, no network, no live `spacedock` binary).
 
 ### Feedback Cycles
 
 ## Out of scope
 
-- Rewriting `spacedock.py` — it is harness-agnostic by design; this task wires the Pi collector to it.
+- Rewriting `spacedock.py` — it is harness-agnostic by design; this task wires the Pi collector to it. The one change to `spacedock.py` (`tool_result_text` gaining a `toolResult` branch) is a three-line addition that makes the existing boot-reader work on a second transcript format, not a structural rework.
 - Widening Spacedock cartography features — S-4 deliberately takes only the stage.
+- Tracking Pi subagents as named worker pills for live-entity attribution — the `worker_names` list passed to `session_workflows` is empty; entities still surface from the state directory and boot snapshot. Live-worker attribution is a follow-up.
+
+## Stage Report: ideation
+
+- DONE: Approach names the simplest rejected alternative and why it cannot deliver the MVP value
+  Classifying by the first user prompt containing `"spacedock:first-officer"` was rejected: the prompt text is not a contract, varies by invocation, and provides no `definition_dir`/`entity_dir` — `session_workflows` has nothing to read without the boot envelope.
+- DONE: Riskiest mechanism exercised first (or no-spike-needed with proven mechanisms named)
+  Exercised `spacedock.transcript_boot` against two live Pi FO transcripts: before the fix it returns `[]` (Pi `toolResult` role not recognised); after a three-line `toolResult` branch in `tool_result_text` it finds the boot envelope and `session_workflows` renders the correct stage spine and entities. `session_workflows`/`read_workflow`/`read_entities` and `sdBlock` are already harness-agnostic.
+- DONE: Each AC carries an external Verified-by clause with the concrete falsifying edit
+  AC-1 verified by `test_pi_fo_session_renders_spacedock_strip` asserting `spacedock.role` and `workflows[0].stages`; fails if the `toolResult` branch is removed. AC-2 verified by `test_pi_non_fo_session_has_no_spacedock` asserting no `spacedock` field; fails if `spacedock` is unconditionally set — the baseline moving the wrong way.
+
+### Summary
+
+Filled all ideation placeholders: the Pi collector classifies a FO by finding a boot envelope in its transcript (Pi has no `agentSetting`), `tool_result_text` gains a three-line `toolResult` branch so `transcript_boot` works on Pi transcripts, and `session_workflows` is called with the envelopes to produce the same `spacedock` field a Claude FO session already publishes. Two ACs with falsifying edits, a four-test plan, and a mock at `pi-agent-spacedock-state/mock.html` rendering the Pi FO card with the workflow strip.
