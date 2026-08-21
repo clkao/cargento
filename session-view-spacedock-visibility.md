@@ -35,6 +35,17 @@ gates:
                 digest: sha256:2966d5abe5eb11ec405b76bc581ce408b8c9ba628e5da1c3dab0d171030121dc
                 request-digest: sha256:32443893ba6225f08deec112c8f17f407e323088ae8c454c10d2779c35dc4d1a
                 room-ref: ./session-view-spacedock-visibility/review/ideation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:6s6ft835wwg0q9hb8505rkz6:ideation:1
+                briefing: briefing:6s6ft835wwg0q9hb8505rkz6:ideation:attempt-1:revision-1
+                by: person:captain
+                at: "2026-08-21T06:24:06.520801102Z"
+                decision: approve
+                reason: Captain approved the 6s ideation via Subspace (binding resolution, decision approve, no annotations).
+              application:
+                target-stage: implementation
+                state: pending
 started: 2026-08-21T02:50:26Z
 ---
 
