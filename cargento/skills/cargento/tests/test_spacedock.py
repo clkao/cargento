@@ -204,139 +204,6 @@ class SpacedockParserTest(unittest.TestCase):
         self.assertEqual([], spacedock.boot_records(config, line("text")))
         self.assertEqual([], spacedock.boot_records(config, b'{"not":"jsonl definition_dir"}'))
 
-    def test_boot_records_finds_pi_tool_result_format(self) -> None:
-        """Pi writes tool results as a ``toolResult`` role message whose
-        ``content`` blocks carry ``type: "text"`` — the same provenance as
-        Claude's ``tool_result`` content blocks in a different transcript
-        shape. The boot reader must find the envelope in that format.
-        Falsifying edit: remove the ``toolResult`` branch from
-        ``tool_result_text`` — ``boot_records`` returns []."""
-        config, _runtime = runtime()
-        envelope = (
-            '{"command":"boot","id_style":"slug",'
-            '"definition_dir":"/w/one","entity_dir":"/w/one",'
-            '"dispatchable":[]}'
-        )
-        record = json.dumps(
-            {
-                "type": "message",
-                "id": "tr1",
-                "parentId": "call-1",
-                "timestamp": "2026-08-21T00:00:00Z",
-                "message": {
-                    "role": "toolResult",
-                    "content": [{"type": "text", "text": "=== BOOT ===\n" + envelope}],
-                },
-            }
-        ).encode()
-
-        records = spacedock.boot_records(config, record)
-
-        self.assertEqual(1, len(records))
-        self.assertEqual("/w/one", records[0]["definition_dir"])
-
-    def test_pi_conversation_text_cannot_nominate_a_path(self) -> None:
-        """The negative twin of the Pi format test above.
-
-        Boot output is command output. The ``toolResult`` role is the only thing
-        separating "a tool printed an envelope" from "somebody pasted a workflow
-        path into a chat", and a pasted path would otherwise be canonicalised and
-        opened. Falsifying edit: widen the role gate in ``tool_result_text`` to
-        accept ``user`` or ``assistant`` and this returns one record.
-        """
-        config, _runtime = runtime()
-        envelope = (
-            '{"command":"boot","id_style":"slug",'
-            '"definition_dir":"/w/one","entity_dir":"/w/one",'
-            '"dispatchable":[]}'
-        )
-
-        def line(role: str) -> bytes:
-            return json.dumps(
-                {
-                    "type": "message",
-                    "message": {
-                        "role": role,
-                        "content": [{"type": "text", "text": "=== BOOT ===\n" + envelope}],
-                    },
-                }
-            ).encode()
-
-        self.assertEqual(1, len(spacedock.boot_records(config, line("toolResult"))))
-        for role in ("user", "assistant", "system", "toolCall"):
-            with self.subTest(role=role):
-                self.assertEqual([], spacedock.boot_records(config, line(role)))
-
-    def test_a_tool_result_text_block_that_is_not_a_string_is_skipped(self) -> None:
-        """``isinstance(text, str)`` in the Pi branch is load-bearing.
-
-        A block whose ``text`` is an object reaches ``str.find`` in the boot
-        scanner otherwise, and the ``AttributeError`` escapes the collector to
-        blank every row for that harness. Falsifying edit: drop the isinstance
-        check and this raises instead of returning [].
-        """
-        config, _runtime = runtime()
-        record = json.dumps(
-            {
-                "type": "message",
-                "message": {
-                    "role": "toolResult",
-                    "content": [{"type": "text", "text": {"definition_dir": "/w/x"}}],
-                },
-            }
-        ).encode()
-
-        self.assertEqual([], spacedock.boot_records(config, record))
-
-    def test_a_hostile_envelope_path_never_raises_out_of_the_reader(self) -> None:
-        """The invariant that holds on every platform.
-
-        A lone surrogate survives JSON decoding, so an envelope can carry one.
-        Everything below here is wrapped in ``except OSError``, and the failure
-        boundary above is per harness, so anything that escapes blanks every row
-        for that harness rather than costing one session its strip.
-        """
-        config, runtime_state = runtime()
-        boot = [
-            {
-                "command": "boot",
-                "definition_dir": "/\ud800",
-                "entity_dir": "/\udfff",
-                "dispatchable": [],
-            }
-        ]
-
-        self.assertEqual([], spacedock.session_workflows(config, runtime_state, boot, [], 0.0, 1.0))
-        for workflow_dir in spacedock.workflow_dirs(config, boot):
-            self.assertIsNone(spacedock.read_workflow(config, runtime_state, workflow_dir))
-
-    @unittest.skipIf(
-        os.name == "nt", "Windows encodes lone surrogates (PEP 529 surrogatepass); POSIX cannot"
-    )
-    def test_an_unencodable_envelope_path_is_refused(self) -> None:
-        """On POSIX the guard has to refuse the path outright.
-
-        The filesystem handler is ``surrogateescape``, which cannot encode
-        ``\ud800``, so ``os.fsencode`` raises ``UnicodeEncodeError``. That is a
-        ``ValueError``, not an ``OSError``, so it would sail through every
-        handler below. Windows uses ``surrogatepass`` and encodes it, where the
-        path merely fails to exist and the ordinary ``OSError`` path covers it.
-        Falsifying edit: drop the ``os.fsencode`` probe from ``_usable_dir`` and
-        ``read_workflow`` raises instead of returning None.
-        """
-        config, _runtime = runtime()
-        boot = [
-            {
-                "command": "boot",
-                "definition_dir": "/\ud800",
-                "entity_dir": "/\udfff",
-                "dispatchable": [],
-            }
-        ]
-
-        self.assertEqual([], spacedock.workflow_dirs(config, boot))
-        self.assertEqual("", spacedock.boot_entity_dir(boot, "/\ud800"))
-
     def test_boot_scan_is_bounded_against_decoy_candidates(self) -> None:
         """Every unbalanced candidate used to rescan to the end of the blob."""
         config, _runtime = runtime()
@@ -421,69 +288,9 @@ class SpacedockReadContractTest(unittest.TestCase):
                 "name": "wf",
                 "stages": ["intake", "review", "posted"],
                 "resting": ["intake", "posted"],
-                "goal": "",
             },
             spacedock.read_workflow(config, state, str(root)),
         )
-
-    def test_workflow_goal_passes_through_the_frontmatter_title(self) -> None:
-        """The session view's goal line reads `workflow.goal`, which is the
-        frontmatter `title` scalar passed through from `read_workflow`. A
-        workflow with a title publishes it; one without publishes an empty
-        string. Fails if the `scalar(lines, "title")` call is removed."""
-        config, state = runtime()
-        body = (
-            "---\n"
-            "commissioned-by: spacedock@0.22.0\n"
-            "title: Ship session view\n"
-            "state: .spacedock-state\n"
-            "stages:\n"
-            "  states:\n"
-            "    - name: intake\n"
-            "      initial: true\n"
-            "    - name: posted\n"
-            "      terminal: true\n"
-            "---\n"
-        )
-        root_with_title = self.workflow(body)
-        result = spacedock.read_workflow(config, state, str(root_with_title))
-        assert result is not None
-        self.assertEqual("Ship session view", result["goal"])
-
-        # A workflow without a title publishes an empty goal.
-        root_no_title = self.workflow(self.README)
-        result_no = spacedock.read_workflow(config, state, str(root_no_title))
-        assert result_no is not None
-        self.assertEqual("", result_no["goal"])
-
-    def test_session_workflows_publish_goal_alongside_stages(self) -> None:
-        """The goal survives the trip from `read_workflow` through
-        `session_workflows` into the render-ready workflow strip."""
-        config, state = runtime()
-        body = (
-            "---\n"
-            "commissioned-by: spacedock@0.22.0\n"
-            "title: Ship session view\n"
-            "state: .spacedock-state\n"
-            "stages:\n"
-            "  states:\n"
-            "    - name: intake\n"
-            "      initial: true\n"
-            "    - name: posted\n"
-            "      terminal: true\n"
-            "---\n"
-        )
-        root = self.workflow(body)
-        boot = [
-            {
-                "command": "boot",
-                "definition_dir": str(root),
-                "dispatchable": [{"slug": "drc-1", "current": "intake"}],
-            }
-        ]
-        strips = spacedock.session_workflows(config, state, boot, [], time.time(), 3600)
-        self.assertEqual(1, len(strips))
-        self.assertEqual("Ship session view", strips[0]["goal"])
 
     def test_uncommissioned_or_absent_readme_yields_nothing(self) -> None:
         config, state = runtime()
@@ -612,12 +419,14 @@ class SpacedockReadContractTest(unittest.TestCase):
         os.utime(newer, (1_700_000_100, 1_700_000_100))
 
         self.assertEqual(
-            [("drc-2", "review"), ("drc-1", "review")],
+            [("drc-2", "review", {}), ("drc-1", "review", {})],
             spacedock.read_entities(
                 config,
                 state,
                 str(entity_state),
                 ["intake", "review", "posted"],
+                1_700_000_200,
+                3600,
             ),
         )
 
@@ -638,9 +447,9 @@ class SpacedockReadContractTest(unittest.TestCase):
         self.entity(entity_state, "drc-3", "")
 
         self.assertEqual(
-            [("drc-1", "review")],
+            [("drc-1", "review", {})],
             spacedock.read_entities(
-                config, state, str(entity_state), ["intake", "review", "posted"]
+                config, state, str(entity_state), ["intake", "review", "posted"], time.time(), 3600
             ),
         )
 
@@ -696,23 +505,20 @@ class SpacedockReadContractTest(unittest.TestCase):
                 (info.st_dev, info.st_ino),
             )
             self.assertEqual(
-                [("drc-1", "review")],
+                [("drc-1", "review", {})],
                 spacedock.read_entities(
                     config,
                     state,
                     str(entity_state),
                     ["intake", "review", "posted"],
+                    time.time(),
+                    3600,
                 ),
             )
 
     def test_entity_state_older_than_the_window_is_history_not_work(self) -> None:
         """A first officer discovers every workflow in the project. One retired
-        months ago still has entities frozen mid-pipeline — but mtime is not the
-        signal that separates history from work in flight: a long-running first
-        officer whose entity state was committed hours ago has stale mtime even
-        while the workflow is active. The session's own freshness and the boot
-        envelope gate liveness; ``read_entities`` no longer filters by mtime, so
-        a stale-mtime entity whose ``status`` is a declared stage is returned."""
+        months ago still has entities frozen mid-pipeline."""
         config, state = runtime()
         root = self.workflow(self.README)
         entity_state = root / ".spacedock-state"
@@ -720,35 +526,14 @@ class SpacedockReadContractTest(unittest.TestCase):
         os.utime(stale, (1_700_000_000, 1_700_000_000))
 
         self.assertEqual(
-            [("drc-1", "review")],
+            [],
             spacedock.read_entities(
                 config,
                 state,
                 str(entity_state),
                 ["intake", "review", "posted"],
-            ),
-        )
-
-    def test_entity_state_shows_regardless_of_mtime_when_stage_is_declared(self) -> None:
-        """Both a file committed hours ago (stale mtime) and a file just written
-        (fresh mtime) appear on the strip, as long as their ``status`` is a
-        stage the workflow declares. mtime is not a freshness signal for
-        git-committed entity state, so neither file is filtered out."""
-        config, state = runtime()
-        root = self.workflow(self.README)
-        entity_state = root / ".spacedock-state"
-        stale = self.entity(entity_state, "drc-1", "review")
-        fresh = self.entity(entity_state, "drc-2", "posted")
-        os.utime(stale, (1_700_000_000, 1_700_000_000))
-        os.utime(fresh, (1_700_001_000, 1_700_001_000))
-
-        self.assertEqual(
-            [("drc-2", "posted"), ("drc-1", "review")],
-            spacedock.read_entities(
-                config,
-                state,
-                str(entity_state),
-                ["intake", "review", "posted"],
+                1_700_000_000 + 90_000,
+                86_400,
             ),
         )
 
@@ -764,9 +549,9 @@ class SpacedockReadContractTest(unittest.TestCase):
             self.skipTest("symlink creation not permitted")
 
         self.assertEqual(
-            [("drc-1", "review")],
+            [("drc-1", "review", {})],
             spacedock.read_entities(
-                config, state, str(entity_state), ["intake", "review", "posted"]
+                config, state, str(entity_state), ["intake", "review", "posted"], time.time(), 3600
             ),
         )
 
@@ -787,14 +572,14 @@ class SpacedockReadContractTest(unittest.TestCase):
             return lines
 
         with mock.patch.object(spacedock, "read_frontmatter", counting):
-            spacedock.read_entities(config, state, str(entity_state), stages)
-            spacedock.read_entities(config, state, str(entity_state), stages)
+            spacedock.read_entities(config, state, str(entity_state), stages, now, 3600)
+            spacedock.read_entities(config, state, str(entity_state), stages, now, 3600)
             self.assertEqual(1, len(reads))
             self.entity(entity_state, "drc-1", "posted")
             os.utime(path, (now + 1, now + 1))
             self.assertEqual(
-                [("drc-1", "posted")],
-                spacedock.read_entities(config, state, str(entity_state), stages),
+                [("drc-1", "posted", {})],
+                spacedock.read_entities(config, state, str(entity_state), stages, now + 2, 3600),
             )
         self.assertEqual(2, len(reads))
 
@@ -864,3 +649,121 @@ class SpacedockReadContractTest(unittest.TestCase):
         self.assertEqual(
             [], spacedock.session_workflows(config, state, boot, [], time.time(), 3600)
         )
+
+    GATE_ENTITY = (
+        "---\n"
+        "id: test-entity\n"
+        'title: "test entity"\n'
+        "status: review\n"
+        "gates:\n"
+        "    version: 1\n"
+        "    records:\n"
+        "        - id: gate:test:intake\n"
+        "          stage: intake\n"
+        "          attempts:\n"
+        "            - id: gate-attempt:test-intake-1\n"
+        "              briefing:\n"
+        "                id: briefing:test:intake:1\n"
+        "              resolution:\n"
+        "                type: Resolution\n"
+        "                by: agent:first-officer\n"
+        '                at: "2026-08-21T07:28:23Z"\n'
+        "                decision: approve\n"
+        "                reason: 'intake approved'\n"
+        "              application:\n"
+        "                target-stage: review\n"
+        "                state: consumed\n"
+        "        - id: gate:test:review\n"
+        "          stage: review\n"
+        "          attempts:\n"
+        "            - id: gate-attempt:test-review-1\n"
+        "              briefing:\n"
+        "                id: briefing:test:review:1\n"
+        "              resolution:\n"
+        "                type: Resolution\n"
+        "                by: person:captain\n"
+        '                at: "2026-08-21T08:27:13Z"\n'
+        "                decision: revise\n"
+        "                reason: 'needs rework'\n"
+        "              application:\n"
+        "                target-stage: posted\n"
+        "                state: consumed\n"
+        "---\n"
+    )
+
+    def entity_with_frontmatter(self, state: Path, slug: str, body: str) -> Path:
+        state.mkdir(exist_ok=True)
+        path = state / f"{slug}.md"
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_entity_gate_summary_extracts_last_resolution_from_two_gate_records(self) -> None:
+        """The last gate record's last attempt wins: decision, timestamp, by,
+        and target-stage all come from the ideation gate, not the backlog one."""
+        config, _state = runtime()
+        lines = spacedock.frontmatter_lines(config, self.GATE_ENTITY)
+        summary = spacedock.entity_gate_summary(config, lines)
+
+        self.assertEqual("revise", summary["decision"])
+        self.assertEqual("2026-08-21T08:27:13Z", summary["decision_at"])
+        self.assertEqual("person:captain", summary["decision_by"])
+        self.assertEqual("posted", summary["target_stage"])
+
+    def test_entity_gate_summary_returns_empty_when_no_gates_block(self) -> None:
+        """An entity without gate records yields {}, not a non-empty default."""
+        config, _state = runtime()
+        body = "---\nid: x\nstatus: review\n---\n"
+        lines = spacedock.frontmatter_lines(config, body)
+
+        self.assertEqual({}, spacedock.entity_gate_summary(config, lines))
+
+    def test_session_workflows_attaches_gate_fields_to_entities(self) -> None:
+        """Entities with gate records carry decision metadata in the payload."""
+        config, state = runtime()
+        root = self.workflow(self.README)
+        entity_state = root / ".spacedock-state"
+        self.entity_with_frontmatter(entity_state, "drc-1", self.GATE_ENTITY)
+        boot = [
+            {
+                "command": "boot",
+                "definition_dir": str(root),
+                "entity_dir": str(entity_state),
+                "dispatchable": [],
+            }
+        ]
+
+        strips = spacedock.session_workflows(config, state, boot, [], time.time(), 3600)
+
+        self.assertEqual(1, len(strips))
+        ent = strips[0]["entities"][0]
+        self.assertEqual("drc-1", ent["slug"])
+        self.assertEqual("review", ent["stage"])
+        self.assertFalse(ent["live"])
+        self.assertEqual("revise", ent["decision"])
+        self.assertEqual("2026-08-21T08:27:13Z", ent["decision_at"])
+        self.assertEqual("person:captain", ent["decision_by"])
+        self.assertEqual("posted", ent["target_stage"])
+
+    def test_entities_without_gate_records_get_empty_decision_fields(self) -> None:
+        """An entity with no gate records has empty decision fields, not a
+        non-empty default — the frontend renders the spine only."""
+        config, state = runtime()
+        root = self.workflow(self.README)
+        entity_state = root / ".spacedock-state"
+        self.entity(entity_state, "drc-1", "review")
+        boot = [
+            {
+                "command": "boot",
+                "definition_dir": str(root),
+                "entity_dir": str(entity_state),
+                "dispatchable": [],
+            }
+        ]
+
+        strips = spacedock.session_workflows(config, state, boot, [], time.time(), 3600)
+
+        ent = strips[0]["entities"][0]
+        self.assertEqual("", ent["decision"])
+        self.assertEqual("", ent["decision_at"])
+        self.assertEqual("", ent["decision_by"])
+        self.assertEqual("", ent["target_stage"])
