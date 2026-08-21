@@ -317,11 +317,7 @@ print(json.dumps({{"origins": origins, "assets": assets, "page_size": len(page.l
             discovered = json.loads(origin_probe.stdout)
             for origin in [*discovered["origins"].values(), *discovered["assets"].values()]:
                 self.assertTrue(Path(origin).is_relative_to(copied_skill), origin)
-<<<<<<< HEAD
             self.assertEqual(244_804, discovered["page_size"])
-=======
-            self.assertEqual(229_585, discovered["page_size"])
->>>>>>> spacedock-ensign/rich-session-metadata
             state_path = cargento_home / f"cargento-{port}.json"
             proc = subprocess.Popen(
                 [sys.executable, str(launcher), "--port", str(port)],
