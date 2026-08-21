@@ -1,6 +1,6 @@
 ---
 title: Bind the dashboard to a configurable host (--host 0.0.0.0 for remote access)
-status: implementation
+status: validation
 source: captain seed
 id: bkjcbqac4d34rtsn7a0vy1kz
 gates:
