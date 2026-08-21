@@ -55,6 +55,17 @@ gates:
                 digest: sha256:ba47fbf6562a7454bb806bb1986c311098c9469c2f11d7e01678f81066c02d57
                 request-digest: sha256:9825196df9c78b09d8483c6bbf1b732142b4a37b91a17fa1eda9ee69cfbb0f62
                 room-ref: ./pi-agent-spacedock-state/review/validation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:hdz7pr9bmw5vpc5ah52sbcmb:validation:1
+                briefing: briefing:hdz7pr9bmw5vpc5ah52sbcmb:validation:attempt-1:revision-1
+                by: person:captain
+                at: "2026-08-21T04:14:33.064375346Z"
+                decision: approve
+                reason: Captain approved validation via Subspace (binding resolution, decision approve, no annotations). Both ACs reproduced with falsifying edits, toolResult additive, pre-PR suite green, diff purely additive. Delivery can proceed to done.
+              application:
+                target-stage: done
+                state: pending
 started: 2026-08-21T02:46:39Z
 worktree: .worktrees/spacedock-ensign-pi-agent-spacedock-state
 ---
