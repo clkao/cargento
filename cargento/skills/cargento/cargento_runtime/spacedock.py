@@ -230,9 +230,15 @@ def _usable_dir(value: object) -> TypeGuard[str]:
     not decoration: a lone surrogate survives JSON decoding, so an envelope can
     carry one, and every guard below this point is wrapped in ``except OSError``.
     ``os.fsencode`` raises ``UnicodeEncodeError``, which is a ``ValueError``, so
-    it sails through those handlers and out of the collector, and one such line
-    in one transcript blanks every row for that harness until the session leaves
-    the freshness window.
+    it would sail through those handlers and out of the collector, and one such
+    line in one transcript blanks every row for that harness until the session
+    leaves the freshness window.
+
+    The probe is platform-dependent and deliberately not the only defence.
+    POSIX encodes with ``surrogateescape`` and cannot represent a lone
+    surrogate; Windows uses ``surrogatepass`` and encodes it happily, where the
+    path simply fails to exist. So the readers that consume these paths catch
+    ``ValueError`` beside ``OSError`` rather than trusting this to refuse first.
     """
     if not isinstance(value, str) or not value:
         return False
@@ -468,7 +474,7 @@ def read_workflow(
         root = os.path.realpath(workflow_dir)
         readme = os.path.join(root, "README.md")
         info = os.stat(readme)
-    except OSError:
+    except (OSError, ValueError):
         return None
     # Containment: the README must resolve inside the directory it was found in,
     # so a symlinked or swapped entry cannot redirect the read elsewhere.
@@ -553,7 +559,7 @@ def entity_files(config: RuntimeConfig, entity_dir: str) -> list[tuple[str, str,
     try:
         with os.scandir(os.path.realpath(entity_dir)) as entries:
             found = list(entries)
-    except OSError:
+    except (OSError, ValueError):
         return []
     out: list[tuple[str, str, os.stat_result]] = []
     for entry in found:
@@ -572,7 +578,7 @@ def entity_files(config: RuntimeConfig, entity_dir: str) -> list[tuple[str, str,
             else:
                 continue
             info = os.lstat(path)
-        except OSError:
+        except (OSError, ValueError):
             continue  # entity written or retired between the listing and the stat
         if not stat_module.S_ISREG(info.st_mode):
             continue  # a symlinked entity file is refused, not followed

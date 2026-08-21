@@ -288,12 +288,13 @@ class SpacedockParserTest(unittest.TestCase):
 
         self.assertEqual([], spacedock.boot_records(config, record))
 
-    def test_an_unencodable_envelope_path_is_refused(self) -> None:
-        """A lone surrogate survives JSON decoding and every guard below is
-        ``except OSError``. ``os.fsencode`` raises ``UnicodeEncodeError``, a
-        ``ValueError``, which would sail out of the collector and blank the
-        harness. Falsifying edit: drop the ``os.fsencode`` probe from
-        ``_usable_dir`` and ``read_workflow`` raises here.
+    def test_a_hostile_envelope_path_never_raises_out_of_the_reader(self) -> None:
+        """The invariant that holds on every platform.
+
+        A lone surrogate survives JSON decoding, so an envelope can carry one.
+        Everything below here is wrapped in ``except OSError``, and the failure
+        boundary above is per harness, so anything that escapes blanks every row
+        for that harness rather than costing one session its strip.
         """
         config, runtime_state = runtime()
         boot = [
@@ -305,9 +306,36 @@ class SpacedockParserTest(unittest.TestCase):
             }
         ]
 
+        self.assertEqual([], spacedock.session_workflows(config, runtime_state, boot, [], 0.0, 1.0))
+        for workflow_dir in spacedock.workflow_dirs(config, boot):
+            self.assertIsNone(spacedock.read_workflow(config, runtime_state, workflow_dir))
+
+    @unittest.skipIf(
+        os.name == "nt", "Windows encodes lone surrogates (PEP 529 surrogatepass); POSIX cannot"
+    )
+    def test_an_unencodable_envelope_path_is_refused(self) -> None:
+        """On POSIX the guard has to refuse the path outright.
+
+        The filesystem handler is ``surrogateescape``, which cannot encode
+        ``\ud800``, so ``os.fsencode`` raises ``UnicodeEncodeError``. That is a
+        ``ValueError``, not an ``OSError``, so it would sail through every
+        handler below. Windows uses ``surrogatepass`` and encodes it, where the
+        path merely fails to exist and the ordinary ``OSError`` path covers it.
+        Falsifying edit: drop the ``os.fsencode`` probe from ``_usable_dir`` and
+        ``read_workflow`` raises instead of returning None.
+        """
+        config, _runtime = runtime()
+        boot = [
+            {
+                "command": "boot",
+                "definition_dir": "/\ud800",
+                "entity_dir": "/\udfff",
+                "dispatchable": [],
+            }
+        ]
+
         self.assertEqual([], spacedock.workflow_dirs(config, boot))
         self.assertEqual("", spacedock.boot_entity_dir(boot, "/\ud800"))
-        self.assertEqual([], spacedock.session_workflows(config, runtime_state, boot, [], 0.0, 1.0))
 
     def test_boot_scan_is_bounded_against_decoy_candidates(self) -> None:
         """Every unbalanced candidate used to rescan to the end of the blob."""
