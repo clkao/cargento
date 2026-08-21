@@ -35,6 +35,17 @@ gates:
                 digest: sha256:d598f32c752c3d31f6ffd3929b934960db1a19989e105008c714e43e8f335751
                 request-digest: sha256:b967f5f4eb3eaadc79f5bf1ef5efa55323def3e0749f91fa82f91f54c09ff09a
                 room-ref: ./pi-agent-spacedock-state/review/ideation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:hdz7pr9bmw5vpc5ah52sbcmb:ideation:1
+                briefing: briefing:hdz7pr9bmw5vpc5ah52sbcmb:ideation:attempt-1:revision-1
+                by: person:captain
+                at: "2026-08-21T03:53:34.914292149Z"
+                decision: approve
+                reason: Captain approved via Subspace (binding resolution, decision approve, no annotations).
+              application:
+                target-stage: implementation
+                state: pending
 started: 2026-08-21T02:46:39Z
 ---
 
