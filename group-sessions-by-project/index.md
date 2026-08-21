@@ -1,6 +1,6 @@
 ---
 title: Group and filter the session list by project
-status: implementation
+status: validation
 source: captain dogfood feedback
 id: zp7z36m3am49jyqrp685nhz9
 gates:
