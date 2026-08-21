@@ -1,6 +1,6 @@
 ---
 title: Group and filter the session list by project
-status: ideation
+status: implementation
 source: captain dogfood feedback
 id: zp7z36m3am49jyqrp685nhz9
 gates:
@@ -45,7 +45,7 @@ gates:
                 reason: 'conn granted: ''you have the conn to push to the forked repo and open PR'' (re-granted post-compaction: ''you have unlimited tokens... you have the conn to push to the forked repo and open PR''). Subspace approved all 4 gates: ''you have the conn, why are you still asking?''. Ideation sound: client-side project filter + grouping, no backend change, reuses existing segmented-control + calm repo-sort; 5 ACs with page-JS falsifying edits. Advancing to implementation.'
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
 started: 2026-08-21T08:07:14Z
 ---
 
