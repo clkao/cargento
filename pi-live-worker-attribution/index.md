@@ -1,6 +1,6 @@
 ---
 title: Pi live-worker attribution — feed live ensign names to session_workflows
-status: implementation
+status: validation
 source: captain directive — source of truth is the live ensigns
 id: rj497exc44z5es90d7a2bg49
 gates:
