@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:0c3re8kepj1984gnaenr5a7f:backlog:attempt-1:revision-1",
+  "question": "Approve session-centric-view backlog to proceed to ideation?",
+  "artifacts": [
+    {
+      "id": "artifact:0c3re8kepj1984gnaenr5a7f:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/ffafb9f17116f3744c32f62d5c71921233e8fc1a/session-centric-view/index.md",
+      "rev": "sha256:5a6e2d25007f5a71c309d394cd4af4ad655c25c069379aacb4808211acbc1a17",
+      "mediaType": "text/markdown",
+      "summary": "Session view renders workflow roster without the session card. Card exists in board view; reuse it, then reframe to session-centric."
+    }
+  ]
+}
