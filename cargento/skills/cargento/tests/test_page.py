@@ -68,32 +68,36 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "287f0971ff09de7a7df3869cdfe93ad002a74450ff0e97f87b9500324acc385c",
             ),
             "regular.js": (
-                37_479,
-                "b519bc26d48488a6121de581057c5249d676832305165ce6bf7782e5d5f054e2",
+                37_585,
+                "b080f3f4b738ff5a11b2a4f66a012276964e5a522e2085f67329a51d5a1e9d2f",
             ),
             "mode.js": (
-                1_938,
-                "6baf5aa67046d4fca5027646f7797ed55f555c7d96f9e7bf8cfee516316c00a4",
+                0,
+                "PLACEHOLDER"
             ),
             "usage.js": (
                 51_066,
                 "3eb8d87fb2f809058678218cf57bc6b381bb7750d7523efea0eeb56628db70fe",
             ),
             "controls.js": (
-                3_363,
-                "b45a331ff631f4293b463765c85f45ae9bc2b5b7b43401034727a5867a1ac0e7",
+                3_380,
+                "c72970464c0ab3c2f621343eda3b25ee4ab5da8a4d937402f333ecd40876d8ec",
             ),
             "calm.js": (
-                42_009,
-                "413e946d188c56ecb7403d199d79042777f6e2e022c31b2b70bc1520a426ae30",
+                0,
+                "PLACEHOLDER",
+            ),
+            "session.js": (
+                0,
+                "PLACEHOLDER",
             ),
             "notify.js": (
                 3_185,
                 "afd7a8ff735ea52b95e31a22f60f024d0bb752b7063860abc0e7bb1ae1c0fcae",
             ),
             "main.js": (
-                9_094,
-                "7ce44003973ca6845f63d5dc1be20e100ce254cd7221d4b8c47d70baa836f920",
+                9_409,
+                "ca92f14a5287500ec4f197b128b07de2551538d6612d424698a570010b38207d",
             ),
             "live.js": (
                 6_176,
@@ -108,16 +112,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(44_998, len(styles))
+        self.assertEqual(47_941, len(styles))
         self.assertEqual(
-            "505bdf665d67465e48364105c43f211c7a59102309c6c4be7e53dedff92ba1f0",
+            "95c363aa37e4a018399843a873dc786ee551229edab2c1be15c02e5b718be37b",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(227_688, len(assembled))
+        self.assertEqual(0, len(assembled))
         self.assertEqual(
-            "e81de7a1056c4eca5a5a374209f4bf837662547c839281ebcd5421c74246252e",
+            "PLACEHOLDER",
             hashlib.sha256(assembled).hexdigest(),
         )
 
