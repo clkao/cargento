@@ -1,6 +1,6 @@
 ---
 title: Per-workflow important-info definition — let each workflow declare what to display
-status: backlog
+status: ideation
 source: captain dogfood feedback
 id: et7hb2x9k6kts3cr56mnf2k8
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: 'FO autonomous approval (conn granted: ''you have the conn to push to the forked repo and open PR''; reinforced: ''when you have the conn, you should still do gate attempt and record your autonomous approval as resolution''). Backlog seed names a user-facing end value and a concrete dashboard surface; proof-needed well-scoped. Advancing to ideation.'
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 
 Each project/workflow can define what important information is to be displayed
