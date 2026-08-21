@@ -85,7 +85,7 @@ gates:
                 state: pending
 started: 2026-08-21T02:50:26Z
 worktree: .worktrees/spacedock-ensign-session-view-spacedock-visibility
-mod-block:
+mod-block: merge:pr-merge
 pr:
 ---
 
