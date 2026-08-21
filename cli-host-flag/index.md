@@ -66,3 +66,171 @@ Whether the bind tuple is the only place `127.0.0.1` is hardcoded (so the change
 is genuinely one flag + one threaded value), and whether `normalize_host`'s
 rejection of non-local request hosts conflicts with serving on `0.0.0.0` (a
 risk to exercise at ideation, not a blocker for the seed).
+
+## Ideation
+
+### Approach
+
+Add a `--host` CLI flag (default `127.0.0.1`, accepting `0.0.0.0` or any
+explicit IPv4 address) to `cli.build_parser`, thread it through
+`build_runtime(host=args.host)` and the bind tuple `(args.host, args.port)` at
+the serve branch, forward it in `lifecycle.spawn_argv` so a `--daemon` Windows
+re-spawn keeps the bind, and relax the `_RequestHandler._local_ok` Host-header
+gate to admit the bound host when the operator explicitly chose a non-loopback
+address. The default (no `--host`) keeps today's full loopback-only posture —
+`LOCAL_HOSTS` and the `Origin`/`Sec-Fetch-Site` cross-site checks unchanged —
+so the DNS-rebinding and CSRF defenses hold for every current install.
+`config.host` already exists as a dormant `RuntimeConfig` field; this wires it
+in.
+
+### Simplest rejected alternative
+
+Flip the hardcoded bind tuple at `cli.py:261` to `("0.0.0.0", args.port)`
+with no flag. This cannot deliver the MVP value on two counts: (1) it removes
+the operator's choice — every install becomes network-exposed by default,
+breaking the loopback-by-default security posture the existing `_local_ok`
+gate exists to enforce; and (2) it does not reconcile the request-host
+validator, so the dashboard would still answer `403` to every remote request
+(see risk evidence below). A bare flip gives neither the choice nor the
+reachability the task is for.
+
+### Risk evidence (riskiest mechanism exercised first)
+
+The riskiest mechanism is the interaction between a `0.0.0.0` bind and
+`http_api._RequestHandler._local_ok`, which gates every route (GET page,
+`/api/data`, every POST) on `normalize_host(Host) ∈ LOCAL_HOSTS` where
+`LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}`. A remote client connecting
+to `http://<machine-ip>:<port>/` sends `Host: <machine-ip>:<port>`, which
+`normalize_host` reduces to the bare IP — not in `LOCAL_HOSTS` — so
+`_local_ok` returns `False` and the handler sends `403`. Exercised directly:
+
+    Host='192.168.1.5:4553'  normalized='192.168.1.5'  _local_ok=False  -> 403 REJECTED
+    Host='10.0.0.2:4553'     normalized='10.0.0.2'     _local_ok=False  -> 403 REJECTED
+    Host='localhost:4553'    normalized='localhost'   _local_ok=True   -> baseline ALLOWED
+
+So the conflict is real: a `0.0.0.0` bind alone makes the TCP port reachable
+but leaves every HTTP request rejected. The reconciliation must make the Host
+gate conditional on the bind: when the server is explicitly bound non-loopback,
+admit the configured host (for `0.0.0.0`, any non-loopback Host — the
+operator's explicit opt-in per the excluded-scope note that a remote bind is
+the operator's choice and auth is out of scope), while the default loopback
+bind keeps the gate exactly as today. The `Origin`/`Sec-Fetch-Site` cross-site
+checks stay in both modes so a drive-by web page still cannot POST to a
+remotely-bound dashboard.
+
+### Bind-tuple uniqueness
+
+The listening-socket bind lives in exactly one place: `cli.py:261`,
+`("127.0.0.1", args.port)`. The other `127.0.0.1` references are not listener
+binds: `lifecycle.py:233` is a port-free probe (`sock.bind` to test whether a
+port is held, not the server); `lifecycle.py:172/337` are `--status`/`--stop`
+`HTTPConnection` *clients* that connect to the running instance via loopback
+— still valid when the listener is bound `0.0.0.0` since loopback remains one
+of its interfaces. So the bind is one threaded value, with one second
+threading point: `lifecycle.spawn_argv` (line 547) must forward `--host` to
+the Windows re-spawned child, or a `--host 0.0.0.0 --daemon` child rebinds to
+`127.0.0.1`. `config.host` (`RuntimeConfig.host`, `config.py:43`) already
+carries the field; `build_runtime` (cli.py:124) does not pass it and the bind
+tuple ignores it — both are wired by this change.
+
+### Expected surface and tolerance
+
+~15–25 lines across three files:
+
+- `cli.py`: one `--host` argument in `build_parser` (default `127.0.0.1`,
+  `type=` a small IPv4-string validator that accepts `0.0.0.0` and explicit
+  addresses, rejects IPv6 — out of scope per excluded scope); `host=args.host`
+  in `build_runtime`; bind tuple becomes `(args.host, args.port)`. ~4 lines.
+- `lifecycle.py`: `spawn_argv` appends `--host` + `str(args.host)`. ~2 lines.
+  The announce/`--status`/`--stop` URL strings stay literal `127.0.0.1`:
+  `0.0.0.0` is not a connectable address, and computing the machine's
+  external IP is out of scope; loopback remains a valid connect path for the
+  local control commands.
+- `http_api.py`: `CargentoHTTPServer` carries the configured host; `_local_ok`
+  admits the bound host (and, for `0.0.0.0`, any non-loopback Host) only when
+  the server is bound non-loopback. ~6–12 lines.
+
+Tolerance: `config.py` needs no change — the field exists. No frontend
+(`cargento_runtime/web/`) or collector change — this is a serve-layer flag.
+The shipped skill body `cargento/skills/cargento/SKILL.md` documents the
+loopback URL; a prose mention of `--host` is a portability-rule touch the
+design stage must keep plain (the validator rejects host-specific *markers*,
+not the flag name).
+
+### Acceptance criteria
+
+- **AC-1: `--host 0.0.0.0` binds all IPv4 interfaces; default stays loopback.**
+  `cargento serve --host 0.0.0.0 --port P` accepts a TCP connection to the
+  machine's non-loopback IPv4 address on P and returns the dashboard page;
+  `cargento serve --port P` (no `--host`) refuses a connection to that same
+  non-loopback address (connection refused). *Verified by:* a test that
+  starts the server with `host="0.0.0.0"` and connects to a non-loopback
+  address expecting the page; reverting the bind tuple to the hardcoded
+  `("127.0.0.1", args.port)` makes the remote-connect assertion fail
+  (connection refused).
+
+- **AC-2: a remote request to a `0.0.0.0`-bound server is served, not 403.**
+  A GET with `Host: <non-loopback-ip>:P` against a server bound `0.0.0.0`
+  returns 200 (the page), not 403. *Verified by:* a handler-level test
+  issuing a GET with `Host: 192.168.0.2:P` against a server carrying
+  `host="0.0.0.0"` and asserting 200; reverting the `_local_ok` relaxation
+  makes it fail with 403 (the spike above reproduces the failing state).
+
+- **AC-3: the default loopback bind still rejects non-loopback Host headers
+  (DNS-rebinding defense preserved).** A GET with `Host: 192.168.1.5` against
+  a default-bound server (no `--host`) returns 403. *Verified by:* a
+  handler-level test against a server carrying `host="127.0.0.1"` with
+  `Host: 192.168.1.5` asserting `_local_ok()` is `False`; removing the
+  bind-conditionality so the relaxation always applies makes the default case
+  admit the remote Host and this test fail. (Baseline guard — the existing
+  `test_host_header_forms_that_are_not_loopback` and
+  `test_origin_with_an_implicit_default_port` suites must also still pass.)
+
+- **AC-4: the Windows daemon re-spawn forwards `--host`.** A
+  `--host 0.0.0.0 --daemon` child binds the same address as the parent
+  requested. *Verified by:* asserting `spawn_argv(config, args)` includes
+  `--host`, `0.0.0.0` when `args.host == "0.0.0.0"`; deleting the `--host`
+  append from `spawn_argv` makes the assertion fail.
+
+- **AC-5: no regression in the loopback request-validation suite.** The
+  existing `LOCAL_HOSTS`/`normalize_host`/`_local_ok` tests pass unchanged
+  — the default path is byte-identical in behavior. *Verified by:* running
+  `test_http_api` `test_host_header_forms_that_are_loopback`,
+  `test_host_header_forms_that_are_not_loopback`, and the `_local_ok` origin
+  tests; any change that alters the default-path gate fails one of these.
+
+### Test plan
+
+- `test_cli` / new `test_host_flag`: `build_parser` exposes `--host` with
+  default `127.0.0.1`; `--host 0.0.0.0` parses to `args.host == "0.0.0.0"`;
+  an IPv6 literal is rejected by argparse (type validator).
+- `test_http_api`: extend the `_local_ok` tests with a server bound
+  `host="0.0.0.0"` and `Host: 192.168.0.2:P` asserting `True`, plus the
+  default `host="127.0.0.1"` case asserting `False` for the same Host
+  (AC-3). Reuse the existing handler-instantiation pattern.
+- `test_lifecycle` / `spawn_argv`: assert `--host` and its value appear in
+  the rebuilt argv when set (AC-4); absent when default.
+- A socket-level smoke test (AC-1/AC-2): start `CargentoHTTPServer` bound
+  `0.0.0.0` on an ephemeral port, connect to `127.0.0.1` AND to a non-
+  loopback address, GET `/` with the matching Host, assert 200. Connect to a
+  `127.0.0.1`-bound server on the non-loopback address and assert refused.
+
+### Mock
+
+no mock: not a user-facing surface — this is a CLI/serve-layer flag; the
+dashboard renders no new view, card, or panel.
+
+## Stage Report: ideation
+
+- DONE: Approach names the simplest rejected alternative and why it cannot deliver the MVP value
+  Flip-bind-to-0.0.0.0-no-flag rejected: removes operator choice (default network exposure) and does not reconcile `_local_ok` (still 403s every remote request).
+- DONE: Riskiest mechanism exercised first (reconcile --host 0.0.0.0 bind with normalize_host's loopback-only request validation)
+  Spike: `_local_ok` returns False for `Host='192.168.1.5:4553'` (403) even on a 0.0.0.0 bind; loopback baseline (`localhost:4553`) still True. Conflict confirmed; reconciliation is bind-conditional Host admission.
+- DONE: Each AC carries an external Verified-by clause with the concrete falsifying edit
+  AC-1..AC-5 each name the test plus the single edit (revert bind tuple / revert `_local_ok` relaxation / drop `spawn_argv` --host / break default-path gate) that turns it red.
+- DONE: Backend-only task records no mock: {not a user-facing surface}
+  Recorded in the body's Mock section.
+
+### Summary
+
+Confirmed the bind tuple is the single listener-bind site (cli.py:261) with one second threading point (spawn_argv) and a dormant `config.host` field already present. Exercised the riskiest mechanism: a 0.0.0.0 bind alone leaves every remote request 403 via `_local_ok`, so the Host gate must become bind-conditional. Approach is a `--host` flag + bind-conditional `_local_ok` relaxation keeping the default loopback posture and the Origin/Sec-Fetch-Site cross-site checks. Five ACs with external falsifying edits; no mock (backend-only).
