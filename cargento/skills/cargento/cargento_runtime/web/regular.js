@@ -394,6 +394,25 @@ function sdSlug(slug){
   return slug.slice(0, SD_SLUG_HEAD) + "…" + slug.slice(slug.length - tail);
 }
 
+const SD_DECISIONS = {
+  approve: {cls: "sd-ok", label: "approve"},
+  revise: {cls: "sd-revise", label: "revise"},
+  hold: {cls: "sd-hold", label: "hold"}
+};
+
+function sdDecisionBadge(decision){
+  const d = SD_DECISIONS[decision];
+  return d ? `<span class="sd-badge ${d.cls}">${esc(d.label)}</span>` : "";
+}
+
+function sdRelTime(iso){
+  const t = Date.parse(iso) / 1000;
+  if(!isFinite(t)) return "";
+  const ago = nowSec() - t;
+  if(ago < 0) return "just now";
+  return fmtDur(ago) + " ago";
+}
+
 function sdBlock(sess){
   const sd = sess.spacedock;
   if(!sd) return "";
@@ -403,7 +422,7 @@ function sdBlock(sess){
     return `<div class="sd"><div><span class="sd-k">spacedock</span>` +
       `<span class="sd-role">${esc(role)}</span></div></div>`;
   }
-  let rows = "";
+  let liveRows = "", dimRows = "";
   for(const wf of wfs){
     const stages = wf.stages || [];
     for(const ent of (wf.entities || [])){
@@ -412,15 +431,25 @@ function sdBlock(sess){
         ? `<span class="sd-gap">…</span>`
         : `<span class="${s === ent.stage && idx >= 0 ? "sd-cur" : "sd-st"}">${esc(s)}</span>`
       ).join(`<span class="sd-arr">→</span>`);
-      rows += `<div class="sd-row"><span class="sd-ent${ent.live ? " sd-live" : ""}"` +
+      const badge = ent.decision ? sdDecisionBadge(ent.decision) : "";
+      const prog = ent.target_stage && ent.decision_at
+        ? `<span class="sd-prog">advanced to ${esc(ent.target_stage)} ${sdRelTime(ent.decision_at)}</span>`
+        : "";
+      const row = `<div class="sd-row"><span class="sd-ent${ent.live ? " sd-live" : " sd-dim"}"` +
         ` title="${esc(ent.slug)}">${esc(sdSlug(ent.slug))}</span>` +
         (ent.cycle ? `<span class="sd-cyc">${esc(ent.cycle)}</span>` : "") +
-        `<span class="sd-spine">${spine}</span></div>`;
+        `<span class="sd-spine">${spine}</span>` +
+        (badge ? `<span class="sd-dec">${badge}</span>` : "") +
+        prog + `</div>`;
+      if(ent.live) liveRows += row; else dimRows += row;
     }
   }
   const names = wfs.map(w => w.workflow).join(" · ");
+  const dimSection = dimRows
+    ? `<div class="sd-dim-sep"><span class="sd-k">not touched</span></div>${dimRows}`
+    : "";
   return `<div class="sd"><div><span class="sd-k">spacedock ${esc(names)}</span>` +
-    `<span class="sd-role">${esc(role)}</span></div>${rows}</div>`;
+    `<span class="sd-role">${esc(role)}</span></div>${liveRows}${dimSection}</div>`;
 }
 
 function turnBlock(t){

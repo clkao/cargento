@@ -419,7 +419,7 @@ class SpacedockReadContractTest(unittest.TestCase):
         os.utime(newer, (1_700_000_100, 1_700_000_100))
 
         self.assertEqual(
-            [("drc-2", "review"), ("drc-1", "review")],
+            [("drc-2", "review", {}), ("drc-1", "review", {})],
             spacedock.read_entities(
                 config,
                 state,
@@ -447,7 +447,7 @@ class SpacedockReadContractTest(unittest.TestCase):
         self.entity(entity_state, "drc-3", "")
 
         self.assertEqual(
-            [("drc-1", "review")],
+            [("drc-1", "review", {})],
             spacedock.read_entities(
                 config, state, str(entity_state), ["intake", "review", "posted"], time.time(), 3600
             ),
@@ -505,7 +505,7 @@ class SpacedockReadContractTest(unittest.TestCase):
                 (info.st_dev, info.st_ino),
             )
             self.assertEqual(
-                [("drc-1", "review")],
+                [("drc-1", "review", {})],
                 spacedock.read_entities(
                     config,
                     state,
@@ -549,7 +549,7 @@ class SpacedockReadContractTest(unittest.TestCase):
             self.skipTest("symlink creation not permitted")
 
         self.assertEqual(
-            [("drc-1", "review")],
+            [("drc-1", "review", {})],
             spacedock.read_entities(
                 config, state, str(entity_state), ["intake", "review", "posted"], time.time(), 3600
             ),
@@ -578,7 +578,7 @@ class SpacedockReadContractTest(unittest.TestCase):
             self.entity(entity_state, "drc-1", "posted")
             os.utime(path, (now + 1, now + 1))
             self.assertEqual(
-                [("drc-1", "posted")],
+                [("drc-1", "posted", {})],
                 spacedock.read_entities(config, state, str(entity_state), stages, now + 2, 3600),
             )
         self.assertEqual(2, len(reads))
@@ -649,3 +649,121 @@ class SpacedockReadContractTest(unittest.TestCase):
         self.assertEqual(
             [], spacedock.session_workflows(config, state, boot, [], time.time(), 3600)
         )
+
+    GATE_ENTITY = (
+        "---\n"
+        "id: test-entity\n"
+        'title: "test entity"\n'
+        "status: review\n"
+        "gates:\n"
+        "    version: 1\n"
+        "    records:\n"
+        "        - id: gate:test:intake\n"
+        "          stage: intake\n"
+        "          attempts:\n"
+        "            - id: gate-attempt:test-intake-1\n"
+        "              briefing:\n"
+        "                id: briefing:test:intake:1\n"
+        "              resolution:\n"
+        "                type: Resolution\n"
+        "                by: agent:first-officer\n"
+        '                at: "2026-08-21T07:28:23Z"\n'
+        "                decision: approve\n"
+        "                reason: 'intake approved'\n"
+        "              application:\n"
+        "                target-stage: review\n"
+        "                state: consumed\n"
+        "        - id: gate:test:review\n"
+        "          stage: review\n"
+        "          attempts:\n"
+        "            - id: gate-attempt:test-review-1\n"
+        "              briefing:\n"
+        "                id: briefing:test:review:1\n"
+        "              resolution:\n"
+        "                type: Resolution\n"
+        "                by: person:captain\n"
+        '                at: "2026-08-21T08:27:13Z"\n'
+        "                decision: revise\n"
+        "                reason: 'needs rework'\n"
+        "              application:\n"
+        "                target-stage: posted\n"
+        "                state: consumed\n"
+        "---\n"
+    )
+
+    def entity_with_frontmatter(self, state: Path, slug: str, body: str) -> Path:
+        state.mkdir(exist_ok=True)
+        path = state / f"{slug}.md"
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_entity_gate_summary_extracts_last_resolution_from_two_gate_records(self) -> None:
+        """The last gate record's last attempt wins: decision, timestamp, by,
+        and target-stage all come from the ideation gate, not the backlog one."""
+        config, _state = runtime()
+        lines = spacedock.frontmatter_lines(config, self.GATE_ENTITY)
+        summary = spacedock.entity_gate_summary(config, lines)
+
+        self.assertEqual("revise", summary["decision"])
+        self.assertEqual("2026-08-21T08:27:13Z", summary["decision_at"])
+        self.assertEqual("person:captain", summary["decision_by"])
+        self.assertEqual("posted", summary["target_stage"])
+
+    def test_entity_gate_summary_returns_empty_when_no_gates_block(self) -> None:
+        """An entity without gate records yields {}, not a non-empty default."""
+        config, _state = runtime()
+        body = "---\nid: x\nstatus: review\n---\n"
+        lines = spacedock.frontmatter_lines(config, body)
+
+        self.assertEqual({}, spacedock.entity_gate_summary(config, lines))
+
+    def test_session_workflows_attaches_gate_fields_to_entities(self) -> None:
+        """Entities with gate records carry decision metadata in the payload."""
+        config, state = runtime()
+        root = self.workflow(self.README)
+        entity_state = root / ".spacedock-state"
+        self.entity_with_frontmatter(entity_state, "drc-1", self.GATE_ENTITY)
+        boot = [
+            {
+                "command": "boot",
+                "definition_dir": str(root),
+                "entity_dir": str(entity_state),
+                "dispatchable": [],
+            }
+        ]
+
+        strips = spacedock.session_workflows(config, state, boot, [], time.time(), 3600)
+
+        self.assertEqual(1, len(strips))
+        ent = strips[0]["entities"][0]
+        self.assertEqual("drc-1", ent["slug"])
+        self.assertEqual("review", ent["stage"])
+        self.assertFalse(ent["live"])
+        self.assertEqual("revise", ent["decision"])
+        self.assertEqual("2026-08-21T08:27:13Z", ent["decision_at"])
+        self.assertEqual("person:captain", ent["decision_by"])
+        self.assertEqual("posted", ent["target_stage"])
+
+    def test_entities_without_gate_records_get_empty_decision_fields(self) -> None:
+        """An entity with no gate records has empty decision fields, not a
+        non-empty default — the frontend renders the spine only."""
+        config, state = runtime()
+        root = self.workflow(self.README)
+        entity_state = root / ".spacedock-state"
+        self.entity(entity_state, "drc-1", "review")
+        boot = [
+            {
+                "command": "boot",
+                "definition_dir": str(root),
+                "entity_dir": str(entity_state),
+                "dispatchable": [],
+            }
+        ]
+
+        strips = spacedock.session_workflows(config, state, boot, [], time.time(), 3600)
+
+        ent = strips[0]["entities"][0]
+        self.assertEqual("", ent["decision"])
+        self.assertEqual("", ent["decision_at"])
+        self.assertEqual("", ent["decision_by"])
+        self.assertEqual("", ent["target_stage"])

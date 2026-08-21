@@ -467,13 +467,108 @@ def read_workflow(
     return result
 
 
-def entity_stage(
-    config: RuntimeConfig, state: RuntimeState, path: str, info: os.stat_result
-) -> str:
-    """The ``status`` scalar in one entity file's frontmatter, or "".
+def entity_gate_summary(config: RuntimeConfig, lines: list[str]) -> dict[str, str]:
+    """The last gate record's last resolved attempt, from frontmatter lines.
 
-    Cached on ``(path, st_mtime_ns, st_size)``, so a state directory in which
-    only one entity is moving costs one read per refresh and a stat per file.
+    An indentation-scoped scan of the ``gates:`` block, the same approach
+    :func:`stage_entries` uses for ``stages.states[]``. Returns
+    ``{decision, decision_at, decision_by, target_stage}`` from the last gate
+    record's last attempt that carries a ``resolution:``, or ``{}`` when no
+    gate record has a resolution. Only frontmatter lines are read; the body
+    (``## Stage Report``, ``### Feedback Cycles``) is never consulted.
+    """
+    gates_indent: int | None = None
+    records_indent: int | None = None
+    record_item_indent: int | None = None
+    attempts_indent: int | None = None
+    attempt_item_indent: int | None = None
+    block_key: str | None = None
+    block_indent = 0
+    summary: dict[str, str] = {}
+    current: dict[str, str] = {}
+    records_seen = 0
+    for raw in lines:
+        body = raw.strip()
+        if not body or body.startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        if gates_indent is None:
+            if body == "gates:":
+                gates_indent = indent
+            continue
+        if indent <= gates_indent:
+            break
+        if records_indent is None:
+            if body == "records:":
+                records_indent = indent
+            continue
+        if indent <= records_indent:
+            break
+        if body.startswith("- "):
+            if record_item_indent is None:
+                record_item_indent = indent
+                continue
+            if indent == record_item_indent:
+                if current.get("decision"):
+                    summary = dict(current)
+                current = {}
+                attempts_indent = None
+                attempt_item_indent = None
+                block_key = None
+                records_seen += 1
+                if records_seen > config.spacedock_max_stages:
+                    break
+                continue
+            if attempts_indent is not None and indent > attempts_indent:
+                if attempt_item_indent is None:
+                    attempt_item_indent = indent
+                if indent == attempt_item_indent:
+                    if current.get("decision"):
+                        summary = dict(current)
+                    current = {}
+                    block_key = None
+                continue
+            continue
+        if record_item_indent is not None and indent > record_item_indent:
+            if attempts_indent is None:
+                if body == "attempts:":
+                    attempts_indent = indent
+                continue
+            if attempt_item_indent is not None and indent > attempt_item_indent:
+                if body == "resolution:":
+                    block_key = "resolution"
+                    block_indent = indent
+                    continue
+                if body == "application:":
+                    block_key = "application"
+                    block_indent = indent
+                    continue
+                if block_key == "resolution" and indent > block_indent:
+                    if body.startswith("decision:"):
+                        current["decision"] = body[len("decision:") :].strip().strip("\"'")
+                    elif body.startswith("at:"):
+                        current["decision_at"] = body[len("at:") :].strip().strip("\"'")
+                    elif body.startswith("by:"):
+                        current["decision_by"] = body[len("by:") :].strip().strip("\"'")
+                    continue
+                if block_key == "application" and indent > block_indent:
+                    if body.startswith("target-stage:"):
+                        current["target_stage"] = body[len("target-stage:") :].strip().strip("\"'")
+                    continue
+            continue
+    if current.get("decision"):
+        summary = dict(current)
+    return summary or {}
+
+
+def _entity_data(
+    config: RuntimeConfig, state: RuntimeState, path: str, info: os.stat_result
+) -> dict[str, Any]:
+    """Cached frontmatter parse: ``{stage, gate}`` for one entity file.
+
+    One read serves both :func:`entity_stage` and :func:`entity_gate_data`,
+    so a state directory in which only one entity is moving costs one read
+    per refresh and a stat per file.
     """
     key = (path, info.st_mtime_ns, info.st_size)
     with state.cache_lock:
@@ -483,13 +578,34 @@ def entity_stage(
     try:
         lines = read_frontmatter(config, path, config.spacedock_entity_bytes, info)
     except SdMismatchError:
-        return ""
-    stage = scalar(lines, "status")
+        return {"stage": "", "gate": {}}
+    result: dict[str, Any] = {
+        "stage": scalar(lines, "status"),
+        "gate": entity_gate_summary(config, lines),
+    }
     with state.cache_lock:
         runtime_state.bounded_put(
-            state.spacedock_entity_cache, key, stage, limit=config.max_cache_entries
+            state.spacedock_entity_cache, key, result, limit=config.max_cache_entries
         )
-    return stage
+    return result
+
+
+def entity_stage(
+    config: RuntimeConfig, state: RuntimeState, path: str, info: os.stat_result
+) -> str:
+    """The ``status`` scalar in one entity file's frontmatter, or ""."""
+    return str(_entity_data(config, state, path, info)["stage"])
+
+
+def entity_gate_data(
+    config: RuntimeConfig, state: RuntimeState, path: str, info: os.stat_result
+) -> dict[str, str]:
+    """The last gate decision summary for one entity file, or "".
+
+    Shares the cache with :func:`entity_stage` so the frontmatter is read once.
+    """
+    gate: dict[str, str] = _entity_data(config, state, path, info)["gate"]
+    return gate
 
 
 def entity_files(config: RuntimeConfig, entity_dir: str) -> list[tuple[str, str, os.stat_result]]:
@@ -551,8 +667,8 @@ def read_entities(
     stages: list[str],
     now: float,
     window_sec: float,
-) -> list[tuple[str, str]]:
-    """``[(slug, stage)]`` for one workflow's recent entity state, newest first.
+) -> list[tuple[str, str, dict[str, str]]]:
+    """``[(slug, stage, gate)]`` for one workflow's recent entity state, newest first.
 
     The authoritative, current answer to "where is each entity", against which
     the boot envelope's ``dispatchable`` snapshot is only a stale hint. An entity
@@ -566,15 +682,20 @@ def read_entities(
       per-file discriminator that stands in for the containment check
       :func:`read_workflow` performs, since a ``split-root`` workflow may
       legitimately keep its state outside the definition directory.
+
+    The third element is the gate decision summary from
+    :func:`entity_gate_summary`, computed from the same frontmatter read as the
+    stage — the frontmatter is read once, not twice.
     """
     declared = set(stages)
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, dict[str, str]]] = []
     for slug, path, info in entity_files(config, entity_dir):
         if not sessions.is_fresh(config, now, info.st_mtime, window_sec):
             continue
-        stage = entity_stage(config, state, path, info)
+        data = _entity_data(config, state, path, info)
+        stage = data["stage"]
         if stage in declared:
-            out.append((slug, stage))
+            out.append((slug, stage, data["gate"]))
     return out
 
 
@@ -645,7 +766,8 @@ def session_workflows(
         # Live worker names carry a stage but not a slug boundary, so the slug
         # has to come from a roster. The state directory is what makes that
         # roster non-empty for a first officer that booted an empty queue.
-        slugs = list({slug for slug, _ in roster} | set(booted))
+        slugs = list({slug for slug, _, _ in roster} | set(booted))
+        gate_map: dict[str, dict[str, str]] = {slug: gate for slug, _, gate in roster}
         entities: list[dict[str, Any]] = []
         seen: set[str] = set()
         for name in worker_names:
@@ -656,17 +778,52 @@ def session_workflows(
             if slug in seen:
                 continue
             seen.add(slug)
-            entities.append({"slug": slug, "stage": stage, "cycle": cycle, "live": True})
-        for slug, stage in roster:
+            g = gate_map.get(slug, {})
+            entities.append(
+                {
+                    "slug": slug,
+                    "stage": stage,
+                    "cycle": cycle,
+                    "live": True,
+                    "decision": g.get("decision", ""),
+                    "decision_at": g.get("decision_at", ""),
+                    "decision_by": g.get("decision_by", ""),
+                    "target_stage": g.get("target_stage", ""),
+                }
+            )
+        for slug, stage, gate in roster:
             if slug in seen or stage in resting:
                 continue
             seen.add(slug)
-            entities.append({"slug": slug, "stage": stage, "cycle": "", "live": False})
+            entities.append(
+                {
+                    "slug": slug,
+                    "stage": stage,
+                    "cycle": "",
+                    "live": False,
+                    "decision": gate.get("decision", ""),
+                    "decision_at": gate.get("decision_at", ""),
+                    "decision_by": gate.get("decision_by", ""),
+                    "target_stage": gate.get("target_stage", ""),
+                }
+            )
         for slug, stage in booted.items():
             if slug in seen or stage not in stages:
                 continue
             seen.add(slug)
-            entities.append({"slug": slug, "stage": stage, "cycle": "", "live": False})
+            g = gate_map.get(slug, {})
+            entities.append(
+                {
+                    "slug": slug,
+                    "stage": stage,
+                    "cycle": "",
+                    "live": False,
+                    "decision": g.get("decision", ""),
+                    "decision_at": g.get("decision_at", ""),
+                    "decision_by": g.get("decision_by", ""),
+                    "target_stage": g.get("target_stage", ""),
+                }
+            )
         if not entities:
             continue
         out.append(

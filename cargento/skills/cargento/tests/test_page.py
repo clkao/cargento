@@ -68,8 +68,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "287f0971ff09de7a7df3869cdfe93ad002a74450ff0e97f87b9500324acc385c",
             ),
             "regular.js": (
-                37_479,
-                "b519bc26d48488a6121de581057c5249d676832305165ce6bf7782e5d5f054e2",
+                38_535,
+                "c62e3caebdd32d6fec7382444c8017a8531ae3a12d6554167711457e61d1d0a8",
             ),
             "mode.js": (
                 1_938,
@@ -108,16 +108,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(44_998, len(styles))
+        self.assertEqual(45_839, len(styles))
         self.assertEqual(
-            "505bdf665d67465e48364105c43f211c7a59102309c6c4be7e53dedff92ba1f0",
+            "02c4d9bb9a0de52b60dd7380b2be7c78b526702228fbd8ce9f814d9cd58bd8f5",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(227_688, len(assembled))
+        self.assertEqual(229_585, len(assembled))
         self.assertEqual(
-            "e81de7a1056c4eca5a5a374209f4bf837662547c839281ebcd5421c74246252e",
+            "158ef1b505e6c14fa80d07ef94087d2cffdef1c46e339241562b502b1e078821",
             hashlib.sha256(assembled).hexdigest(),
         )
 
@@ -3377,4 +3377,43 @@ console.log(JSON.stringify(out));
                 "focusRestored": True,
             },
             out,
+        )
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_sd_block_renders_decision_badge_progress_line_and_live_split(self) -> None:
+        # The session view splits entities into touched (live) and not-touched
+        # (non-live) sections, with a decision badge and a progress line on
+        # entities that carry gate metadata.
+        checks = """
+const live = {slug:"drc-1", stage:"review", cycle:"", live:true,
+  decision:"approve", decision_at:"2026-08-21T08:27:13Z",
+  decision_by:"agent:first-officer", target_stage:"implementation"};
+const dim = {slug:"drc-2", stage:"intake", cycle:"", live:false,
+  decision:"", decision_at:"", decision_by:"", target_stage:""};
+const noGate = {slug:"drc-3", stage:"review", cycle:"", live:true,
+  decision:"", decision_at:"", decision_by:"", target_stage:""};
+const sd = (entities) => ({role:"first-officer",
+  workflows:[{workflow:"wf", stages:["intake","review","posted"], entities}]});
+const html = (entities) => sdBlock({spacedock: sd(entities)});
+const withGates = html([live, dim]);
+const noGateHtml = html([noGate]);
+console.log(JSON.stringify({
+  liveBadge: withGates.includes('class="sd-badge sd-ok"'),
+  liveProgress: withGates.includes('advanced to implementation'),
+  dimSection: withGates.includes('not touched'),
+  dimHasDimClass: withGates.includes('sd-dim'),
+  noGateNoBadge: !noGateHtml.includes('sd-badge'),
+  noGateNoProgress: !noGateHtml.includes('advanced to')
+}));
+"""
+        out = self._run_page_js(checks)
+        self.assertTrue(out["liveBadge"], "decision badge missing for live entity")
+        self.assertTrue(out["liveProgress"], "progress line missing for live entity")
+        self.assertTrue(out["dimSection"], "non-live section missing")
+        self.assertTrue(out["dimHasDimClass"], "non-live entity should carry sd-dim class")
+        self.assertTrue(
+            out["noGateNoBadge"], "badge should not render for entity without gate data"
+        )
+        self.assertTrue(
+            out["noGateNoProgress"], "progress should not render for entity without gate data"
         )
