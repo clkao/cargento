@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:6s6ft835wwg0q9hb8505rkz6:validation:attempt-2:revision-1",
+  "question": "Approve the session-view rework validation — URL hash routing + 4 distinct empty/loading states + dogfooded against this session — to proceed to done (merge)?",
+  "artifacts": [
+    {
+      "id": "artifact:6s6ft835wwg0q9hb8505rkz6:validation:attempt-2:revision-1:item-1",
+      "uri": "git-root://state/92e4700420e96661bcdddc653e09629acd08ab63/session-view-spacedock-visibility.md",
+      "rev": "sha256:4ab95f60e817b7da6c66879b9e4d47f1ae819bb7a5b3c210e008e90b79c06440",
+      "mediaType": "text/markdown",
+      "summary": "Rework validated: URL hash routing (#session=key) with hashchange listener, back button, calm view button; 4 distinct empty/loading states (loading/not-spacedock/fo-no-entities/non-fo); dogfooded against this session (01a02216) and Review handoff (4971fdd9). Suite green (1200 tests, coverage 89.3%)."
+    }
+  ]
+}
