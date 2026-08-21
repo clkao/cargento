@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:6s6ft835wwg0q9hb8505rkz6:backlog:attempt-1:revision-1",
+  "question": "Should design (ideation) start for this task — add an additive per-session view (alongside regular/calm) rendering a dispatch tree plus a high-level goal (sprint) if stated or derived, without touching existing views?",
+  "artifacts": [
+    {
+      "id": "artifact:6s6ft835wwg0q9hb8505rkz6:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/0f9a012b58f97dd64c37dac13337865a0eade66d/session-view-spacedock-visibility.md",
+      "rev": "sha256:c39c938600cf39451975eea9d9faa9bef9a3930290f20871eb3f7ae8b71893b9",
+      "mediaType": "text/markdown",
+      "summary": "Add a per-session dashboard view mode (alongside regular/calm) that renders a dispatch tree of the session's workflow entities (reference: /private/tmp/image (1).png Task Map) plus a high-level goal line (sprint) when stated or derived from workflow context; additive only, no changes to existing views."
+    }
+  ]
+}
