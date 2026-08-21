@@ -1,6 +1,6 @@
 ---
 title: Fix Spacedock entity-state freshness gate (mtime staleness blanks the workflow strip)
-status: backlog
+status: ideation
 source: captain dogfood feedback
 id: tzrvnebvdb10fddfr40szvtm
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: 'FO autonomous approval (conn granted: ''you have the conn to push to the forked repo and open PR''; reinforced: ''when you have the conn, you should still do gate attempt and record your autonomous approval as resolution''). Backlog seed names a user-facing end value and a concrete dashboard surface; proof-needed well-scoped. Advancing to ideation.'
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 
 A long-running first-officer session that has been driving a workflow for hours
