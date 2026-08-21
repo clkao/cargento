@@ -82,6 +82,8 @@ gates:
                 state: pending
 started: 2026-08-20T18:30:00Z
 worktree: .worktrees/spacedock-ensign-observer-agent-pattern
+mod-block: merge:pr-merge
+pr: spacedock-dev/cargento#129
 ---
 
 An active coding session accumulates context a bystander cannot easily recover: what it set out to do, what it decided, where it got stuck, what it is doing right now. An observer agent — a separate agent that sits beside an active session, reads its transcript read-only, and derives its goal and the important things (decisions, blocks, in-flight work) — would let an operator ask "what is this session for and what matters in it right now?" without interrupting the session or relying on its self-report.
