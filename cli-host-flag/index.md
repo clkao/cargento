@@ -46,6 +46,15 @@ gates:
               application:
                 target-stage: implementation
                 state: consumed
+        - id: gate:bkjcbqac4d34rtsn7a0vy1kz:validation
+          stage: validation
+          attempts:
+            - id: gate-attempt:bkjcbqac4d34rtsn7a0vy1kz-validation-1
+              briefing:
+                id: briefing:bkjcbqac4d34rtsn7a0vy1kz:validation:attempt-1:revision-1
+                digest: sha256:842fa654730e5336ebdcf64318568c3f520545dff03fdfab75950e5e2f95c925
+                request-digest: sha256:d9b06f41d13ecf758412fa88836cbf13231f62561a59c83910c017ce3e4be64d
+                room-ref: ./review/validation/briefing-1
 started: 2026-08-21T04:12:22Z
 worktree: .worktrees/spacedock-ensign-cli-host-flag
 ---

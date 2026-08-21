@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:bkjcbqac4d34rtsn7a0vy1kz:validation:attempt-1:revision-1",
+  "question": "Approve the cli-host-flag validation — all 5 ACs independently reproduced with falsifying edits, default loopback byte-identical, pre-PR suite green — to proceed to done (merge)? One Polish finding: AC-1's Verified-by is overstated (socket tests bypass cli.main, so reverting the bind tuple wouldn't falsify them).",
+  "artifacts": [
+    {
+      "id": "artifact:bkjcbqac4d34rtsn7a0vy1kz:validation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/156c00e5d86d1b9729af0c9ab552b60fd0519d60/cli-host-flag/index.md",
+      "rev": "sha256:bcaac528bae77f300a3d695fba9d5c3a53577fea282b190a2f7254acd41dbc72",
+      "mediaType": "text/markdown",
+      "summary": "Validation PASSED with one Polish finding. All 5 ACs reproduced independently against the real non-loopback IP 10.42.0.42: AC1 wildcard bind serves remote + loopback refuses non-loopback; AC2 _local_ok admits non-loopback on wildcard; AC3 rejects non-loopback on default; AC4 --host forwarded in spawn_argv; AC5 existing host/origin/dns-rebinding tests pass unchanged. Falsifying edits confirmed (revert _host_admitted → AC2 403; break default gate → AC3 fail; remove --host from spawn_argv → AC4 fail). Pre-PR suite green (ruff, mypy 80 files, lint_embedded, validate_plugins, coverage 89.2%, 1193 tests). Polish finding: AC-1's Verified-by claims reverting the bind tuple falsifies the socket tests, but those tests bypass cli.main — claim overstated; implementation is correct (bind tuple is args.host, test_build_runtime_threads_host_into_config proves args.host reaches config). Recommendation PASSED."
+    }
+  ]
+}
