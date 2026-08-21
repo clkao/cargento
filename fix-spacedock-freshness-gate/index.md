@@ -3,6 +3,18 @@ title: Fix Spacedock entity-state freshness gate (mtime staleness blanks the wor
 status: backlog
 source: captain dogfood feedback
 id: tzrvnebvdb10fddfr40szvtm
+gates:
+    version: 1
+    records:
+        - id: gate:tzrvnebvdb10fddfr40szvtm:backlog
+          stage: backlog
+          attempts:
+            - id: gate-attempt:tzrvnebvdb10fddfr40szvtm-backlog-1
+              briefing:
+                id: briefing:tzrvnebvdb10fddfr40szvtm:backlog:attempt-1:revision-1
+                digest: sha256:dcc36568f0e286ebec8cd255fb4e498078cc37ae00d8e4e30277bd769226699a
+                request-digest: sha256:58bd5b698c28c45a4c3f880b662a9c7b7934ec4911dce85aff57207fc42b62f9
+                room-ref: ./review/backlog/briefing-1
 ---
 
 A long-running first-officer session that has been driving a workflow for hours

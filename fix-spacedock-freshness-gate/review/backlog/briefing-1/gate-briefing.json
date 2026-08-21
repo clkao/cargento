@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:tzrvnebvdb10fddfr40szvtm:backlog:attempt-1:revision-1",
+  "question": "Approve the fix-spacedock-freshness-gate backlog seed to advance to ideation?",
+  "artifacts": [
+    {
+      "id": "artifact:tzrvnebvdb10fddfr40szvtm:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/5997755414a94f18dcd28e1f612c4fd7e361ce28/fix-spacedock-freshness-gate/index.md",
+      "rev": "sha256:7e3de3e418d320a62c4d610b489680da0a110fdde1fe5981e11bc90cf6e7f69e",
+      "mediaType": "text/markdown",
+      "summary": "Backlog seed for fix-spacedock-freshness-gate (filed from captain dogfood feedback). See entity body for end value, included/excluded scope, and proof needed."
+    }
+  ]
+}
