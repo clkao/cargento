@@ -395,32 +395,73 @@ def boot_entity_dir(envelopes: list[dict[str, Any]], workflow_dir: str) -> str:
 
 
 def transcript_boot(config: RuntimeConfig, state: RuntimeState, path: str) -> list[dict[str, Any]]:
-    """Boot envelopes from a transcript's head, cached per (path, size).
+    """Boot envelopes from a transcript, head-scan first with a full-file fallback.
 
-    Boot output is written once at session start and never rewritten, so the
-    scan is amortised: keying on size lets a still-growing session pick the
-    envelope up on a later refresh without rescanning an unchanged prefix.
+    The head scan reads the first ``spacedock_boot_scan_bytes`` and is the fast
+    path: most sessions (Claude, short Pi) carry the envelope in the first few
+    lines. When the head scan misses on a file larger than the scan window, the
+    fallback reads the whole file — the envelope may be past the window in a
+    long Pi session whose large early messages pushed it out. Boot output is
+    written once at session start and never rewritten, so the fallback cost is
+    paid once per session: the head-scan result is cached on the capped key
+    ``(path, min(size, scan_bytes))`` and the fallback on the actual size
+    ``(path, size)``, so a growing file re-checks the fallback but never
+    re-reads a stable prefix.
     """
     try:
         size = os.path.getsize(path)
     except (OSError, ValueError):
         return []
-    key = (path, min(size, config.spacedock_boot_scan_bytes))
+    scan_bytes = config.spacedock_boot_scan_bytes
+    head_key = (path, min(size, scan_bytes))
     with state.cache_lock:
-        cached = state.spacedock_boot_cache.get(key)
+        cached = state.spacedock_boot_cache.get(head_key)
     if cached is not None:
         return cached
     envelope_records: list[dict[str, Any]] = []
     try:
         with open(path, "rb") as handle:
-            blob = handle.read(config.spacedock_boot_scan_bytes)
+            blob = handle.read(scan_bytes)
+        if b"definition_dir" in blob:
+            envelope_records = boot_records(config, blob)
+    except OSError:
+        return []
+    # The head scan found the envelope, or the file fits in the scan window
+    # (a miss here is a legitimate negative — the whole file was read). In
+    # both cases the result is stable, so cache it. For a file larger than the
+    # scan window with no envelope in the head, do NOT cache the negative
+    # under the capped key — that would make a miss sticky for a growing file.
+    if envelope_records or size <= scan_bytes:
+        with state.cache_lock:
+            runtime_state.bounded_put(
+                state.spacedock_boot_cache,
+                head_key,
+                envelope_records,
+                limit=config.max_cache_entries,
+            )
+        return envelope_records
+    # Head scan missed on a file larger than the scan window. The envelope may
+    # be past the head. Fall back to a full-file read, cached on the actual
+    # size so a growing file re-checks but a stable file does not.
+    fallback_key = (path, size)
+    with state.cache_lock:
+        cached = state.spacedock_boot_cache.get(fallback_key)
+    if cached is not None:
+        return cached
+    envelope_records = []
+    try:
+        with open(path, "rb") as handle:
+            blob = handle.read()
         if b"definition_dir" in blob:
             envelope_records = boot_records(config, blob)
     except (OSError, ValueError):
         return []
     with state.cache_lock:
         runtime_state.bounded_put(
-            state.spacedock_boot_cache, key, envelope_records, limit=config.max_cache_entries
+            state.spacedock_boot_cache,
+            fallback_key,
+            envelope_records,
+            limit=config.max_cache_entries,
         )
     return envelope_records
 
