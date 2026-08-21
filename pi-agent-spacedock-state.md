@@ -146,3 +146,18 @@ Filled all ideation placeholders: the Pi collector classifies a FO by finding a 
 ### Summary
 
 Added a `toolResult` role branch to `spacedock.tool_result_text` (additive — Claude's `tool_result` blocks unchanged), wired `collectors/pi.py` to the shared Spacedock cartography via `session_spacedock` (classifies FO by boot envelope, calls `session_workflows` with empty worker names), and added `cargento_runtime.spacedock` to the Pi collector's import-graph allowlist. Three new tests plus the allowlist update; all pre-PR checks green. Commit `4f3fbc0` on `spacedock-ensign/pi-agent-spacedock-state`.
+
+## Stage Report: validation
+
+- DONE: Each AC's Verified-by reproduced independently (not trusting self-report): AC1 Pi FO strip, AC2 non-FO no strip
+  AC-1: ran `test_pi_fo_session_renders_spacedock_strip` — passes; removed the `toolResult` branch from `tool_result_text`, re-ran, got `AssertionError` on `assert sd is not None` (transcript_boot returned [], spacedock is None) — fail confirmed. Restored; passes. AC-2: ran `test_pi_non_fo_session_has_no_spacedock` — passes; replaced the `session_spacedock` call with an unconditional `{"role":"first-officer","workflows":[]}`, re-ran, got `AssertionError: {'role': 'first-officer', 'workflows': []} is not None` — fail confirmed. Restored; passes.
+- DONE: Pre-PR suite re-run green from the validation lane: ruff, mypy, lint_embedded, validate_plugins, coverage
+  ruff check: All checks passed. ruff format --check: 109 files already formatted. mypy: Success, no issues in 80 files. lint_embedded: clean. validate_plugins: validated. bump_version --current: 0.11.0. coverage: 89.2% (threshold 73%). Full suite: 1180+157 tests OK.
+- DONE: toolResult branch is additive against Claude transcripts (Claude tool_result content blocks unchanged) — independent check
+  Wrote a standalone script exercising `tool_result_text`: a Claude `role:"tool"` record with `type:"tool_result"` content blocks extracts `["=== BOOT ===\n{}", "second"]` unchanged; a Pi `role:"toolResult"` record extracts `["=== BOOT ===\n{}"]`; a conversation `role:"assistant"` with `type:"text"` blocks returns `[]` (provenance preserved). `test_boot_records_require_tool_result_provenance` (27 spacedock tests) still passes. The branch returns early only on `role == "toolResult"`; Claude's `tool_result` blocks fall through to the existing loop untouched.
+- DONE: Reviewer findings recorded under workflow labels with a PASSED/REJECTED recommendation
+  Diff is purely additive (185 insertions, 0 deletions, 5 files). Scope matches the ideation tolerance (~25 lines, ±10): 18 lines in spacedock.py, 32 in pi.py, 1 in test_contracts.py, 103+31 test lines. No frontmatter touched, no agents/references files touched. Recommendation: PASSED.
+
+### Summary
+
+Independently reproduced both ACs and their falsifying edits from the validation lane: AC-1 (Pi FO strip) fails when the `toolResult` branch is removed; AC-2 (non-FO no strip) fails when spacedock is set unconditionally. The `toolResult` branch is proven additive — Claude `tool_result` content blocks extract unchanged, conversation `text` blocks stay excluded. Pre-PR suite fully green (ruff, mypy, lint_embedded, validate_plugins, coverage 89.2%). Diff is purely additive, in-scope. Recommendation: PASSED — delivery can proceed to `done`.
