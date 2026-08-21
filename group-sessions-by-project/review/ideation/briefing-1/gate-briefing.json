@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:zp7z36m3am49jyqrp685nhz9:ideation:attempt-1:revision-1",
+  "question": "Approve the group-sessions-by-project ideation — client-side project filter + grouping (projectFilter in localStorage, chip bar reusing segmented-control pattern, project-group dividers in regular view, wired into calm's existing repo-sort), no backend change — to proceed to implementation?",
+  "artifacts": [
+    {
+      "id": "artifact:zp7z36m3am49jyqrp685nhz9:ideation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/41f44dcd25ec523b74605cf53831fe5ac099c002/group-sessions-by-project/index.md",
+      "rev": "sha256:09547ea4f72d0adaecc81df209014a493454c8608ad7b99307a1850d1c129c4b",
+      "mediaType": "text/markdown",
+      "summary": "Ideation Stage Report verified: 4 checklist items DONE, riskiest mechanism spiked (or proven by code read), 5 ACs with falsifying edits, mock rendered. See artifact."
+    }
+  ]
+}
