@@ -1,6 +1,6 @@
 ---
 title: Session view should carry the session card, then improve session-centric from there
-status: ideation
+status: implementation
 source: captain dogfood — "we could at least have the card in the session view, and improve from there"
 id: 0c3re8kepj1984gnaenr5a7f
 gates:
