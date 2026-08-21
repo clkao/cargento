@@ -1,6 +1,6 @@
 ---
 title: Rich session metadata — entities touched, state, decisions, and progress
-status: ideation
+status: implementation
 source: captain dogfood feedback
 id: z4tjfzz9y4dz1vvaz588mc81
 gates:
@@ -45,7 +45,7 @@ gates:
                 reason: 'conn granted: ''you have the conn to push to the forked repo and open PR'' (re-granted post-compaction: ''you have unlimited tokens... you have the conn to push to the forked repo and open PR''). Subspace approved all 4 gates: ''you have the conn, why are you still asking?''. Ideation sound: entity_gate_summary parses gate records from frontmatter (spiked on 9 real files); complements upstream #124 (entity history vs wait text); 5 ACs with falsifying edits; mock renders target. Advancing to implementation.'
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
 started: 2026-08-21T08:07:11Z
 ---
 
