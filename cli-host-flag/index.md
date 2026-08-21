@@ -1,6 +1,6 @@
 ---
 title: Bind the dashboard to a configurable host (--host 0.0.0.0 for remote access)
-status: ideation
+status: implementation
 source: captain seed
 id: bkjcbqac4d34rtsn7a0vy1kz
 gates:
@@ -45,7 +45,7 @@ gates:
                 reason: 'Captain approved via Subspace (binding resolution, decision approve). Captain''s appended question ''estimate net loc change?'' answered from the ideation body: ~15-25 lines across three files (cli.py ~4, lifecycle.py ~2, http_api.py ~6-12) plus tests.'
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
 started: 2026-08-21T04:12:22Z
 ---
 
