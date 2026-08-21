@@ -665,8 +665,6 @@ def read_entities(
     state: RuntimeState,
     entity_dir: str,
     stages: list[str],
-    now: float,
-    window_sec: float,
 ) -> list[tuple[str, str, dict[str, str]]]:
     """``[(slug, stage, gate)]`` for one workflow's recent entity state, newest first.
 
@@ -674,14 +672,13 @@ def read_entities(
     the boot envelope's ``dispatchable`` snapshot is only a stale hint. An entity
     counts only when:
 
-    - its state file was written within ``window_sec`` — the same freshness
-      window every collector applies to a session. A first officer discovers
-      every workflow in the project, and a workflow retired months ago still has
-      entities frozen mid-pipeline; those are history, not work in flight.
     - its frontmatter ``status`` names a stage this workflow declares — the
       per-file discriminator that stands in for the containment check
       :func:`read_workflow` performs, since a ``split-root`` workflow may
-      legitimately keep its state outside the definition directory.
+      legitimately keep its state outside the definition directory. The
+      session's own freshness, the boot envelope's ``entity_dir``, the
+      ``resting`` filter, and the ``status``-in-declared check are the real
+      gates; entity-file mtime is not a freshness signal for git-committed state.
 
     The third element is the gate decision summary from
     :func:`entity_gate_summary`, computed from the same frontmatter read as the
@@ -690,8 +687,6 @@ def read_entities(
     declared = set(stages)
     out: list[tuple[str, str, dict[str, str]]] = []
     for slug, path, info in entity_files(config, entity_dir):
-        if not sessions.is_fresh(config, now, info.st_mtime, window_sec):
-            continue
         data = _entity_data(config, state, path, info)
         stage = data["stage"]
         if stage in declared:
@@ -761,7 +756,7 @@ def session_workflows(
         booted = boot_entities(boot, workflow_dir)
         entity_dir = boot_entity_dir(boot, workflow_dir)
         roster = (
-            read_entities(config, state, entity_dir, stages, now, window_sec) if entity_dir else []
+            read_entities(config, state, entity_dir, stages) if entity_dir else []
         )
         # Live worker names carry a stage but not a slug boundary, so the slug
         # has to come from a roster. The state directory is what makes that
