@@ -1,6 +1,6 @@
 ---
 title: Group and filter the session list by project
-status: backlog
+status: ideation
 source: captain dogfood feedback
 id: zp7z36m3am49jyqrp685nhz9
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: 'FO autonomous approval (conn granted: ''you have the conn to push to the forked repo and open PR''; reinforced: ''when you have the conn, you should still do gate attempt and record your autonomous approval as resolution''). Backlog seed names a user-facing end value and a concrete dashboard surface; proof-needed well-scoped. Advancing to ideation.'
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 
 With 18 sessions across cargento, subspace-ssh, subspace-v0, tycho, spacedock,
