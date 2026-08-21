@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:rj497exc44z5es90d7a2bg49:backlog:attempt-1:revision-1",
+  "question": "Approve pi-live-worker-attribution backlog to proceed to ideation?",
+  "artifacts": [
+    {
+      "id": "artifact:rj497exc44z5es90d7a2bg49:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/e39f1d79a1f04e67d77f6684869603c1d7e1a2b0/pi-live-worker-attribution/index.md",
+      "rev": "sha256:fc47436e1175436b7948815e6baea361ad07e27384e19edadc19680feb2b42e9",
+      "mediaType": "text/markdown",
+      "summary": "Pi collector hardcodes worker_names=[]. Source of truth is live ensigns."
+    }
+  ]
+}

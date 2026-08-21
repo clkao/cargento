@@ -3,6 +3,18 @@ title: Pi live-worker attribution — feed live ensign names to session_workflow
 status: backlog
 source: captain directive — source of truth is the live ensigns
 id: rj497exc44z5es90d7a2bg49
+gates:
+    version: 1
+    records:
+        - id: gate:rj497exc44z5es90d7a2bg49:backlog
+          stage: backlog
+          attempts:
+            - id: gate-attempt:rj497exc44z5es90d7a2bg49-backlog-1
+              briefing:
+                id: briefing:rj497exc44z5es90d7a2bg49:backlog:attempt-1:revision-1
+                digest: sha256:9db6429b8f07c980562244070249df4d71499ce8505895ddc36a6db7d0f67bd7
+                request-digest: sha256:87224cad04e08e0db3c2e9a9ef602df7ca2845e96a71b822abe1ca35eb1cc25e
+                room-ref: ./review/backlog/briefing-1
 ---
 
 The Pi collector passes an empty `worker_names` list to `session_workflows`, so the session view's "live workers first" source is always empty for Pi FO sessions — even when ensigns are actively running. The source of truth for "what is this session doing right now" is the live ensigns; the dashboard should reflect that.
