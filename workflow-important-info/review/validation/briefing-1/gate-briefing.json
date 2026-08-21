@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:et7hb2x9k6kts3cr56mnf2k8:validation:attempt-1:revision-1",
+  "question": "Approve the workflow-important-info validation — to proceed to done (merge)?",
+  "artifacts": [
+    {
+      "id": "artifact:et7hb2x9k6kts3cr56mnf2k8:validation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/cf9919f0086eaccbebfd7d23e68e79429489e169/workflow-important-info/index.md",
+      "rev": "sha256:30cf76c24bdede17929387145f32a27d65af78bf10080f1843185d5b8f06940a",
+      "mediaType": "text/markdown",
+      "summary": "Implementation verified: all checklist items DONE, suite green, commit landed. See artifact."
+    }
+  ]
+}
