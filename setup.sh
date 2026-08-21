@@ -1,21 +1,26 @@
 #!/bin/sh
 # setup.sh — bootstrap the detached Spacedock workflow for Cargento on a fresh clone.
 #
-# Run from the Cargento repo root (the clone whose origin is your fork or the
-# upstream). Idempotent: safe to re-run.
+# Run from the Cargento code clone root (the clone whose origin is your fork, or
+# the upstream if you have write access). Idempotent: safe to re-run.
 #
-# It recreates the .spacedock/ layout from the two remote branches:
+# The workflow spec and entity state live on the CANONICAL UPSTREAM
+# (github.com/clkao/cargento), on two branches:
 #   spacedock-workflow  — the workflow spec (README, _mods, DETACH.md, this script)
 #   dev-state           — the entity state (orphan branch)
+# A contributor forks the Cargento CODE repo to open PRs, but the workflow spec
+# and the durable entity state stay on clkao/cargento so every contributor
+# shares one authoritative workflow and one shared state ledger. This script
+# clones those two branches from clkao/cargento, not from the code clone's own
+# origin (which may be a fork).
 #
 # See DETACH.md for why the layout is shaped this way. This script is the
 # outside-contributor resume path; the binary's `state init` does not fetch the
 # README-declared state-branch today (overlay-contribution sprint DoD-3 gap).
 set -e
 
-# Resolve the Cargento clone's origin URL (the contributor's fork, or upstream
-# if you have write access). The spec and state branches live there.
-ORIGIN_URL=$(git remote get-url origin)
+# The canonical upstream that holds the workflow spec + state branches.
+UPSTREAM=https://github.com/clkao/cargento
 WORKFLOW_DIR=.spacedock/dev
 REPO=.spacedock/repo
 
@@ -27,9 +32,14 @@ grep -qxF '.worktrees/' "$EX" 2>/dev/null || echo '.worktrees/' >> "$EX"
 
 # 2. Clone the spec branch into .spacedock/repo (skip if already present).
 if [ ! -d "$REPO/.git" ]; then
-  echo ">> cloning spacedock-workflow from $ORIGIN_URL -> $REPO"
-  git clone -q "$ORIGIN_URL" "$REPO"
+  echo ">> cloning spacedock-workflow from $UPSTREAM -> $REPO"
+  git clone -q "$UPSTREAM" "$REPO"
   git -C "$REPO" checkout -q spacedock-workflow
+else
+  echo ">> $REPO already present; fetching latest spec"
+  git -C "$REPO" fetch -q origin spacedock-workflow
+  git -C "$REPO" checkout -q spacedock-workflow
+  git -C "$REPO" pull -q --ff-only origin spacedock-workflow 2>/dev/null || true
 fi
 
 # 3. Symlink the spec into the workflow dir (FindGitRoot climbs past symlinks to
@@ -40,13 +50,14 @@ ln -sf ../repo/_mods "$WORKFLOW_DIR/_mods"
 
 # 4. Fetch the state branch and check it out as a linked worktree at
 #    dev/.spacedock-state (the README declares state-branch: dev-state).
-git -C "$REPO" fetch -q origin dev-state
+git -C "$REPO" fetch -q "$UPSTREAM" dev-state
 if [ ! -d "$WORKFLOW_DIR/.spacedock-state" ]; then
-  git -C "$REPO" worktree add "$WORKFLOW_DIR/.spacedock-state" dev-state
+  # check out the fetched upstream dev-state as a local branch, then worktree it
+  git -C "$REPO" worktree add -B dev-state "$WORKFLOW_DIR/.spacedock-state" "origin/dev-state"
 else
-  # already present — refresh from origin so a resume sees peers' commits
-  git -C "$WORKFLOW_DIR/.spacedock-state" fetch -q origin dev-state
-  git -C "$WORKFLOW_DIR/.spacedock-state" pull -q --rebase origin dev-state 2>/dev/null || true
+  # already present — refresh from upstream so a resume sees peers' commits
+  git -C "$WORKFLOW_DIR/.spacedock-state" fetch -q "$UPSTREAM" dev-state
+  git -C "$WORKFLOW_DIR/.spacedock-state" pull -q --rebase "$UPSTREAM" dev-state 2>/dev/null || true
 fi
 
 # 5. Converge state (pull peers' entity commits into the worktree).
@@ -55,5 +66,6 @@ echo ">> spacedock state ready --workflow-dir $WORKFLOW_DIR"
 
 echo
 echo "done. workflow at $WORKFLOW_DIR"
+echo "  spec+state cloned from $UPSTREAM (spacedock-workflow + dev-state)"
 echo "  status:   ${SPACEDOCK_BIN:-spacedock} status --workflow-dir $WORKFLOW_DIR"
 echo "  dispatch: spacedock pi  (or claude/codex)"
