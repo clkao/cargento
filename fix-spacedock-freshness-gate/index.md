@@ -1,0 +1,45 @@
+---
+title: Fix Spacedock entity-state freshness gate (mtime staleness blanks the workflow strip)
+status: backlog
+source: captain dogfood feedback
+id: tzrvnebvdb10fddfr40szvtm
+---
+
+A long-running first-officer session that has been driving a workflow for hours
+shows `workflows: []` on the dashboard — no strip, no entities — even though it
+is classified as a first officer and the entity state is committed and current.
+
+## Problem
+
+`spacedock.read_entities` gates every entity file by `is_fresh(config, now,
+info.st_mtime, window_sec)` — the file's **mtime** must be within the freshness
+window (default 1 hour). But Spacedock entity state is committed via git; a file's
+mtime reflects the last checkout/write, not the last logical change. A session
+that committed entity state 2 hours ago and has been doing PR review since has
+stale mtime → `read_entities` returns `[]` → `workflows: []` → the strip blanks.
+
+Measured: this session (a Pi FO driving the `dev` workflow for hours) shows
+`spacedock: {"role": "first-officer", "workflows": []}` on the dashboard. The
+entity dir exists, the boot envelope resolves, the entity files are committed
+and current — but their mtime is hours old, so `read_entities` filters them out.
+
+## Included scope
+
+- Replace or supplement the mtime freshness gate in `read_entities` with a signal
+  that reflects actual workflow activity: the git commit time of the entity file,
+  or the entity file's frontmatter `started`/`completed` timestamps, or drop the
+  freshness gate for Spacedock state entirely (the boot envelope's
+  `entity_dir_present` already proves the workflow is live).
+- Keep the "don't show retired workflows" intent — but gate on workflow
+  activity (boot envelope recency, entity dir presence), not file mtime.
+
+## Excluded scope
+
+- Changing the session freshness window for non-Spacedock collectors.
+- The session view's rendering of the empty state (owned by
+  `session-view-spacedock-visibility`).
+
+## Proof needed to decide whether design should start
+
+Whether `read_entities` is the only mtime-gated path, and whether git commit time
+(or frontmatter timestamps) is reachable read-only without a git dependency.
