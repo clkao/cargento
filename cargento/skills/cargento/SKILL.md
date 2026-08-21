@@ -33,7 +33,7 @@ Pi relocation: `PI_CODING_AGENT_SESSION_DIR` is an authoritative direct session-
 |---|---|---|
 | **Needs input** (red, popup fired) | Claude is blocked on the human | Best effort, never guaranteed, from three sources that cover different things rather than ranking cleanly. The bundled `PermissionRequest` hook is the main one for tool gates, seen directly for `ExitPlanMode` and in the wild for `AskUserQuestion`. An actionable Notification-hook POST is the *only* source for an MCP elicitation or a worker's permission or network request. A pending input tool seen in the transcript is an opportunistic extra, because Claude Code flushes that record on its own schedule and sometimes not until the gate has been answered. Claude only — other harnesses have no needs-input detection |
 | **Working** (blue) | Actively generating | transcript/subagent/DB activity within the last 90s; detail = in-progress task's activeForm, else running subagents, else last tool |
-| **Idle** (gray) | Turn ended | anything else — "awaiting your message" |
+| **Idle** (gray) | Turn ended | anything else — "awaiting your message". Two situations wear the one word: a turn that ended and nobody read the result, and a session still waiting on a reply that never came. Only a turn-end event tells them apart, so only the four harnesses with an event adapter can — Claude Code, Codex, Gemini CLI and Antigravity, and only with their hooks installed. On the other six the row says the answer cannot be known there, rather than guessing at it |
 
 ## Display modes
 
@@ -61,6 +61,8 @@ Two flags appear in the `flag` column, and only these two — each is a signal t
 | **long turn** (amber) | Working, and this request has run or is estimated to run ≥15 min (`LONG_TURN_WARN_SEC`) — the same signal as the regular view's ⚠️. |
 
 A flag means "look at this", so a session that has simply gone quiet does not carry one. How long an idle session has been idle is in its own `idle / wait` cell, and how many of them there are is on the collapsed block's toggle.
+
+An idle session whose turn was seen to end, and which nobody has come back to for 20 minutes, is marked `done` beside that age — in the cell and in the regular view's idle row, never as a third flag. Finished work is worth collecting, not worth alarming about, and the 20 minutes is measured rather than picked: on real local transcripts, nine returns in ten to a stopped turn land inside seventeen. The collapsed toggle counts them too, since the block it hides is where they sit. Hovering the age says which of the three readings a row is: finished and unread, quiet with no turn-end seen, or a harness that sends no turn events at all.
 
 ## The gate queue
 
@@ -190,9 +192,9 @@ Simulate for testing:
 echo '{"session_id":"<id>","message":"test"}' | python3 "<skill-dir>/notify_hook.py"
 ```
 
-3. **Lifecycle events** — the plugin's own bundled hooks at `hooks/hooks.json`, so there is **nothing to add to a settings file**. They forward general lifecycle events to `/api/events/claude`: prompt submitted, turn stopped, permission requested, subagent started or stopped, tasks changed, compaction finished. Where path 2 sets one piece of side state, this drives the session's Working, Needs-input and Idle state directly, so the board reacts to a turn starting instead of waiting for the next scan.
+3. **Lifecycle events** — the plugin's own bundled hooks at `hooks/hooks.json`, so there is **nothing to add to a settings file**. They forward general lifecycle events to `/api/events/claude`: session started and ended, prompt submitted, turn stopped, permission requested, a tool run finishing, subagent started or stopped, tasks changed, compaction finished. Where path 2 sets one piece of side state, this drives the session's Working, Needs-input and Idle state directly, so the board reacts to a turn starting instead of waiting for the next scan.
 
-   Nothing to install: enabling the plugin is enough. Note that a session's overlays are retired when it ends, which is correct and means a one-shot `claude -p` run shows no event-driven state by the time it exits.
+   Nothing to install: enabling the plugin is enough. Note that a session's overlays are retired when it ends, which is correct and means a one-shot `claude -p` run shows no event-driven state by the time it exits. The one thing it keeps is the mark that its turn ended, held outside those overlays on purpose, so a run that finished and was never read can still say so.
 
    Only add the hooks by hand if the user runs `event_hook.py` outside the plugin, for instance against a checkout. In that case:
 

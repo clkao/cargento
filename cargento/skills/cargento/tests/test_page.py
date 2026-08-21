@@ -64,12 +64,12 @@ class FrontendAssetContractTest(unittest.TestCase):
         # part that moved is also the more useful failure of the two.
         expected_parts = {
             "spark.js": (
-                38_320,
-                "3d8cfdc9526a50026ba3a8c597f610b547b5a6d5335696f22724eb6653c2052a",
+                41_240,
+                "73d98309500e1d318dfda39e62474ea2d91b7be3a3e3b2b5684adae60b8f6701",
             ),
             "regular.js": (
-                38_106,
-                "ff04a42cb943db57e1984cb634ae7e81aae10ddcc069bd2d6c97acd01c426351",
+                38_564,
+                "40cf543aec2e09de31cd4144f9a990eefb4f6a8e192e50f207e64fe75f0fb9b4",
             ),
             "mode.js": (
                 2_172,
@@ -84,8 +84,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "b36c6fd4c6924857f7e86dbc2818de59d1e0984233480701bef0fabe14b6cc12",
             ),
             "calm.js": (
-                48_223,
-                "55cfe3e14052768b5d149aba9ce46e011147ed44e5749d9c6a2c03cea80e7393",
+                49_381,
+                "a15f5870e32370e2962ef4d8f1505c849d5013aadb5f9a7c866d95f7868ce856",
             ),
             "notify.js": (
                 3_185,
@@ -108,16 +108,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(47_778, len(styles))
+        self.assertEqual(48_371, len(styles))
         self.assertEqual(
-            "3c309889cc9f4bb04ce91d0f9feb858bde5970b70045d8b3f82763cd433bdc7c",
+            "5cf615ede246a5f10e1f715d523230554dfb6d9db48863c5eec5d6698508fec6",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(252_309, len(assembled))
+        self.assertEqual(257_438, len(assembled))
         self.assertEqual(
-            "8c3fe41cfaea1fa3e5edf29feeb6f020c46d3652349006b3bd1f7af70b3640d0",
+            "16db65d285d3f56043d82d46c997a1f4b59eb8248c1d4eee9e99e9c63f8a2826",
             hashlib.sha256(assembled).hexdigest(),
         )
 
