@@ -3,6 +3,18 @@ title: Per-workflow important-info definition — let each workflow declare what
 status: backlog
 source: captain dogfood feedback
 id: et7hb2x9k6kts3cr56mnf2k8
+gates:
+    version: 1
+    records:
+        - id: gate:et7hb2x9k6kts3cr56mnf2k8:backlog
+          stage: backlog
+          attempts:
+            - id: gate-attempt:et7hb2x9k6kts3cr56mnf2k8-backlog-1
+              briefing:
+                id: briefing:et7hb2x9k6kts3cr56mnf2k8:backlog:attempt-1:revision-1
+                digest: sha256:4a4910bcce1c6ac6dd8e6ff0beb5d19d8700f8e8c63b3ff5ca4de8e627109881
+                request-digest: sha256:976b96ab0e0ce6d22320eba729b4bb9789f94481a2fd956c3735919f119e5d6a
+                room-ref: ./review/backlog/briefing-1
 ---
 
 Each project/workflow can define what important information is to be displayed

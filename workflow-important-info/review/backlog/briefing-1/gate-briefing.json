@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:et7hb2x9k6kts3cr56mnf2k8:backlog:attempt-1:revision-1",
+  "question": "Approve the workflow-important-info backlog seed to advance to ideation?",
+  "artifacts": [
+    {
+      "id": "artifact:et7hb2x9k6kts3cr56mnf2k8:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/26a8621b76c8c63a342af9b7278cbfede3453f33/workflow-important-info/index.md",
+      "rev": "sha256:6f639c1979e611259fe34493e8355090892d1ad58e825474513ce257860d55c7",
+      "mediaType": "text/markdown",
+      "summary": "Backlog seed for workflow-important-info (filed from captain dogfood feedback). See entity body for end value, included/excluded scope, and proof needed."
+    }
+  ]
+}
