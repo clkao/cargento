@@ -1,6 +1,6 @@
 ---
 title: Per-workflow important-info definition — let each workflow declare what to display
-status: implementation
+status: validation
 source: captain dogfood feedback
 id: et7hb2x9k6kts3cr56mnf2k8
 gates:
