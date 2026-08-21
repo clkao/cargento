@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:hdz7pr9bmw5vpc5ah52sbcmb:validation:attempt-1:revision-1",
+  "question": "Approve the pi-agent-spacedock-state validation — both ACs independently reproduced with falsifying edits confirmed, toolResult branch proven additive, pre-PR suite green, diff purely additive — to proceed to done (merge)?",
+  "artifacts": [
+    {
+      "id": "artifact:hdz7pr9bmw5vpc5ah52sbcmb:validation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/064daee0338589961f2198080a19d9244626249a/pi-agent-spacedock-state.md",
+      "rev": "sha256:a38358920bbb5cae71c4ba5cd97427b43b75c8c90671633ab6167d7226d31ed8",
+      "mediaType": "text/markdown",
+      "summary": "Validation PASSED. Both ACs reproduced independently: AC1 Pi FO strip fails when toolResult branch removed; AC2 non-FO no strip fails when spacedock set unconditionally. toolResult branch proven additive (Claude tool_result blocks unchanged). Pre-PR suite green (ruff, mypy, lint_embedded, validate_plugins, coverage 89.2%, 1180+157 tests). Diff purely additive (185 ins, 0 del, 5 files), in-scope. Recommendation PASSED."
+    }
+  ]
+}
