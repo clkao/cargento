@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:hdz7pr9bmw5vpc5ah52sbcmb:backlog:attempt-1:revision-1",
+  "question": "Should design (ideation) start for this task — wire the Pi collector to the existing harness-agnostic Spacedock cartography parser so a Pi FO session shows the workflow strip a Claude FO gets?",
+  "artifacts": [
+    {
+      "id": "artifact:hdz7pr9bmw5vpc5ah52sbcmb:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/19a96f48941b3f53ceed5f5f8f353ad8bcf504b8/pi-agent-spacedock-state.md",
+      "rev": "sha256:cea7f3c86b969eed7fa951b71dd846e3ce8efe4de69d0f66175d01b79590daeb",
+      "mediaType": "text/markdown",
+      "summary": "Make a Pi first officer's dashboard session card show Spacedock workflow cartography (entity dir, per-entity stage, live-worker attribution) by wiring collectors/pi.py to the existing harness-agnostic spacedock.py, reusing the Claude collector's classification precedent."
+    }
+  ]
+}
