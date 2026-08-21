@@ -46,6 +46,15 @@ gates:
               application:
                 target-stage: implementation
                 state: consumed
+        - id: gate:6s6ft835wwg0q9hb8505rkz6:validation
+          stage: validation
+          attempts:
+            - id: gate-attempt:6s6ft835wwg0q9hb8505rkz6-validation-1
+              briefing:
+                id: briefing:6s6ft835wwg0q9hb8505rkz6:validation:attempt-1:revision-1
+                digest: sha256:db989bcceec2e3a3f345776a349ab472df649829e4e2c556cb1a69ab3b9ddbf9
+                request-digest: sha256:dddf5c39cfbfcd762144f36de7bc57d3a22d5d9897b5064edcb681a52b1cc8b3
+                room-ref: ./session-view-spacedock-visibility/review/validation/briefing-1
 started: 2026-08-21T02:50:26Z
 worktree: .worktrees/spacedock-ensign-session-view-spacedock-visibility
 ---
