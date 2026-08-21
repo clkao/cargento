@@ -265,3 +265,20 @@ extracts and feeds the data (collector + `session_workflows`), adding no new ren
 ### Summary
 
 The FO transcript's async `subagent` dispatch records carry `(slug, stage)` on the dispatch file path reliably enough to attribute live ensigns without the roster. `attribute_worker` cannot consume this directly (it needs a known slug), so the approach adds an additive `attributed_workers` emit-first path to `session_workflows` and a `dispatches` capture in the Pi collector's projection, taking the most-recent ensign dispatch batch as live. Two dependencies surfaced: the `pi-agent-spacedock-state` branch must land first (it adds `session_spacedock` + Pi boot reading), and the `read_workflow` symlink-containment guard blocks the local dev dogfood — confirmed out of scope (separate entity; FO unblocks locally with a real README).
+
+## Stage Report: implementation
+
+- DONE: Extract (slug, stage) from FO transcript subagent dispatch records (spacedock-ensign-{slug}-{stage}.md in workflowScript task paths)
+  Added `dispatch_workers(workflow_script)` pure parser in spacedock.py: greedy regex `SD_DISPATCH_RE` extracts (slug, stage) from dispatch file paths, deduped. Falsifying: non-greedy slug → multi-word slugs split wrong.
+- DONE: Pass extracted workers to session_workflows via an attributed_workers path (extension to attribute_worker or a pre-attributed input)
+  Added `attributed_workers` keyword-only parameter (list[tuple[str,str,str]]) to `session_workflows`; emit-first loop renders pre-attributed workers as live entities, validated against declared stages, deduped by slug. `attribute_worker` unchanged.
+- DONE: Pi collector passes extracted worker_names instead of [] to session_workflows
+  `collectors/pi.py` `_projection` captures `dispatches` from async subagent toolCalls (via `_subagent_dispatches` helper); `_info` exposes `live_workers` (newest non-empty batch); `session_spacedock` passes `live_workers` as `attributed_workers`. Falsifying: delete the pass-through → strip empty.
+- DONE: Session view shows live ensigns as live:True entities on the workflow strip
+  Verified by `test_pi_collect_live_ensigns_from_fan_out_dispatch`: a 3-run fan-out dispatch yields three `live: True` entities at `implementation`. Frontend unchanged — strip already renders `live: True`.
+- DONE: Pre-PR suite green
+  ruff check, ruff format --check, mypy --strict, lint_embedded.py, validate_plugins.py, bump_version --current, coverage (89.3% > 73% threshold), full unittest suite (1190 passed, 1 skipped) all green.
+
+### Summary
+
+Merged the `pi-agent-spacedock-state` dependency branch (fast-forward), then added the `dispatch_workers` parser and `attributed_workers` emit-first path to `spacedock.py`, and the dispatches capture + live_workers derivation to `collectors/pi.py`. The Pi collector now feeds the most-recent ensign dispatch batch as pre-attributed `(slug, stage, cycle)` tuples to `session_workflows`, which emits them as `live: True` entities before the roster/boot sources. The Claude collector is unchanged (defaults to None). Six new tests cover the parser, the emit-first/dedup/stage-validation, the newest-batch selection, and the end-to-end fan-out. The `read_workflow` symlink-containment guard still blocks the local dev dogfood (separate entity, out of scope).
