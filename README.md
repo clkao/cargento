@@ -5,6 +5,7 @@ entity-label: task
 entity-label-plural: tasks
 id-style: sd-b32
 state: .spacedock-state
+state-branch: dev-state
 stages:
   defaults:
     worktree: false
