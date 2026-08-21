@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:9t63gp52zec23rh0k9t160ft:ideation:attempt-1:revision-1",
+  "question": "Approve the observer-agent-pattern ideation design — Cargento-side read-only analyzer home, spike-validated no-fabrication goal derivation, three falsifiable ACs, haiku-model goal+stage+block MVP cut — to proceed to implementation?",
+  "artifacts": [
+    {
+      "id": "artifact:9t63gp52zec23rh0k9t160ft:ideation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/4ca085484e7906bd5ab184137def427998b8ed88/observer-agent-pattern.md",
+      "rev": "sha256:34fd2c0298b46ec608d10a037f1d51237218b858b868380e1c1077aa2590b0b5",
+      "mediaType": "text/markdown",
+      "summary": "Cargento-side read-only analyzer observes any active Pi session, derives goal+stage+one-open-block via a cheap model, writes a sidecar the session view renders. Riskiest path spiked against two real transcripts (positive + negative no-fabrication). Three falsifiable external-proof ACs. MVP cut: goal + current stage + the one open block."
+    }
+  ]
+}
