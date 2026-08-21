@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cargento — Observer Panel (mock)</title>
+<style>
+  :root {
+    --bg: #0d0f12;
+    --panel: #15181d;
+    --line: #23272e;
+    --line2: #2e333b;
+    --ink: #e8eaed;
+    --ink2: #aab0b8;
+    --ink3: #6c727a;
+    --accent: #5b9bf5;
+    --accent-ink: #c6dafc;
+    --warn: #f0b429;
+    --alert: #f0506e;
+    --green: #4caf7d;
+    --purple: #9b8cf5;
+    --blue: #5b9bf5;
+    --orange: #e88c50;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink);
+    padding: 16px; font-size: 13px; line-height: 1.5;
+  }
+  .wrap { max-width: 520px; margin: 0 auto; }
+  .mock-label {
+    font-size: 11px; color: var(--ink3); text-transform: uppercase;
+    letter-spacing: 0.6px; margin: 24px 0 6px; border-top: 1px dashed var(--line2);
+    padding-top: 12px;
+  }
+  .mock-label:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+
+  /* ── observer card ─────────────────────────────────── */
+  .obs-card {
+    background: var(--panel); border: 1px solid var(--line2); border-radius: 8px;
+    overflow: hidden;
+  }
+  .obs-head {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 10px 14px; border-bottom: 1px solid var(--line);
+  }
+  .obs-head .harness { font-weight: 700; font-size: 13px; }
+  .obs-head .sid { font-family: monospace; color: var(--ink3); font-size: 12px; }
+  .obs-head .observe-btn {
+    margin-left: auto; background: none; border: 1px solid var(--line2);
+    color: var(--ink3); padding: 2px 10px; border-radius: 4px;
+    cursor: pointer; font-size: 11px; font-family: inherit;
+  }
+  .obs-head .observe-btn.on {
+    border-color: var(--accent); color: var(--accent-ink);
+    background: color-mix(in oklab, var(--accent) 12%, transparent);
+  }
+
+  .obs-body { padding: 12px 14px; }
+
+  /* ── goal line ─────────────────────────────────────── */
+  .obs-goal {
+    border-left: 3px solid var(--accent);
+    padding: 6px 10px; margin-bottom: 10px; border-radius: 0 4px 4px 0;
+    background: color-mix(in oklab, var(--accent) 8%, transparent);
+    font-size: 13px; color: var(--ink);
+  }
+  .obs-goal .gk {
+    font-size: 10px; color: var(--ink3); text-transform: uppercase;
+    letter-spacing: 0.5px; margin-right: 6px;
+  }
+  .obs-goal.no-goal {
+    border-left-color: var(--ink3);
+    background: none; color: var(--ink3); font-style: italic;
+  }
+
+  /* ── stage badge ───────────────────────────────────── */
+  .obs-stage {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 10px; margin-bottom: 10px;
+    text-transform: uppercase; letter-spacing: 0.3px;
+  }
+  .obs-stage[data-stage="ideation"] { color: var(--blue); background: color-mix(in oklab, var(--blue) 16%, transparent); }
+  .obs-stage[data-stage="implementation"] { color: var(--orange); background: color-mix(in oklab, var(--orange) 16%, transparent); }
+  .obs-stage[data-stage="validation"] { color: var(--purple); background: color-mix(in oklab, var(--purple) 16%, transparent); }
+  .obs-stage[data-stage="backlog"] { color: var(--ink3); background: color-mix(in oklab, var(--ink3) 16%, transparent); }
+
+  /* ── open block ────────────────────────────────────── */
+  .obs-block {
+    font-size: 12px; color: var(--ink2); padding: 6px 10px;
+    border-left: 3px solid var(--warn); border-radius: 0 4px 4px 0;
+    background: color-mix(in oklab, var(--warn) 6%, transparent);
+  }
+  .obs-block .bk {
+    font-size: 10px; color: var(--ink3); text-transform: uppercase;
+    letter-spacing: 0.5px; margin-right: 6px;
+  }
+  .obs-block.none {
+    border-left-color: var(--line2); background: none; color: var(--ink3);
+    font-style: italic;
+  }
+
+  /* ── fallback note ─────────────────────────────────── */
+  .obs-fallback {
+    font-size: 10px; color: var(--ink3); margin-top: 8px;
+    border-top: 1px dotted var(--line); padding-top: 6px;
+  }
+
+  /* ── empty / not-yet-observed ──────────────────────── */
+  .obs-empty {
+    padding: 20px 14px; text-align: center; color: var(--ink3); font-size: 12px;
+  }
+  .obs-empty .observe-btn {
+    background: none; border: 1px solid var(--accent);
+    color: var(--accent-ink); padding: 4px 16px; border-radius: 4px;
+    cursor: pointer; font-size: 12px; font-family: inherit; margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- variant A: active session with a derived goal, stage, and one open block -->
+
+  <div class="mock-label">A — active session: derived goal + stage + one open block</div>
+  <div class="obs-card">
+    <div class="obs-head">
+      <span class="harness">claude</span>
+      <span class="sid">a3f1b2c4</span>
+      <button class="observe-btn on">observed</button>
+    </div>
+    <div class="obs-body">
+      <div class="obs-goal">
+        <span class="gk">goal</span>Managing Spacedock dev workflow; current focus: report remaining pi-related test and ergonomics issues
+      </div>
+      <span class="obs-stage" data-stage="ideation">ideation</span>
+      <div class="obs-block">
+        <span class="bk">block</span>Observer agent pattern ideation returned for revise: needs a user-facing surface, not backend-only
+      </div>
+    </div>
+  </div>
+
+  <!-- variant B: no-goal session (generic opener only, no assistant output) -->
+
+  <div class="mock-label">B — no-goal session: "no goal derived" sentinel</div>
+  <div class="obs-card">
+    <div class="obs-head">
+      <span class="harness">claude</span>
+      <span class="sid">e7d2f9a1</span>
+      <button class="observe-btn on">observed</button>
+    </div>
+    <div class="obs-body">
+      <div class="obs-goal no-goal">
+        <span class="gk">goal</span>no goal derived
+      </div>
+      <div class="obs-block none">
+        <span class="bk">block</span>none
+      </div>
+    </div>
+  </div>
+
+  <!-- variant C: model failure — rule-based fallback (stage from entity dir, block from scan) -->
+
+  <div class="mock-label">C — model failure: degraded to deterministic fallback, no hallucination</div>
+  <div class="obs-card">
+    <div class="obs-head">
+      <span class="harness">pi</span>
+      <span class="sid">01a00d70</span>
+      <button class="observe-btn on">observed</button>
+    </div>
+    <div class="obs-body">
+      <div class="obs-goal no-goal">
+        <span class="gk">goal</span>no goal derived
+      </div>
+      <span class="obs-stage" data-stage="implementation">implementation</span>
+      <div class="obs-block">
+        <span class="bk">block</span>quota-disclosure-modal r2 waiting on captain review
+      </div>
+      <div class="obs-fallback">model unavailable — showing rule-based stage + block fallback</div>
+    </div>
+  </div>
+
+  <!-- variant D: not-yet-observed (operator has not pointed the observer yet) -->
+
+  <div class="mock-label">D — not-yet-observed: idle state before the operator points the observer</div>
+  <div class="obs-card">
+    <div class="obs-head">
+      <span class="harness">claude</span>
+      <span class="sid">b2c8d3e0</span>
+      <button class="observe-btn">observe</button>
+    </div>
+    <div class="obs-empty">
+      Click "observe" to derive this session's goal and current status.
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

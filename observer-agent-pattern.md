@@ -59,8 +59,8 @@ analyzer precedent). The observer is a read-only analyzer module in `cargento_ru
 reads the target session's transcript via the same bounded, freshness-windowed, append-only-tree reads the
 Pi/Claude collectors already use, reads the target's workflow entity dir read-only (titles + statuses — the
 spike confirms this is the goal source for workflow sessions), invokes a cheap model (haiku, or luna if it lands
-in the Pi models store — see Model direction), and writes one sidecar (`<session>.observer.json`) the session
-view renders. No streaming, no salience beyond goal + current stage + the one open block in the MVP.
+in the Pi models store — see Model direction), and writes one sidecar (`<session>.observer.json`) the observer
+panel renders. No streaming, no salience beyond goal + current stage + the one open block in the MVP.
 
 **Model direction (captain, verbatim):** "the observer agent (the deliverable) should use a cheap model —
 haiku or luna." "luna" may not be in the Pi models store yet. Resolution: default to haiku; if luna becomes
@@ -86,12 +86,31 @@ sidecar the session view renders. No streaming, no salience beyond goal+stage+bl
    cheap-model direction), needs lifecycle/health management, and its persistent presence risks the very
    interruption and mutation the read-only contract forbids. The MVP is request-scoped, not continuous.
 
-The analyzer home reuses the read-only read path the collectors already proved safe, sits beside the
-session-view consumer (the `session-view-spacedock-visibility` entity owns that surface), and treats the
-cheap-model call as an extension of the existing analyzer precedent (`prompt_title` already derives a short
-title from prompt text). New module, not an expansion of `transcripts.py`'s own responsibilities — it owns
-first-line metadata and prompt titles; the observer is a distinct concern with its own read set
-(transcript head + workflow entity dir) and its own output (a sidecar).
+The analyzer home reuses the read-only read path the collectors already proved safe. The observer ships
+**two** things: (1) the analyzer module that reads the transcript + entity dir, invokes the cheap model,
+and writes the sidecar; (2) a minimal observer panel — a compact card that reads the sidecar and renders the
+derived goal + current stage + one open block to the operator. The panel is self-contained: it renders from
+the sidecar alone, without the dispatch tree.
+
+**Boundary with the sibling** (`session-view-spacedock-visibility`): the sibling owns the session view mode
+— the dispatch tree of workflow entities along the stage spine + the workflow-frontmatter goal line (a
+static `title` scalar). The observer panel renders the session's **live semantic state** (what the session
+is doing right now, where it is stuck) — a different, narrower surface the frontmatter goal line cannot
+provide. The sibling's session view may embed the observer panel as a header or side panel in the future,
+but that integration is the sibling's task; the MVP ships the panel standalone so the operator sees the
+observer's output without the sibling.
+
+The cheap-model call is an extension of the existing analyzer precedent (`prompt_title` already derives a
+short title from prompt text). New module, not an expansion of `transcripts.py`'s own responsibilities — it
+owns first-line metadata and prompt titles; the observer is a distinct concern with its own read set
+(transcript head + workflow entity dir) and its own output (a sidecar + a panel that renders it).
+
+**Simplest rejected alternative for the surface:** defer the entire render to the sibling
+session-view-spacedock-visibility task and ship the sidecar alone (the prior ideation's framing). Rejected
+because the sibling's goal line is a static frontmatter `title`, not the derived live goal the observer
+produces from the transcript head — without its own panel, the operator cannot see the observer's output
+without the sibling, and the observer would be backend-only with no user impact. The captain rejects that
+framing: every task must have user impact, and this task must own where the observer's output appears.
 
 ## Risk evidence
 
@@ -130,12 +149,19 @@ Spike artifact: `/tmp/observer_spike2.py` (deterministic, read-only, asserts the
 
 Estimate: small. One new analyzer module in `cargento_runtime` (e.g. `observer.py`), one read-only entry
 point that reads the target transcript head (opening directive + bounded recent window) and the target
-workflow entity dir, one cheap-model call, one sidecar writer to the store the session view already
-renders. No new collector, no new server route in the MVP — the session view polls/reads the sidecar.
+workflow entity dir, one cheap-model call, one sidecar writer to the store, and one observer panel
+(~60–100 lines of JS in `web/observer.js`) that reads the sidecar and renders the derived goal + current
+stage + one open block. One new server route (`/api/observe?harness=<h>&sid=<s>`) triggers the analyzer on
+demand and returns the sidecar JSON; the panel fetches it when the operator clicks "observe" on a session
+card. No new collector; the route is a thin trigger, not a polling endpoint.
 
 Semantics this may change:
-- The session view (`session-view-spacedock-visibility`) gains a read of the observer sidecar — a new read
-  path, additive, no existing read changed.
+- The observer panel (`web/observer.js`) is a new JS module loaded by the page (`APP_PARTS` gains one entry).
+  It renders from the sidecar alone; the sibling session view may later embed it, but the MVP ships it
+  standalone. The assembled page hash changes, which the refactor test checks — that test must be updated.
+- One new server route (`/api/observe`) triggers the analyzer on demand. It is a thin trigger: read
+  transcript + entity dir, call the model, write the sidecar, return the JSON. Not a polling endpoint — the
+  operator triggers it by clicking "observe".
 - A cheap-model call is introduced into the Cargento runtime where none existed before. Tolerance: the call
   is on-demand (triggered by an operator pointing the observer at a session), not on every dashboard
   refresh; a model failure degrades to the deterministic "no goal derived" / rule-based stage+block fallback,
@@ -168,6 +194,16 @@ full salience bullets, streaming) is explicitly out of scope for the MVP.
    and state dir are on a read-only filesystem mount (or `chmod -w` the target tree before the run) and
    asserts the run still produces the sidecar and exits 0 — any write into the observed tree would raise and
    fail the run. The sidecar is written to the observer's own store, not the observed session's tree.
+4. **The observer panel renders the operator-visible output from the sidecar (user-facing end value).**
+   When the operator clicks "observe" on a known session, the panel renders (a) the derived goal line (or the
+   "no goal derived" sentinel) from the sidecar, (b) the current stage badge, and (c) the one open block. The
+   operator sees these three fields without opening the sibling session view. **Verified by:** a test that
+   feeds a fixture sidecar JSON (`{goal, stage, block}`) into the panel render function and asserts the
+   rendered HTML contains the goal text, the stage name, and the block text; a second fixture with
+   `goal: "no goal derived"` asserts the sentinel text appears in the rendered output, not a fabricated goal.
+   **Falsified by:** (a) editing the sidecar's goal to a different string and observing the panel not
+   update, (b) rendering a `no goal derived` sidecar with a hardcoded fallback goal and observing the
+   fabricated text appear instead of the sentinel.
 
 ## Test plan
 
@@ -184,6 +220,11 @@ full salience bullets, streaming) is explicitly out of scope for the MVP.
 4. **Cheap-model failure-degradation test.** Inject a model call that errors/returns empty; assert the
    analyzer degrades to the deterministic fallback ("no goal derived" or rule-based stage+block) and never
    raises or hallucinates. Falsified by letting a model error propagate as a crash or a fabricated goal.
+5. **Observer-panel render test (user-facing).** Feed a fixture sidecar JSON through the panel render
+   function; assert the rendered HTML contains the goal text, the stage name, and the block text. Feed a
+   `no goal derived` sidecar; assert the sentinel text appears, not a fabricated goal. Falsified by editing
+   the sidecar's goal to a different string and observing the panel not update, or by adding a hardcoded
+   fallback goal when the sidecar carries the sentinel.
 
 Fixtures derive from the two real transcripts used in the spike (paths recorded in Risk evidence); the test
 materializes bounded, redacted copies rather than depending on the live session dir (no hidden machine
@@ -198,8 +239,10 @@ dependency).
 - Real-time streaming of the observer's output — follow-up.
 - Full salience beyond the MVP cut (goal + current stage + the one open block) — the 3-5 bullets of decisions/
   in-flight work are a follow-up beyond the MVP cut.
-- The session view's rendering of the sidecar — owned by the `session-view-spacedock-visibility` entity, a
-  separate task.
+- The session view's dispatch tree and workflow-frontmatter goal line — owned by the
+  `session-view-spacedock-visibility` entity. This task ships the observer panel (goal + stage + block from
+  the sidecar); the sibling ships the dispatch tree (entity nodes along the stage spine). The sibling may
+  later embed the observer panel in its session view, but that integration is the sibling's task.
 - Resolving whether "luna" exists in the Pi models store — implementation follow-up; haiku is the default.
 
 ## Stage Report: ideation
@@ -216,3 +259,22 @@ dependency).
 ### Summary
 
 Selected the Cargento-side analyzer as the observer's home (reuses the collectors' read-only read path; sits beside the session-view consumer). Exercised the riskiest mechanism with a read-only spike against two real Pi transcripts: a first-officer workflow session (positive — goal derivable from recent concrete directives + workflow entity dir) and a 0-token aborted session (negative — "no goal derived", asserted, not hallucinated). Wrote three falsifiable ACs (live-scenario match with a red negative case, no-goal sentinel, read-only invariant via read-only mount) and recorded the captain's haiku-or-luna model direction and the goal+stage+block MVP cut verbatim. No frontmatter touched; committed path-scoped to dev-state and pushed.
+
+## Stage Report: ideation (cycle 2)
+
+- DONE: Identify the concrete user-facing dashboard surface THIS task owns (where the operator sees the observer output)
+  The observer panel — a compact card rendering the derived goal + current stage + one open block from the sidecar. Self-contained: renders from the sidecar alone, without the dispatch tree. Boundary with sibling: sibling owns the session view mode (dispatch tree + frontmatter goal line); this task owns the observer panel (live semantic state). Mock at observer-agent-pattern/mock.html renders four variants.
+- DONE: Mock at observer-agent-pattern/mock.* renders that user-facing surface
+  mock.html created: four variants — (A) active session with derived goal + stage + block, (B) no-goal session with "no goal derived" sentinel, (C) model failure degraded to rule-based fallback, (D) idle/not-yet-observed state. Static HTML sketch the captain can react to.
+- DONE: At least one AC measures the user-facing end value (what the operator sees), not only the backend mechanism
+  AC-4 added: the observer panel renders the operator-visible output (goal + stage + block) from the sidecar. Verified by feeding a fixture sidecar into the panel render function and asserting the rendered HTML contains goal text, stage name, and block text; a no-goal fixture asserts the sentinel appears. Falsified by editing the sidecar goal or adding a hardcoded fallback goal.
+- DONE: Approach names the simplest rejected alternative and why it cannot deliver the MVP value
+  For the surface: deferring the entire render to the sibling (the prior framing) — rejected because the sibling's goal line is a static frontmatter title, not the derived live goal; without its own panel, the observer is backend-only with no user impact. The captain rejects that framing.
+- DONE: Riskiest mechanism exercised first (or no-spike-needed with proven mechanisms named)
+  Spike `/tmp/observer_spike2.py` (read-only) stands: positive case (goal derived from transcript head + entity dir) and negative case (no goal derived, asserted). No further spike needed for the panel — it renders from the sidecar, a proven JSON-to-DOM path.
+- DONE: Each AC carries an external Verified-by clause with the concrete falsifying edit
+  AC-1: live scenario, falsified by editing the recent directive. AC-2: no-goal sentinel, falsified by removing the short-circuit. AC-3: read-only invariant, falsified by any write into the target tree. AC-4: panel render, falsified by editing the sidecar goal or adding a hardcoded fallback.
+
+### Summary
+
+Reworked the ideation per captain revise: the observer now ships its own user-facing surface (the observer panel — a compact card rendering goal + stage + block from the sidecar), not just a backend-only analyzer. Created a mock at observer-agent-pattern/mock.html with four variants (active, no-goal, model-failure fallback, idle). Added AC-4 measuring the user-facing end value (what the operator sees in the panel). Updated the boundary with the sibling session-view task: sibling owns the dispatch tree + frontmatter goal; this task owns the observer panel (live semantic state). Kept the existing three ACs and the no-fabrication spike evidence. Named the simplest rejected alternative for the surface (defer all rendering to the sibling — rejected because it leaves the observer backend-only with no user impact).
