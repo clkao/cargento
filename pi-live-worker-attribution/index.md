@@ -35,6 +35,17 @@ gates:
                 digest: sha256:75fd9c81a0e79e8c7d94a0d58771bd852f3218a6a6141cbbdb1fa60805f4987d
                 request-digest: sha256:1fda245eb3b62ec17bc44aadb05d529b1d68745b7e07738620c9e98ad9b4661b
                 room-ref: ./review/ideation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:rj497exc44z5es90d7a2bg49:ideation:1
+                briefing: briefing:rj497exc44z5es90d7a2bg49:ideation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T09:19:56.552011227Z"
+                decision: approve
+                reason: conn granted. Spike confirmed 21 dispatches parseable from FO transcript. attribute_worker extension in scope. Advancing to implementation.
+              application:
+                target-stage: implementation
+                state: pending
 started: 2026-08-21T08:42:31Z
 ---
 
