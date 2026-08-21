@@ -35,6 +35,17 @@ gates:
                 digest: sha256:5dc72312557492e7f1a28e8df57872c341cf1d82a700d7b1116c70fb9c4f206e
                 request-digest: sha256:425ad4738333f53ef9e9ae4db535066f6d2be508eceaf5fa0efb9f5e548a8e2e
                 room-ref: ./review/ideation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:z4tjfzz9y4dz1vvaz588mc81:ideation:1
+                briefing: briefing:z4tjfzz9y4dz1vvaz588mc81:ideation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-21T08:27:13.733416189Z"
+                decision: approve
+                reason: 'conn granted: ''you have the conn to push to the forked repo and open PR'' (re-granted post-compaction: ''you have unlimited tokens... you have the conn to push to the forked repo and open PR''). Subspace approved all 4 gates: ''you have the conn, why are you still asking?''. Ideation sound: entity_gate_summary parses gate records from frontmatter (spiked on 9 real files); complements upstream #124 (entity history vs wait text); 5 ACs with falsifying edits; mock renders target. Advancing to implementation.'
+              application:
+                target-stage: implementation
+                state: pending
 started: 2026-08-21T08:07:11Z
 ---
 
