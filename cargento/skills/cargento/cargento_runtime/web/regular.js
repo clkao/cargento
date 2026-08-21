@@ -464,7 +464,7 @@ function sdBlock(sess){
   }
   const names = wfs.map(w => w.workflow).join(" · ");
   const dimSection = dimRows
-    ? `<div class="sd-dim-sep"><span class="sd-k">not touched</span></div>${dimRows}`
+    ? `<div class="sd-dim-sep"><span class="sd-k">other workflow entities</span></div>${dimRows}`
     : "";
   return `<div class="sd"><div><span class="sd-k">spacedock ${esc(names)}</span>` +
     `<span class="sd-role">${esc(role)}</span></div>${liveRows}${dimSection}</div>`;
@@ -529,17 +529,26 @@ function groupedByProject(sessions, cardFn, d){
   return html;
 }
 
-function workingCard(d, sess){
+/* The shared card anatomy both views render the same way: headrow through
+   turnBlock. `workingCard` wraps the core with board-only elements (Working
+   pill, lead pill, sparkline, consumption, subagents, sdBlock, taskBlock);
+   the session view calls the core without them. The two views cannot disagree
+   about what a session is doing because they call the same function for the
+   same fields from the same session object — the same principle the calm
+   mode already follows (every value derived from `/api/data`). */
+function sessionCardCore(d, sess, opts){
+  opts = opts || {};
   const known = rateKnown(d, sess);
   const rate = known ? ((isFinite(sess.rate_per_min) ? sess.rate_per_min : 0) || 0) : null;
-  const hist = sessRateHistory.get(sessKey(sess));
+  const showSpark = opts.spark !== false;
   /* No sparkline for a harness that reports no rate: the buffer still holds a
      point per poll for it, every one of them the 0 the payload sent, so the line
      would assert a measured silence. Where there is one, its title names two
      different windows, because they are two different windows — the number is a
      mean over the server's rate window, the line is the last five minutes of
      those means as this page received them. */
-  const spark = (known && hist && hist.length > 1)
+  const hist = showSpark ? sessRateHistory.get(sessKey(sess)) : null;
+  const spark = (showSpark && known && hist && hist.length > 1)
     ? `<span class="rate-spark" title="${rate.toLocaleString()} tok/min` +
       ` (${esc(rateWindowLabel(d))}) · line trails the last ${esc(fmtDur(SPARK_WINDOW_SEC))}">` +
       sparkSVG(hist, nowSec(), 84, 26, false) + `</span>`
@@ -563,21 +572,39 @@ function workingCard(d, sess){
      claims one only over the sessions that report a rate, which is the strongest
      claim available while a rate-less harness is on screen. The tooltip carries
      the window, because "fastest" invites reading as this instant. */
-  const lead = burnLeaders(d);
-  const leadTip = lead.best.toLocaleString() + " tok/min, the highest of the " + lead.ranked +
-    " working session" + (lead.ranked === 1 ? "" : "s") + " that report a rate" +
-    (lead.unknown ? ", with " + lead.unknown + " reporting none" : "") +
-    " — measured as a " + rateWindowLabel(d) + ", not as this instant";
-  const leadPill = lead.keys.has(sessKey(sess))
-    ? `<span class="pill" title="${esc(leadTip)}"` +
-      ` style="background:color-mix(in oklab,var(--accent) 10%,transparent);color:var(--accent-ink);` +
-      `box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--accent) 42%,transparent)">` +
-      `${lead.unknown ? "fastest known" : "fastest"}</span>`
+  const leadPill = opts.lead !== false ? (() => {
+    const lead = burnLeaders(d);
+    const leadTip = lead.best.toLocaleString() + " tok/min, the highest of the " + lead.ranked +
+      " working session" + (lead.ranked === 1 ? "" : "s") + " that report a rate" +
+      (lead.unknown ? ", with " + lead.unknown + " reporting none" : "") +
+      " — measured as a " + rateWindowLabel(d) + ", not as this instant";
+    return lead.keys.has(sessKey(sess))
+      ? `<span class="pill" title="${esc(leadTip)}"` +
+        ` style="background:color-mix(in oklab,var(--accent) 10%,transparent);color:var(--accent-ink);` +
+        `box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--accent) 42%,transparent)">` +
+        `${lead.unknown ? "fastest known" : "fastest"}</span>`
+      : "";
+  })() : "";
+  const workingPill = opts.working !== false
+    ? `<span class="pill pill-work"><span class="pill-dot"></span>Working</span>`
     : "";
   const bits = [];
   if(sess.total) bits.push(`${sess.done}/${sess.total} done · ${sess.progress_pct}%`);
   if(sess.eta_h) bits.push(`~${sess.eta_h} left`);
   const bitsLine = bits.length ? `<div class="card-bits">${esc(bits.join(" · "))}</div>` : "";
+  const consMeta = opts.consumption !== false ? consumptionMeta(d, sess) : "";
+  return `<div class="card-top"><div class="card-main">` +
+    `<div class="card-headrow">${workingPill}${leadPill}${badge(sess.harness, true)}</div>` +
+    `<div class="card-title">${esc(sess.title || sess.project)}</div>` +
+    `<div class="card-meta">${esc(sess.project)} · ${esc(sess.session)}` +
+    `${authorityMeta(sess)}${consMeta}</div>${bitsLine}` +
+    `</div>${rateMeter}</div>` +
+    `<div class="now"><span class="now-k">now</span>` +
+    `<span title="${esc(sess.state_detail)}">${esc(humanTool(sess.state_detail))}</span></div>` +
+    turnBlock(sess.turn);
+}
+
+function workingCard(d, sess){
   /* The model chip appears only where the child's and the parent's are both
      measured and unequal — childModelShown() owns that rule for both views, and
      re-deriving it inline is how the two came to disagree about `fastest`. Its
@@ -594,16 +621,9 @@ function workingCard(d, sess){
       (sess.subagents.length > 6 ? `<span class="subs-k">+${sess.subagents.length-6} more</span>` : "") +
       `</div>`
     : "";
-  return `<div class="card" data-calm="session" data-arg="${esc(sessKey(sess))}"><div class="card-top"><div class="card-main">` +
-    `<div class="card-headrow"><span class="pill pill-work"><span class="pill-dot"></span>Working</span>` +
-    leadPill + badge(sess.harness, true) + `</div>` +
-    `<div class="card-title">${esc(sess.title || sess.project)}</div>` +
-    `<div class="card-meta">${esc(sess.project)} · ${esc(sess.session)}` +
-    `${authorityMeta(sess)}${consumptionMeta(d, sess)}</div>${bitsLine}` +
-    `</div>${rateMeter}</div>` +
-    `<div class="now"><span class="now-k">now</span>` +
-    `<span title="${esc(sess.state_detail)}">${esc(humanTool(sess.state_detail))}</span></div>` +
-    turnBlock(sess.turn) + subs + sdBlock(sess) + taskBlock(sess) + `</div>`;
+  return `<div class="card" data-calm="session" data-arg="${esc(sessKey(sess))}">` +
+    sessionCardCore(d, sess) +
+    subs + sdBlock(sess) + taskBlock(sess) + `</div>`;
 }
 
 /* Resolved, not written back: a cursor whose gate has left the queue falls to

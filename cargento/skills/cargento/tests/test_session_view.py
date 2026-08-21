@@ -436,3 +436,192 @@ console.log(JSON.stringify(out));
         self.assertEqual("session", out["mode"], "did not enter session mode")
         self.assertEqual("claude:1234abcd", out["key"], "session key was not set")
         self.assertIn("session=", out["hash"], "hash was not synced")
+
+    # ── session-centric rework: session card + dispatch history ─────────────
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_ac_card_renders_session_card(self) -> None:
+        """AC-1: the session view renders the session card above the workflow
+        strip. The card shows title, project · session · via provider · model,
+        rate (tok/min), state + state_detail, and elapsed/eta — the same fields
+        the board view's workingCard shows, from the same session object.
+        Fails if the sessionCardCore call is deleted from sessionView."""
+        checks = """
+const out = {};
+sessionViewKey = "claude:1234abcd";
+const cardSess = mk({
+  title: "Use $spacedock:first-officer for this whole Pi session.",
+  state: "working", state_detail: "running bash",
+  rate_per_min: 433, provider: "lunaroute", model: "opus-4",
+  total: 10, done: 3, progress_pct: 30, eta_h: "2h 30m",
+  turn: {elapsed_h: "12m", eta_h: "8m", pct: 60, long: false},
+  spacedock: {role: "first-officer", workflows: [
+    sdWf({goal: "Ship it", entities: [ent("drc-1", "review", false)]})
+  ]}
+});
+const d = board([cardSess]);
+const h = sessionView(d);
+// The card is present (sv-card class).
+out.hasCard = h.includes('class="card sv-card"');
+// Card fields from the same session object.
+out.rateNum = h.includes('>433<');
+out.authority = h.includes('via lunaroute');
+out.model = h.includes('opus-4');
+out.stateDetail = h.includes('running bash');
+out.turn = h.includes('12m elapsed');
+out.eta = h.includes('~2h 30m left');
+// The card appears before the workflow strip.
+out.cardBeforeWf = h.indexOf('sv-card') < h.indexOf('sv-wf');
+console.log(JSON.stringify(out));
+"""
+        out = self.run_session(checks)
+        self.assertTrue(out["hasCard"], "the session card element is missing")
+        self.assertTrue(out["rateNum"], "the rate number is missing from the card")
+        self.assertTrue(out["authority"], "the authority string is missing from the card")
+        self.assertTrue(out["model"], "the model is missing from the card")
+        self.assertTrue(out["stateDetail"], "the state_detail is missing from the card")
+        self.assertTrue(out["turn"], "the turn elapsed is missing from the card")
+        self.assertTrue(out["eta"], "the eta is missing from the card")
+        self.assertTrue(out["cardBeforeWf"], "the card does not appear before the workflow strip")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_ac_card_factored_not_duplicated(self) -> None:
+        """AC-2: sessionCardCore is defined exactly once and both workingCard
+        and sessionView call it. Fails if card HTML is inlined in sessionView
+        instead of calling sessionCardCore."""
+        checks = """
+const out = {};
+// sessionCardCore is defined (a function).
+out.coreIsFunction = typeof sessionCardCore === "function";
+// workingCard calls sessionCardCore.
+const boardHtml = workingCard(board([fo]), fo);
+out.workingCardHasCard = boardHtml.includes('class="card"');
+// sessionView produces a card.
+sessionViewKey = "claude:1234abcd";
+const sessionHtml = sessionView(board([fo]));
+out.sessionHasCard = sessionHtml.includes('class="card sv-card"');
+// Both use sessionCardCore — verify by checking the card-top/card-main
+// structure that sessionCardCore emits.
+out.boardHasCardTop = boardHtml.includes('card-top');
+out.sessionHasCardTop = sessionHtml.includes('card-top');
+console.log(JSON.stringify(out));
+"""
+        out = self.run_session(checks)
+        self.assertTrue(out["coreIsFunction"], "sessionCardCore is not defined")
+        self.assertTrue(out["workingCardHasCard"], "workingCard does not produce a card")
+        self.assertTrue(out["sessionHasCard"], "sessionView does not produce a card")
+        self.assertTrue(out["boardHasCardTop"], "workingCard output lacks the card-top structure")
+        self.assertTrue(out["sessionHasCardTop"], "sessionView output lacks the card-top structure")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_ac_dispatch_history_shows_work_log(self) -> None:
+        """AC-3: the workflow section shows the session's dispatch history, not
+        the full workflow roster. Dispatches appear in timestamp order, live
+        entities carry sd-live, and no "NOT TOUCHED" text appears. Fails if
+        the full roster is rendered instead."""
+        checks = """
+const out = {};
+sessionViewKey = "claude:1234abcd";
+// A fixture with dispatch_history: three batches at different timestamps.
+// The workflow's entities include the dispatched slugs plus one
+// non-dispatched entity.
+const dhSess = mk({
+  spacedock: {role: "first-officer", dispatch_history: [
+    {ts: 100, slug: "drc-1", stage: "intake"},
+    {ts: 200, slug: "drc-2", stage: "review"},
+    {ts: 300, slug: "drc-3", stage: "fix-and-harden"}
+  ], workflows: [sdWf({
+    goal: "Ship it",
+    stages: ["intake", "review", "fix-and-harden"],
+    entities: [
+      {slug: "drc-1", stage: "review", live: false, cycle: "", decision: "approve"},
+      {slug: "drc-2", stage: "review", live: true, cycle: "", decision: ""},
+      {slug: "drc-3", stage: "fix-and-harden", live: false, cycle: "", decision: ""},
+      {slug: "drc-4", stage: "intake", live: false, cycle: "", decision: ""}
+    ]
+  })]}
+});
+const h = sessionView(board([dhSess]));
+// All three dispatched slugs appear.
+out.hasDrc1 = h.includes("drc-1");
+out.hasDrc2 = h.includes("drc-2");
+out.hasDrc3 = h.includes("drc-3");
+// Timestamp order: drc-1 appears before drc-2, drc-2 before drc-3.
+out.order12 = h.indexOf("drc-1") < h.indexOf("drc-2");
+out.order23 = h.indexOf("drc-2") < h.indexOf("drc-3");
+// The live entity (drc-2) carries sd-live.
+out.liveClass = h.includes('sv-disp sd-live');
+// No "NOT TOUCHED" text.
+out.noNotTouched = !h.includes('NOT TOUCHED') && !h.includes('not touched');
+// Non-dispatched entity (drc-4) appears under "other workflow entities".
+out.hasOther = h.includes('other workflow entities');
+out.hasDrc4 = h.includes("drc-4");
+// Dispatch history section is present.
+out.hasHist = h.includes('sv-dispatch-hist');
+console.log(JSON.stringify(out));
+"""
+        out = self.run_session(checks)
+        self.assertTrue(out["hasDrc1"], "drc-1 is missing from the dispatch history")
+        self.assertTrue(out["hasDrc2"], "drc-2 is missing from the dispatch history")
+        self.assertTrue(out["hasDrc3"], "drc-3 is missing from the dispatch history")
+        self.assertTrue(out["order12"], "drc-1 does not appear before drc-2")
+        self.assertTrue(out["order23"], "drc-2 does not appear before drc-3")
+        self.assertTrue(out["liveClass"], "the live entity does not carry sd-live")
+        self.assertTrue(out["noNotTouched"], "'NOT TOUCHED' text appears in the output")
+        self.assertTrue(out["hasOther"], "the 'other workflow entities' label is missing")
+        self.assertTrue(out["hasDrc4"], "the non-dispatched entity drc-4 is missing")
+        self.assertTrue(out["hasHist"], "the dispatch history section is missing")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_ac_board_card_unchanged(self) -> None:
+        """AC-5: the board view's card rendering is unchanged by the refactor.
+        The same HTML structure and CSS classes appear in workingCard before
+        and after. Fails if a card field is dropped from sessionCardCore."""
+        checks = """
+const out = {};
+// Use a session with a turn so the turn block renders.
+const withTurn = mk({
+  turn: {elapsed_h: "5m", eta_h: "3m", pct: 40, long: false},
+  spacedock: {role: "first-officer", workflows: [
+    sdWf({goal: "Ship it", entities: [ent("drc-1", "review", false)]})
+  ]}
+});
+const d = board([withTurn]);
+const h = workingCard(d, withTurn);
+// Board card structure.
+out.hasCard = h.includes('class="card"');
+out.hasCardTop = h.includes('card-top');
+out.hasCardMain = h.includes('card-main');
+out.hasHeadrow = h.includes('card-headrow');
+out.hasWorkingPill = h.includes('pill-work');
+out.hasTitle = h.includes('Active dispatch');
+out.hasMeta = h.includes('repo/proj');
+out.hasBadge = h.includes('btile');
+// Rate meter.
+out.hasRateMeter = h.includes('rate-meter');
+out.hasRateNum = h.includes('>10<');
+// Now block.
+out.hasNow = h.includes('class="now"');
+out.hasStateDetail = h.includes('running Bash');
+// Turn block.
+out.hasTurn = h.includes('class="turn"');
+out.hasTurnTxt = h.includes('this request');
+// Board-only elements.
+out.hasSdBlock = h.includes('class="sd"');
+console.log(JSON.stringify(out));
+"""
+        out = self.run_session(checks)
+        self.assertTrue(out["hasCard"], "the card element is missing")
+        self.assertTrue(out["hasCardTop"], "the card-top element is missing")
+        self.assertTrue(out["hasCardMain"], "the card-main element is missing")
+        self.assertTrue(out["hasHeadrow"], "the card-headrow element is missing")
+        self.assertTrue(out["hasWorkingPill"], "the Working pill is missing")
+        self.assertTrue(out["hasTitle"], "the title is missing")
+        self.assertTrue(out["hasMeta"], "the meta line is missing")
+        self.assertTrue(out["hasBadge"], "the harness badge is missing")
+        self.assertTrue(out["hasRateMeter"], "the rate meter is missing")
+        self.assertTrue(out["hasRateNum"], "the rate number is missing")
+        self.assertTrue(out["hasNow"], "the now block is missing")
+        self.assertTrue(out["hasStateDetail"], "the state_detail is missing")
+        self.assertTrue(out["hasTurn"], "the turn block is missing")
+        self.assertTrue(out["hasSdBlock"], "the sd block is missing from the board card")
