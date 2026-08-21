@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cargento — Session View (mock)</title>
+<style>
+  :root {
+    --bg: #0d0f12;
+    --panel: #15181d;
+    --line: #23272e;
+    --line2: #2e333b;
+    --ink: #e8eaed;
+    --ink2: #aab0b8;
+    --ink3: #6c727a;
+    --accent: #5b9bf5;
+    --accent-ink: #c6dafc;
+    --warn: #f0b429;
+    --alert: #f0506e;
+    --green: #4caf7d;
+    --purple: #9b8cf5;
+    --blue: #5b9bf5;
+    --orange: #e88c50;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink);
+    padding: 16px; font-size: 13px; line-height: 1.5;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  /* ── mode bar ─────────────────────────────────────────── */
+  .modebar {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 12px; font-size: 12px; color: var(--ink3);
+  }
+  .modebar-k { font-weight: 600; }
+  .modeseg { display: inline-flex; border: 1px solid var(--line2); border-radius: 6px; overflow: hidden; }
+  .modebtn {
+    background: none; border: none; color: var(--ink3);
+    padding: 4px 12px; cursor: pointer; font-size: 12px; font-family: inherit;
+  }
+  .modebtn.on { background: var(--accent); color: #fff; }
+  .modebar-split { width: 1px; height: 20px; background: var(--line2); }
+  .stopbtn {
+    background: none; border: 1px solid var(--line2); color: var(--ink3);
+    padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+
+  /* ── session header ──────────────────────────────────── */
+  .sess-head {
+    display: flex; align-items: baseline; gap: 10px;
+    margin-bottom: 4px;
+  }
+  .sess-head .harness { font-weight: 700; font-size: 14px; }
+  .sess-head .sid { font-family: monospace; color: var(--ink3); font-size: 12px; }
+  .sess-head .role {
+    font-size: 11px; color: var(--accent-ink); background: color-mix(in oklab, var(--accent) 18%, transparent);
+    padding: 1px 8px; border-radius: 10px; border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  }
+
+  /* ── goal line ───────────────────────────────────────── */
+  .goal {
+    background: color-mix(in oklab, var(--accent) 8%, transparent);
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px; margin-bottom: 16px; border-radius: 0 4px 4px 0;
+    font-size: 14px; color: var(--ink);
+  }
+  .goal-k { font-size: 11px; color: var(--ink3); text-transform: uppercase; letter-spacing: 0.5px; margin-right: 8px; }
+
+  /* ── workflow section ────────────────────────────────── */
+  .wf { margin-bottom: 20px; }
+  .wf-name {
+    font-size: 12px; font-weight: 600; color: var(--ink2);
+    margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.4px;
+  }
+
+  /* ── tree ────────────────────────────────────────────── */
+  .tree { position: relative; padding-left: 0; }
+  .stage-col {
+    display: flex; align-items: flex-start; gap: 0; margin-bottom: 2px;
+  }
+  .stage-label {
+    width: 90px; flex-shrink: 0; text-align: right; padding-right: 16px;
+    font-size: 11px; color: var(--ink3); text-transform: uppercase; letter-spacing: 0.3px;
+    padding-top: 7px;
+  }
+  .stage-nodes { flex: 1; border-left: 2px solid var(--line2); padding-left: 16px; min-height: 36px; }
+  .stage-col.terminal .stage-nodes { border-left-color: var(--green); }
+  .stage-col.initial .stage-nodes { border-left-color: var(--ink3); }
+  .stage-col.active .stage-nodes { border-left-color: var(--accent); }
+
+  .node {
+    display: inline-block; margin: 3px 6px 3px 0;
+    padding: 4px 10px; border-radius: 5px; font-size: 12px;
+    border: 1px solid var(--line2); background: var(--panel);
+    cursor: default; vertical-align: middle;
+  }
+  .node .slug { font-family: monospace; font-size: 11px; }
+  .node .cyc { color: var(--ink3); font-size: 10px; margin-left: 4px; }
+  .node.live {
+    border-color: var(--accent);
+    background: color-mix(in oklab, var(--accent) 14%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 30%, transparent);
+  }
+  .node.live::before { content: "●"; color: var(--accent); margin-right: 4px; font-size: 10px; }
+  .node[data-stage="backlog"] { border-left: 3px solid var(--ink3); }
+  .node[data-stage="ideation"] { border-left: 3px solid var(--blue); }
+  .node[data-stage="implementation"] { border-left: 3px solid var(--orange); }
+  .node[data-stage="validation"] { border-left: 3px solid var(--purple); }
+  .node[data-stage="done"] { border-left: 3px solid var(--green); opacity: 0.7; }
+
+  .empty-stage { color: var(--ink3); font-size: 11px; font-style: italic; padding-top: 6px; }
+
+  /* ── no-goal variant ──────────────────────────────────── */
+  .no-goal-note {
+    font-size: 12px; color: var(--ink3); margin-bottom: 16px;
+    border-left: 3px solid var(--line2); padding-left: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- mode bar with the third button -->
+  <div class="modebar">
+    <span class="modebar-k">display</span>
+    <div class="modeseg">
+      <button class="modebtn">regular</button>
+      <button class="modebtn">calm</button>
+      <button class="modebtn on">session</button>
+    </div>
+    <span class="modebar-split"></span>
+    <button class="stopbtn">stop</button>
+  </div>
+
+  <!-- ── variant A: FO session with a stated goal ─────── -->
+
+  <div class="sess-head">
+    <span class="harness">claude</span>
+    <span class="sid">a3f1b2c4</span>
+    <span class="role">first officer</span>
+  </div>
+
+  <div class="goal">
+    <span class="goal-k">goal</span>Ship session view with Spacedock visibility
+  </div>
+
+  <div class="wf">
+    <div class="wf-name">dev</div>
+    <div class="tree">
+      <div class="stage-col initial">
+        <div class="stage-label">backlog</div>
+        <div class="stage-nodes">
+          <span class="node" data-stage="backlog"><span class="slug">fix-dark-mode-toggle</span></span>
+          <span class="node" data-stage="backlog"><span class="slug">add-export-csv</span></span>
+        </div>
+      </div>
+      <div class="stage-col">
+        <div class="stage-label">ideation</div>
+        <div class="stage-nodes">
+          <span class="node" data-stage="ideation"><span class="slug">session-view-spacedock-visibility</span></span>
+        </div>
+      </div>
+      <div class="stage-col active">
+        <div class="stage-label">implementation</div>
+        <div class="stage-nodes">
+          <span class="node live" data-stage="implementation"><span class="slug">quota-disclosure-modal</span><span class="cyc">r2</span></span>
+          <span class="node live" data-stage="implementation"><span class="slug">spacedock-strip-renderer</span><span class="cyc">r1</span></span>
+        </div>
+      </div>
+      <div class="stage-col">
+        <div class="stage-label">validation</div>
+        <div class="stage-nodes">
+          <span class="node" data-stage="validation"><span class="slug">collector-error-boundary</span></span>
+        </div>
+      </div>
+      <div class="stage-col terminal">
+        <div class="stage-label">done</div>
+        <div class="stage-nodes">
+          <span class="node" data-stage="done"><span class="slug">page-split-refactor</span></span>
+          <span class="node" data-stage="done"><span class="slug">sse-stream-handler</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── variant B: FO session with no goal ────────────── -->
+
+  <hr style="border:none;border-top:1px dashed var(--line2);margin:24px 0;">
+
+  <div class="sess-head">
+    <span class="harness">claude</span>
+    <span class="sid">e7d2f9a1</span>
+    <span class="role">first officer</span>
+  </div>
+
+  <div class="no-goal-note">
+    <!-- no goal line renders when the workflow frontmatter has no title -->
+  </div>
+
+  <div class="wf">
+    <div class="wf-name">infra</div>
+    <div class="tree">
+      <div class="stage-col initial">
+        <div class="stage-label">backlog</div>
+        <div class="stage-nodes">
+          <span class="node" data-stage="backlog"><span class="slug">migrate-state-store</span></span>
+        </div>
+      </div>
+      <div class="stage-col active">
+        <div class="stage-label">implementation</div>
+        <div class="stage-nodes">
+          <span class="node live" data-stage="implementation"><span class="slug">port-probe-hardening</span></span>
+        </div>
+      </div>
+      <div class="stage-col terminal">
+        <div class="stage-label">done</div>
+        <div class="stage-nodes">
+          <span class="node" data-stage="done"><span class="slug">bind-error-messages</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── variant C: non-FO session (ensign) ───────────── -->
+
+  <hr style="border:none;border-top:1px dashed var(--line2);margin:24px 0;">
+
+  <div class="sess-head">
+    <span class="harness">claude</span>
+    <span class="sid">b2c8d3e0</span>
+    <span class="role">ensign</span>
+  </div>
+
+  <div class="no-goal-note">
+    <!-- an ensign has no workflow strips; the session view shows the session's own stage only -->
+  </div>
+
+  <div class="wf">
+    <div class="wf-name">dev · session-view-spacedock-visibility</div>
+    <div class="tree">
+      <div class="stage-col active">
+        <div class="stage-label">ideation</div>
+        <div class="stage-nodes">
+          <span class="node live" data-stage="ideation"><span class="slug">session-view-spacedock-visibility</span><span class="cyc">attempt-1</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
