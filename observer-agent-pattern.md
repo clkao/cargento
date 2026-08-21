@@ -1,6 +1,6 @@
 ---
 title: Observer agent pattern beside an active session
-status: ideation
+status: implementation
 source: captain seed
 id: 9t63gp52zec23rh0k9t160ft
 gates:
@@ -59,7 +59,7 @@ gates:
                 reason: 'Captain approved the reworked ideation via Subspace (binding resolution, decision approve, no annotations). Attempt 2 addresses the prior revise: observer panel as user-facing surface, mock with 4 variants, AC-4 measuring user-facing end value.'
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
 started: 2026-08-20T18:30:00Z
 ---
 
