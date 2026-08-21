@@ -26,6 +26,7 @@ gates:
               application:
                 target-stage: ideation
                 state: consumed
+started: 2026-08-21T04:12:22Z
 ---
 
 An operator running the Cargento dashboard on a shared or remote machine cannot
