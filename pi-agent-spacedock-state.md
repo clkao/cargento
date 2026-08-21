@@ -1,6 +1,6 @@
 ---
 title: Pi agent view shows Spacedock state
-status: ideation
+status: implementation
 source: captain seed
 id: hdz7pr9bmw5vpc5ah52sbcmb
 gates:
@@ -45,7 +45,7 @@ gates:
                 reason: Captain approved via Subspace (binding resolution, decision approve, no annotations).
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
 started: 2026-08-21T02:46:39Z
 ---
 
