@@ -85,7 +85,7 @@ gates:
                 state: pending
 started: 2026-08-21T02:46:39Z
 worktree: .worktrees/spacedock-ensign-pi-agent-spacedock-state
-mod-block:
+mod-block: merge:pr-merge
 pr:
 ---
 
