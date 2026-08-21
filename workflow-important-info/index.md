@@ -1,6 +1,6 @@
 ---
 title: Per-workflow important-info definition — let each workflow declare what to display
-status: ideation
+status: implementation
 source: captain dogfood feedback
 id: et7hb2x9k6kts3cr56mnf2k8
 gates:
@@ -45,7 +45,7 @@ gates:
                 reason: 'conn granted: ''you have the conn to push to the forked repo and open PR'' (re-granted post-compaction: ''you have unlimited tokens... you have the conn to push to the forked repo and open PR''). Subspace approved all 4 gates: ''you have the conn, why are you still asking?''. Ideation sound: display: key in README frontmatter read where read_workflow already reads, default [slug,stage,cycle] safe; gate-derived scan spiked; 4 ACs with falsifying edits. Advancing to implementation.'
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
 started: 2026-08-21T08:07:17Z
 ---
 
