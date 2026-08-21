@@ -604,3 +604,46 @@
   .session .sv-last-resp>summary::after{content:"";flex:1;border-bottom:1px dashed var(--line2);margin-left:8px}
   .session .sv-last-resp>summary{display:flex;align-items:center}
   .session .sv-last-resp-body{font-size:var(--fs-xs);color:var(--ink2);line-height:1.5;padding:8px 0;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto}
+
+  /* ── mirror view sections ─────────────────────────────────────────────── */
+  .session .sv-mirror{display:flex;flex-direction:column;gap:0;padding:0 0 20px}
+  .session .sv-mirror-section{display:flex;align-items:baseline;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line2)}
+  .session .sv-mirror-section:last-child{border-bottom:0}
+  .session .sv-mirror-sec-k{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);flex:none;min-width:100px}
+  .session .sv-mirror-sec-v{font-size:var(--fs-sm);color:var(--ink2);line-height:1.5;flex:1}
+  .session .sv-mirror-sec-src{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);text-transform:uppercase;letter-spacing:.04em}
+  .session .sv-mirror-goal-text{font-size:var(--fs-md);font-weight:600;color:var(--accent-ink);line-height:1.4}
+  .session .sv-mirror-memory-text{font-size:var(--fs-sm);color:var(--ink2);line-height:1.6}
+  .session .sv-mirror-consistency-text{font-size:var(--fs-xs);color:var(--ink3);font-style:italic}
+
+  /* prominent active subagents */
+  .session .sv-mirror-active{display:flex;align-items:baseline;gap:10px;padding:8px 16px;background:color-mix(in oklab,var(--accent) 8%,transparent);border-bottom:1px solid color-mix(in oklab,var(--accent) 28%,transparent)}
+  .session .sv-mirror-active-k{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-ink);flex:none;min-width:100px}
+  .session .sv-mirror-active-list{display:flex;flex-wrap:wrap;gap:6px}
+  .session .sv-mirror-active-pill{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-sm);font-weight:600;color:var(--ink);padding:3px 10px;border:1px solid color-mix(in oklab,var(--accent) 40%,transparent);border-radius:20px;background:color-mix(in oklab,var(--accent) 10%,transparent)}
+  .session .sv-mirror-active-model{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);margin-left:4px}
+
+  /* steering rhythm */
+  .session .sv-mirror-steering{flex-direction:column;align-items:stretch;gap:8px}
+  .session .sv-steer-bursts{display:flex;flex-direction:column;gap:2px}
+  .session .sv-steer-burst{display:flex;align-items:baseline;gap:8px;font-size:var(--fs-xs);padding:4px 0}
+  .session .sv-steer-time{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);flex:none;min-width:40px}
+  .session .sv-steer-tag{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.04em;text-transform:uppercase;flex:none;min-width:70px;padding:1px 6px;border-radius:4px}
+  .session .sv-steer-gen{color:var(--accent-ink);background:color-mix(in oklab,var(--accent) 12%,transparent);border:1px solid color-mix(in oklab,var(--accent) 30%,transparent)}
+  .session .sv-steer-corr{color:#c66;background:color-mix(in oklab,#c66 10%,transparent);border:1px solid color-mix(in oklab,#c66 28%,transparent)}
+  .session .sv-steer-reframe{color:#36c;background:color-mix(in oklab,#36c 10%,transparent);border:1px solid color-mix(in oklab,#36c 28%,transparent)}
+  .session .sv-steer-answer{color:var(--ink3);background:var(--sunk);border:1px solid var(--line2)}
+  .session .sv-steer-text{color:var(--ink2);flex:1}
+  .session .sv-steer-result{color:var(--accent-ink);font-weight:600;font-size:var(--fs-2xs);white-space:nowrap}
+  .session .sv-steer-phases{padding:6px 0;border-top:1px dashed var(--line2)}
+  .session .sv-steer-phases-h{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
+  .session .sv-steer-phase{display:flex;align-items:baseline;gap:8px;font-size:var(--fs-2xs);color:var(--ink3);padding:2px 0}
+  .session .sv-steer-phase-gap{font-family:var(--mono);flex:none;min-width:120px}
+  .session .sv-steer-phase-out{color:var(--ink2)}
+  .session .sv-steer-density{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:var(--fs-2xs);color:var(--ink3)}
+  .session .sv-steer-density-n{font-weight:600}
+  .session .sv-steer-density-trend{font-style:italic}
+
+  /* state-of-world items */
+  .session .sv-mirror-state-item{font-family:var(--mono);font-size:var(--fs-xs);color:var(--ink2)}
+  .session .sv-mirror-needs .sv-needs-banner{margin:0}

@@ -80,9 +80,10 @@ const board = sessions => ({
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_ac1_session_view_renders_dispatch_tree(self) -> None:
-        """AC-1: the session view renders one tree per workflow, with entity
-        slugs, stage names, and the sd-live class on live entities. Fails if
-        the tree-rendering branch is deleted."""
+        """AC-1: the session view renders one causal-log per workflow, with entity
+        slugs, stage names, and the sd-live class on live entities. The mirror
+        view replaces the stage-spine tree with a reverse-chronological causal
+        log. Fails if the causal-log rendering branch is deleted."""
         checks = """
 const out = {};
 sessionViewKey = "claude:1234abcd";
@@ -93,10 +94,10 @@ out.hasWf2 = h.includes("other-wf");
 out.slugs = ["drc-1", "drc-2", "drc-3", "pr-7"].map(s => h.includes(s));
 // AC-1: every stage name is present.
 out.stages = ["intake", "review", "fix-and-harden", "posted"].map(s => h.includes(s));
-// AC-1: the live entity (drc-2) carries the sd-live class.
-out.liveClass = h.includes('class="sv-ent sd-live"');
+// AC-1: the live entity (drc-2) carries the sd-live class in the causal log.
+out.liveClass = h.includes('sv-disp sd-live');
 // A non-live entity must NOT carry sd-live.
-out.parkedNotLive = !h.includes('sv-ent sd-live">drc-1') && !h.includes('sv-ent sd-live">drc-3');
+out.parkedNotLive = !h.includes('sv-disp sd-live">drc-1') && !h.includes('sv-disp sd-live">drc-3');
 // Cycle label present on drc-1.
 out.cycle = h.includes("c2");
 console.log(JSON.stringify(out));
@@ -113,35 +114,37 @@ console.log(JSON.stringify(out));
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_ac2a_goal_line_shows_stated_goal(self) -> None:
         """AC-2a: when the workflow frontmatter carries a title, the session
-        view renders it as a one-line goal header. Fails if the goal field is
-        dropped from the payload."""
+        view renders it as a one-line goal header. The mirror view renders the
+        goal in the sv-mirror-goal section. Fails if the goal field is dropped
+        from the payload."""
         checks = """
 const out = {};
 sessionViewKey = "claude:1234abcd";
 const h = sessionView(board([fo]));
-out.hasGoal = h.includes('class="sv-goal"');
+out.hasGoal = h.includes('sv-mirror-goal');
 out.goalText = h.includes("Ship session view");
 console.log(JSON.stringify(out));
 """
         out = self.run_session(checks)
-        self.assertTrue(out["hasGoal"], "the goal header element is missing")
-        self.assertTrue(out["goalText"], "the goal text is missing from the header")
+        self.assertTrue(out["hasGoal"], "the goal section element is missing")
+        self.assertTrue(out["goalText"], "the goal text is missing from the section")
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_ac2b_no_goal_line_when_title_absent(self) -> None:
-        """AC-2b: when the workflow frontmatter carries no title, no goal line
-        renders. Fails if the renderer emits a goal element when goal is empty."""
+        """AC-2b: when the workflow frontmatter carries no title, no goal
+        section renders. Fails if the renderer emits a goal element when goal
+        is empty."""
         checks = """
 const out = {};
 sessionViewKey = "claude:1234abcd";
 // The second workflow (other-wf) has goal: "" — it must not render a goal.
 const h = sessionView(board([fo]));
-// Check that no sv-goal element appears for the other-wf section. The
-// first workflow has a goal, so we need to check per-workflow. The session
-// view renders workflows in order, so we look at the HTML after "other-wf".
+// Check that no sv-mirror-goal element appears for the other-wf section.
+// The first workflow has a goal, so we check per-workflow by looking at the
+// HTML after "other-wf".
 const wf2Start = h.indexOf("other-wf");
 const wf2Section = h.slice(wf2Start);
-out.noGoalForWf2 = !wf2Section.includes('class="sv-goal"');
+out.noGoalForWf2 = !wf2Section.includes('sv-mirror-goal');
 // Also test with a session whose only workflow has no goal.
 const noGoal = mk({
   spacedock: {
@@ -150,7 +153,7 @@ const noGoal = mk({
   }
 });
 const h2 = sessionView(board([noGoal]));
-out.noGoalAtAll = !h2.includes('class="sv-goal"');
+out.noGoalAtAll = !h2.includes('sv-mirror-goal');
 console.log(JSON.stringify(out));
 """
         out = self.run_session(checks)
@@ -173,7 +176,7 @@ const noGoal = mk({
 });
 const h = sessionView(board([noGoal]));
 out.noCurrentSprint = !h.includes("Current sprint");
-out.noGoalLabel = !h.includes('class="sv-goal"');
+out.noGoalLabel = !h.includes('sv-mirror-goal');
 console.log(JSON.stringify(out));
 """
         out = self.run_session(checks)
@@ -190,7 +193,7 @@ sessionViewKey = null;
 const h = sessionView(board([fo]));
 out.hasPicker = h.includes("sv-picker");
 out.hasPickRow = h.includes('data-calm="session" data-arg="claude:1234abcd"');
-out.noGoalWhenPicking = !h.includes('class="sv-goal"');
+out.noGoalWhenPicking = !h.includes('sv-mirror-goal');
 console.log(JSON.stringify(out));
 """
         out = self.run_session(checks)
@@ -471,7 +474,7 @@ out.stateDetail = h.includes('running bash');
 out.turn = h.includes('12m elapsed');
 out.eta = h.includes('~2h 30m left');
 // The card appears before the workflow strip.
-out.cardBeforeWf = h.indexOf('sv-card') < h.indexOf('sv-wf');
+out.cardBeforeWf = h.indexOf('sv-card') < h.indexOf('debug-flywheel');
 console.log(JSON.stringify(out));
 """
         out = self.run_session(checks)
@@ -515,11 +518,11 @@ console.log(JSON.stringify(out));
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_ac_dispatch_history_shows_work_log(self) -> None:
-        """AC-3: the workflow section shows the session's dispatch history, not
-        the full workflow roster. Dispatches appear in timestamp order, live
-        entities carry sd-live, and no "NOT TOUCHED" text appears. Non-dispatched
-        entities are cut as noise — they belong in a project view. The history is
-        deduplicated: one row per entity, showing the latest dispatch."""
+        """AC-3: the mirror view's causal log shows the session's dispatch history
+        in REVERSE CHRONOLOGICAL order (newest first). Dispatches appear by
+        timestamp, live entities carry sd-live, and no "NOT TOUCHED" text
+        appears. Non-dispatched entities are cut as noise — they belong in a
+        project view. The history is deduplicated: one row per entity."""
         checks = """
 const out = {};
 sessionViewKey = "claude:1234abcd";
@@ -547,9 +550,10 @@ const h = sessionView(board([dhSess]));
 out.hasDrc1 = h.includes("drc-1");
 out.hasDrc2 = h.includes("drc-2");
 out.hasDrc3 = h.includes("drc-3");
-// Timestamp order: drc-1 appears before drc-2, drc-2 before drc-3.
-out.order12 = h.indexOf("drc-1") < h.indexOf("drc-2");
-out.order23 = h.indexOf("drc-2") < h.indexOf("drc-3");
+// Reverse chronological order: drc-3 (ts=300) appears before drc-2 (ts=200),
+// drc-2 before drc-1 (ts=100) — newest first.
+out.order32 = h.indexOf("drc-3") < h.indexOf("drc-2");
+out.order21 = h.indexOf("drc-2") < h.indexOf("drc-1");
 // The live entity (drc-2) carries sd-live.
 out.liveClass = h.includes('sv-disp sd-live');
 // No "NOT TOUCHED" text.
@@ -565,8 +569,8 @@ console.log(JSON.stringify(out));
         self.assertTrue(out["hasDrc1"], "drc-1 is missing from the dispatch history")
         self.assertTrue(out["hasDrc2"], "drc-2 is missing from the dispatch history")
         self.assertTrue(out["hasDrc3"], "drc-3 is missing from the dispatch history")
-        self.assertTrue(out["order12"], "drc-1 does not appear before drc-2")
-        self.assertTrue(out["order23"], "drc-2 does not appear before drc-3")
+        self.assertTrue(out["order32"], "drc-3 does not appear before drc-2 (reverse chrono)")
+        self.assertTrue(out["order21"], "drc-2 does not appear before drc-1 (reverse chrono)")
         self.assertTrue(out["liveClass"], "the live entity does not carry sd-live")
         self.assertTrue(out["noNotTouched"], "'NOT TOUCHED' text appears in the output")
         self.assertTrue(out["noDrc4"], "the non-dispatched entity drc-4 should have been cut")

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
+import urllib.request
 from typing import TYPE_CHECKING, Any, Protocol
 
 from . import io as runtime_io
@@ -32,6 +34,26 @@ if TYPE_CHECKING:
 
 NO_GOAL = "no goal derived"
 NO_GOAL_REASON = "generic-opener-only-no-work"
+
+# The exe-llm gateway: a no-auth model endpoint available inside the exe.dev VM.
+# The observer wires its ModelCaller here so the goal and memory are derived by
+# the model rather than the deterministic fallback alone.
+EXE_LLM_URL = "https://llm.int.exe.xyz/v1/chat/completions"
+EXE_LLM_MODEL = "openai/gpt-5.6-luna"
+EXE_LLM_TIMEOUT = 30
+EXE_LLM_MAX_TOKENS = 300
+
+_GOAL_SYSTEM = (
+    "You are a goal derivation assistant. Given the transcript of an AI agent "
+    "session, derive the agent's current understanding of its directive in one "
+    "concise sentence. Return only the goal sentence, no preamble."
+)
+_MEMORY_SYSTEM = (
+    "You are a memory compression assistant. Given the transcript of an AI "
+    "agent session, compress what the agent should remember into one paragraph: "
+    "key instructions received, decisions made, facts learned, and operational "
+    "constraints discovered. Return only the paragraph, no preamble."
+)
 
 # Generic skill-load directives that carry no goal by themselves. Measured
 # against real Pi session transcripts: the opening line is a harness-injected
@@ -66,6 +88,72 @@ class ModelCaller(Protocol):
     """
 
     def __call__(self, transcript_head: str, entity_context: str) -> str | None: ...
+
+
+def _exe_llm_request(messages: list[dict[str, str]], max_tokens: int = EXE_LLM_MAX_TOKENS) -> str | None:
+    """One call to the exe-llm gateway; returns the text content or None.
+
+    Uses stdlib urllib so the runtime adds no dependency. On any network or
+    parse failure, returns None — the caller degrades to the deterministic
+    fallback. The timeout bounds the call so a stalled gateway does not hang
+    the session view.
+    """
+    payload = json.dumps({
+        "model": EXE_LLM_MODEL,
+        "messages": messages,
+        "max_completion_tokens": max_tokens,
+    })
+    req = urllib.request.Request(  # noqa: S310 — the gateway URL is a known constant
+        EXE_LLM_URL,
+        data=payload.encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=EXE_LLM_TIMEOUT) as resp:  # noqa: S310
+            body = json.loads(resp.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, ValueError, json.JSONDecodeError):
+        return None
+    choices = body.get("choices") if isinstance(body, dict) else None
+    if not isinstance(choices, list) or not choices:
+        return None
+    content = choices[0].get("message", {}).get("content", "")
+    if not isinstance(content, str) or not content.strip():
+        return None
+    return content.strip()
+
+
+def exe_llm_goal_caller(transcript_head: str, entity_context: str) -> str | None:
+    """A ModelCaller wired to the exe-llm gateway for goal derivation.
+
+    Sends the transcript head with a system prompt that asks for one concise
+    goal sentence. Returns None on any failure so the observer degrades to
+    the deterministic fallback.
+    """
+    messages = [
+        {"role": "system", "content": _GOAL_SYSTEM},
+        {"role": "user", "content": transcript_head},
+    ]
+    return _exe_llm_request(messages)
+
+
+def exe_llm_memory_caller(transcript_head: str, entity_context: str) -> str | None:
+    """A model caller that derives a one-paragraph memory digest.
+
+    Same gateway, different system prompt: compress what the agent should
+    remember. Returns None on failure. Uses more completion tokens than the
+    goal caller because the reasoning model may spend tokens on internal
+    reasoning before producing the paragraph.
+    """
+    messages = [
+        {"role": "system", "content": _MEMORY_SYSTEM},
+        {"role": "user", "content": transcript_head},
+    ]
+    return _exe_llm_request(messages, max_tokens=600)
+
+
+# The default model caller the HTTP API uses when one is not provided.
+default_model_caller = exe_llm_goal_caller
 
 
 def _is_generic_opener(text: str) -> bool:
@@ -225,28 +313,32 @@ def analyze(
     *,
     entity_dir: str | None = None,
     model: ModelCaller | Callable[[str, str], str | None] | None = None,
+    memory_model: ModelCaller | Callable[[str, str], str | None] | None = None,
 ) -> dict[str, Any]:
-    """Derive goal + stage + block from a session transcript, read-only.
+    """Derive goal + memory + stage + block from a session transcript, read-only.
 
-    Returns ``{"goal": str, "stage": str, "block": str, "reason": str | None}``.
+    Returns ``{"goal": str, "memory": str, "stage": str, "block": str, "reason": str | None}``.
     The goal is either a derived goal line or the literal ``"no goal derived"``
-    sentinel. The stage comes from the entity dir's frontmatter ``status``.
-    The block is one sentence from recent assistant text containing a block
-    indicator, or empty.
+    sentinel. The memory is a one-paragraph digest from the model caller, or
+    empty when no memory model is provided. The stage comes from the entity
+    dir's frontmatter ``status``. The block is one sentence from recent
+    assistant text containing a block indicator, or empty.
 
     The model callable is optional. When provided and the deterministic
     short-circuit does not fire, the model may enhance the goal; on any
     failure (returning None) the deterministic goal is kept. The
-    short-circuit always bypasses the model.
+    short-circuit always bypasses the model. The memory_model is likewise
+    optional; on failure it degrades to an empty string.
     """
     messages = _extract_messages(config, transcript_path)
     goal, reason = _derive_goal_deterministic(config, messages)
 
+    head_text = " ".join(msg["text"] for msg in messages[-20:])
+    entity_context = _derive_stage(config, state, entity_dir)
+
     # The short-circuit bypasses the model entirely: a no-goal session must
     # never produce a fabricated goal, regardless of what the model says.
     if goal != NO_GOAL and model is not None:
-        head_text = " ".join(msg["text"] for msg in messages[-20:])
-        entity_context = _derive_stage(config, state, entity_dir)
         try:
             enhanced = model(head_text, entity_context)
         except Exception:  # noqa: BLE001 — a model failure degrades, never crashes
@@ -254,9 +346,21 @@ def analyze(
         if isinstance(enhanced, str) and enhanced.strip():
             goal = records.safe_text(enhanced.strip(), config.observer_goal_cap_chars)
 
+    # Memory digest: a one-paragraph compression of what the agent should
+    # remember. The short-circuit skips this too — a no-goal session has
+    # nothing to compress.
+    memory = ""
+    if goal != NO_GOAL and memory_model is not None:
+        try:
+            digest = memory_model(head_text, entity_context)
+        except Exception:  # noqa: BLE001 — a model failure degrades, never crashes
+            digest = None
+        if isinstance(digest, str) and digest.strip():
+            memory = records.safe_text(digest.strip(), config.observer_goal_cap_chars * 3)
+
     stage = _derive_stage(config, state, entity_dir)
     block = _derive_block(config, messages)
-    return {"goal": goal, "stage": stage, "block": block, "reason": reason}
+    return {"goal": goal, "memory": memory, "stage": stage, "block": block, "reason": reason}
 
 
 def sidecar_path(config: RuntimeConfig, harness: str, sid: str) -> str:

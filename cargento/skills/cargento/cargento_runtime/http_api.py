@@ -415,7 +415,12 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "session transcript not found")
             return
         entity_dir = runtime_observer.resolve_entity_dir(config, state, transcript_path)
-        result = runtime_observer.analyze(config, state, transcript_path, entity_dir=entity_dir)
+        result = runtime_observer.analyze(
+            config, state, transcript_path,
+            entity_dir=entity_dir,
+            model=runtime_observer.default_model_caller,
+            memory_model=runtime_observer.exe_llm_memory_caller,
+        )
         runtime_observer.write_sidecar(config, harness, sid, result)
         self._send(json.dumps(result).encode(), "application/json")
 

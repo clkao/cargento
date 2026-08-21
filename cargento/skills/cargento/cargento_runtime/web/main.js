@@ -49,6 +49,16 @@ function render(d){
     renderInProgress = false;
     restoreStopFocus();
     document.title = (needs.length > 0 ? `(${needs.length}!) ` : "") + "Cargento";
+    /* Auto-trigger the observer when the session view opens so the goal +
+       memory are model-derived without a background loop. Fires once per
+       session target change. */
+    if(sessionViewKey && sessionViewKey !== mirrorObserverKey){
+      mirrorObserverKey = sessionViewKey;
+      const parts = sessionViewKey.split(":");
+      if(parts.length >= 2){
+        mirrorLoadObserver(parts[0], parts.slice(1).join(":"));
+      }
+    }
     return;
   }
   const sparkFocused = !!(document.activeElement && document.activeElement.id === "spark-main");
