@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargento — usage disclosure banner (mock)</title>
+<style>
+/* Palette and type tokens copied verbatim from
+   cargento/skills/cargento/cargento_runtime/web/styles.css so the mock renders
+   in the real calm palette. Chrome below is a reduced replica, not the real
+   stylesheet — enough of it to judge the banner in situ. */
+:root{
+  --fs-2xs:11.5px; --fs-xs:12.5px; --fs-sm:14px; --fs-md:15.5px; --fs-lg:17px; --fs-xl:19px;
+  --bg:#f6f3ec; --panel:#fffdf8; --ink:#26241d; --ink2:#423e33; --ink3:#615d52;
+  --line:#ded7c7; --accent:oklch(0.80 0.16 122); --alert:oklch(0.48 0.20 27);
+  --sans:'Space Grotesk',system-ui,-apple-system,sans-serif; --mono:'Space Mono',ui-monospace,monospace;
+  --sunk:#f0ece2; --line2:#b3aa95; --accent-ink:oklch(0.34 0.07 130);
+  --warn:oklch(0.74 0.11 78); --warnink:oklch(0.44 0.10 70);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#1a1916; --panel:#222019; --ink:#efece3; --ink2:#c9c5ba; --ink3:#a19d92;
+    --line:#3a362c; --accent:oklch(0.84 0.17 122); --alert:oklch(0.76 0.17 27);
+    --sunk:#161512; --line2:#5a5245; --accent-ink:oklch(0.86 0.10 128);
+    --warn:oklch(0.78 0.11 78); --warnink:oklch(0.82 0.10 76);
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+/* ── mock scaffolding (NOT part of the proposal) ─────────────────────────── */
+.mockcap{max-width:1420px;margin:34px auto 12px;padding:0 26px;font-family:var(--mono);
+  font-size:var(--fs-xs);color:var(--ink3)}
+.mockcap b{color:var(--ink)}
+.mockframe{max-width:1420px;margin:0 auto;padding:0 26px 8px}
+/* ── proposed banner CSS (the change under review) ─────────────────────────
+   Calm placement: an in-flow row inside .cm-frame, directly under .cm-ctl and
+   above the usage band. The frame owns its separators, so the calm variant is
+   a border-bottom row on the sunk control surface — the same recipe .u-band
+   uses today. */
+.u-banner{flex:none;display:flex;flex-direction:column;gap:8px;
+  background:var(--sunk);border-bottom:1px solid var(--line2);padding:13px 24px 15px}
+.u-banner-top{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.u-banner-h{font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em}
+.u-banner-acts{margin-left:auto;display:flex;gap:10px;flex:none}
+.u-banner-p{margin:0;font-size:var(--fs-xs);line-height:1.55;color:var(--ink2);max-width:88ch}
+/* Regular placement: the wrap owns gaps, not separators, so the standalone
+   variant carries its own border and radius. Same element, one modifier. */
+.u-banner.standalone{border:1px solid var(--line2);border-radius:12px;background:var(--sunk)}
+/* Existing action buttons, unchanged from styles.css. */
+.u-primary{font-family:var(--mono);font-size:var(--fs-sm);font-weight:700;color:var(--bg);
+  background:var(--ink);border:1px solid var(--ink);border-radius:9px;padding:8px 16px;cursor:pointer}
+.u-act{font-family:var(--mono);font-size:var(--fs-sm);color:var(--ink2);background:transparent;
+  border:1px solid var(--line2);border-radius:9px;padding:8px 16px;cursor:pointer}
+/* ── calm chrome replica ─────────────────────────────────────────────────── */
+.wrap.calm{max-width:1420px;padding:24px 26px 30px;display:flex;flex-direction:column;gap:12px}
+.modebar{display:flex;align-items:center;justify-content:flex-end;gap:12px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+.modebtn{font:inherit;color:var(--ink3);background:transparent;border:0;padding:4px 8px;border-radius:6px}
+.modebtn.on{color:var(--ink);background:color-mix(in oklab,var(--accent) 26%,transparent)}
+.cm-frame{display:flex;flex-direction:column;height:calc(100vh - 240px);min-height:420px;
+  background:var(--bg);border:1px solid var(--line2);border-radius:16px;overflow:hidden}
+.cm-bar{flex:none;display:flex;align-items:center;gap:22px;padding:0 24px;height:56px;border-bottom:1px solid var(--line)}
+.cm-brand{font-size:var(--fs-lg);font-weight:700}
+.cm-legend{display:flex;gap:14px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+.cm-sp{flex:1}
+.cm-live{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+.live{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent-ink);margin-right:5px}
+.cm-ctl{flex:none;display:flex;align-items:center;gap:16px;padding:0 24px;height:46px;border-bottom:1px solid var(--line);background:var(--sunk);
+  font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+.cm-seg{display:flex;gap:2px}
+.cm-seg span{padding:3px 8px;border-radius:6px;color:var(--ink3)}
+.cm-seg .on{color:var(--ink);background:color-mix(in oklab,var(--accent) 26%,transparent)}
+.u-band{position:relative;flex:none;border-bottom:1px solid var(--line);padding:11px 24px 13px;display:flex;flex-direction:column;gap:10px}
+.u-band-head{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+.cm-k{font-weight:700;letter-spacing:.13em;text-transform:uppercase}
+.u-grid{display:flex;gap:28px;flex-wrap:wrap}
+.u-entry{min-width:260px}
+.u-hname{font-family:var(--mono);font-size:var(--fs-xs);font-weight:700}
+.u-wrow{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:var(--fs-xs);color:var(--ink2);margin-top:4px}
+.u-wlab{width:30px;flex:none;color:var(--ink3)}
+.cm-track{flex:1;height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}
+.cm-fill{display:block;height:100%;border-radius:3px}
+.u-pct{width:36px;flex:none;text-align:right}
+.u-reset{flex:none;color:var(--ink3);font-size:var(--fs-2xs)}
+.cm-body{flex:1;overflow:auto;min-height:0;padding:0 24px}
+.cm-row{display:grid;grid-template-columns:3px 24px minmax(0,1fr) 236px 96px;gap:0 12px;
+  align-items:center;padding:9px 0;border-bottom:1px solid var(--line);font-size:var(--fs-sm)}
+.cm-row .dot{width:8px;height:8px;border-radius:50%}
+.cm-row .mut{color:var(--ink2);font-family:var(--mono);font-size:var(--fs-xs)}
+.cm-row .dim{color:var(--ink3);font-family:var(--mono);font-size:var(--fs-xs)}
+.cm-foot{flex:none;display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:8px 24px;min-height:40px;
+  border-top:1px solid var(--line2);background:var(--sunk);font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+/* ── regular chrome replica ──────────────────────────────────────────────── */
+.wrap{max-width:1240px;margin:0 auto;padding:34px 30px 64px;display:flex;flex-direction:column;gap:26px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}
+.brand{font-size:var(--fs-2xl);font-size:23px;font-weight:700}
+.sub{font-family:var(--mono);font-size:var(--fs-xs);color:var(--ink3);margin-top:6px}
+.hero{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.tile h3{margin:0;font-family:var(--mono);font-size:var(--fs-2xs);letter-spacing:.13em;text-transform:uppercase;color:var(--ink3)}
+.tile .n{font-size:28px;font-size:var(--fs-num);font-weight:700;margin-top:8px}
+.tile .l{font-size:var(--fs-xs);color:var(--ink3);margin-top:2px}
+.sec{display:flex;align-items:center;gap:12px;margin-top:8px}
+.sec-k{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--ink3)}
+.sec-rule{flex:1;height:1px;background:var(--line)}
+.stack{font-size:var(--fs-sm);color:var(--ink2);font-family:var(--mono)}
+</style>
+</head>
+<body>
+
+<p class="mockcap"><b>Mock · calm view, first load.</b> The disclosure is an
+in-flow row directly under the control bar, above the usage band. Nothing is
+positioned over anything: the session rows below it and the footer stay exactly
+where they are, and <code>cm-body</code> (the only <code>flex:1</code> child of
+the fixed-height frame) absorbs the banner's height exactly the way it already
+absorbs the usage band's. Scroll past it and read it later — the product is on
+screen from the first paint.</p>
+<div class="mockframe">
+<div class="wrap calm" style="padding-top:0">
+  <div class="modebar">display&nbsp; <span class="modebtn">regular</span><span class="modebtn on">calm</span></div>
+  <div class="cm-frame">
+    <div class="cm-bar"><span class="cm-brand">Cargento</span>
+      <div class="cm-legend"><span>◆ needs you</span><span>● working</span><span>○ idle</span></div>
+      <span class="cm-sp"></span>
+      <span class="cm-live"><span class="live"></span>live · 09:41:12</span></div>
+    <div class="cm-ctl"><span class="cm-k">order</span>
+      <div class="cm-seg"><span class="on">waiting</span><span>rate</span><span>name</span></div>
+      <span class="cm-sp"></span><span>showing 4 of 4</span></div>
+
+    <!-- ══ THE BANNER (calm placement) ══ -->
+    <div class="u-banner" role="region" aria-label="usage disclosure">
+      <div class="u-banner-top">
+        <span class="u-banner-h">Show usage and rate limits?</span>
+        <span class="u-banner-acts">
+          <button type="button" class="u-primary" data-calm="umodal" data-arg="on">Keep usage on</button>
+          <button type="button" class="u-act" data-calm="umodal" data-arg="off">Turn it off</button>
+        </span>
+      </div>
+      <p class="u-banner-p">Cargento can fetch each vendor's quota so the dashboard shows how much of your allowance is used and when it resets — the 5-hour and weekly windows, or the monthly billing period for a vendor that meters spend.</p>
+      <p class="u-banner-p">What is sent: the vendor's own OAuth access token, and nothing else. No transcript content, no prompts, no paths, no project names, no machine identifiers. What comes back is quota numbers. Session data never appears in either direction. The token is never refreshed, never written, never logged, and never served.</p>
+      <p class="u-banner-p">Usage is on by default. Turn it off here and nothing is fetched; turn it back on any time under configure.</p>
+    </div>
+    <!-- ══ end banner ══ -->
+
+    <div class="u-band">
+      <div class="u-band-head"><span class="cm-k">usage · rate limits per harness</span><span class="cm-sp"></span></div>
+      <div class="u-grid">
+        <div class="u-entry"><span class="u-hname">Codex CLI</span>
+          <div class="u-wrow"><span class="u-wlab">5h</span><span class="cm-track"><span class="cm-fill" style="width:23%"></span></span><span class="u-pct">23%</span><span class="u-reset">↺ 2h 16m</span></div>
+          <div class="u-wrow"><span class="u-wlab">wk</span><span class="cm-track"><span class="cm-fill" style="width:41%"></span></span><span class="u-pct">41%</span><span class="u-reset">↺ 3d 5h</span></div></div>
+        <div class="u-entry"><span class="u-hname">Claude Code</span>
+          <div class="u-wrow"><span class="u-wlab">5h</span><span class="cm-track"><span class="cm-fill" style="width:9%"></span></span><span class="u-pct">9%</span><span class="u-reset">↺ 4h 2m</span></div>
+          <div class="u-wrow"><span class="u-wlab">wk</span><span class="cm-track"><span class="cm-fill" style="width:31%"></span></span><span class="u-pct">31%</span><span class="u-reset">↺ 1d 9h</span></div></div>
+      </div>
+    </div>
+    <div class="cm-body">
+      <div class="cm-row"><span class="dot" style="background:var(--accent-ink)"></span><span></span>
+        <span>spacedock — ensign ideation <span class="dim">· executing stage work for usage-banner-disclosure</span></span>
+        <span class="mut">cargento</span><span class="dim">working · 12m</span></div>
+      <div class="cm-row"><span class="dot" style="background:var(--warn)"></span><span>◆</span>
+        <span>cargento — release prep <span class="dim">· waiting on you: bump_version parity check</span></span>
+        <span class="mut">cargento</span><span class="dim">idle 4m</span></div>
+      <div class="cm-row"><span class="dot" style="background:var(--line2)"></span><span></span>
+        <span>docs — sync-notes <span class="dim">· last turn completed 28m ago</span></span>
+        <span class="mut">spacedock</span><span class="dim">idle 28m</span></div>
+      <div class="cm-row"><span class="dot" style="background:var(--accent-ink)"></span><span></span>
+        <span>captain session — main <span class="dim">· reviewing visibility-2x2 board</span></span>
+        <span class="mut">cargento</span><span class="dim">working · 1m</span></div>
+    </div>
+    <div class="cm-foot"><span>4 harnesses · 1,204 tok/min</span><span class="cm-sp"></span>
+      <span>j k move</span><span>⏎ expand</span><span>u usage</span><span>c mode</span></div>
+  </div>
+</div>
+</div>
+
+<p class="mockcap"><b>Mock · regular view, first load.</b> Same element with the
+<code>standalone</code> modifier (own border and radius, because the wrap owns
+gaps instead of separators), placed between the brand block and the hero tiles.
+Banner text is byte-identical to today's modal copy (AC-4); only the container
+changed: <code>role="dialog" aria-modal="true"</code> → <code>role="region"</code>,
+fixed overlay → in-flow block.</p>
+<div class="mockframe">
+<div class="wrap">
+  <div class="modebar">display&nbsp; <span class="modebtn on">regular</span><span class="modebtn">calm</span></div>
+  <div class="top"><div><div class="brand">Cargento</div>
+    <div class="sub"><span class="live" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent-ink);margin-right:5px"></span>live · updated 09:41:12</div></div></div>
+
+  <!-- ══ THE BANNER (regular placement) ══ -->
+  <div class="u-banner standalone" role="region" aria-label="usage disclosure">
+    <div class="u-banner-top">
+      <span class="u-banner-h">Show usage and rate limits?</span>
+      <span class="u-banner-acts">
+        <button type="button" class="u-primary" data-calm="umodal" data-arg="on">Keep usage on</button>
+        <button type="button" class="u-act" data-calm="umodal" data-arg="off">Turn it off</button>
+      </span>
+    </div>
+    <p class="u-banner-p">Cargento can fetch each vendor's quota so the dashboard shows how much of your allowance is used and when it resets — the 5-hour and weekly windows, or the monthly billing period for a vendor that meters spend.</p>
+    <p class="u-banner-p">What is sent: the vendor's own OAuth access token, and nothing else. No transcript content, no prompts, no paths, no project names, no machine identifiers. What comes back is quota numbers. Session data never appears in either direction. The token is never refreshed, never written, never logged, and never served.</p>
+    <p class="u-banner-p">Usage is on by default. Turn it off here and nothing is fetched; turn it back on any time under configure.</p>
+  </div>
+  <!-- ══ end banner ══ -->
+
+  <div class="hero">
+    <div class="tile"><h3>Needs you</h3><div class="n">1</div><div class="l">session blocked on you</div></div>
+    <div class="tile"><h3>Working now</h3><div class="n">2</div><div class="l">sessions generating</div></div>
+    <div class="tile"><h3>Tokens / min</h3><div class="n">1,204</div><div class="l">across 4 harnesses</div></div>
+  </div>
+  <div class="sec"><span class="sec-k">Usage · rate limits</span><span class="sec-rule"></span></div>
+  <div class="stack" style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px">Codex CLI&nbsp; 5h ███░░░░░░░ 23% ↺ 2h 16m · wk ████░░░░░░ 41% ↺ 3d 5h</div>
+</div>
+</div>
+
+</body>
+</html>
