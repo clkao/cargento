@@ -1,6 +1,6 @@
 ---
 title: Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
-status: backlog
+status: ideation
 source: captain seed
 id: c8ex5x308ssq305b62n3szxm
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: 'Conn: captain granted ''you have the conn to push to the forked repo and open PR; when you have the conn, you should still do gate attempt and record your autonomous approval as resolution'' (session 01a02216, reaffirmed ''just do some'' this session). Evidence: seed reviewed in full — 4 falsifiable ACs against live /api/data (AC-1 in-flight tool reads working/running regardless of age; AC-2 thinking block reads working/thinking; AC-3 genuine-awaiting preserved; AC-4 suite green), root-cause collector scope (pi.py+sessions.py), not UI. Ideation owes the detection design.'
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 # Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
 
