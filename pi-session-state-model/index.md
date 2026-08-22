@@ -3,6 +3,18 @@ title: Pi session state-detection mislabels long-running tools and thinking as i
 status: backlog
 source: captain seed
 id: c8ex5x308ssq305b62n3szxm
+gates:
+    version: 1
+    records:
+        - id: gate:c8ex5x308ssq305b62n3szxm:backlog
+          stage: backlog
+          attempts:
+            - id: gate-attempt:c8ex5x308ssq305b62n3szxm-backlog-1
+              briefing:
+                id: briefing:c8ex5x308ssq305b62n3szxm:backlog:attempt-1:revision-1
+                digest: sha256:542d08d7790eb21d52dc775a9b632105bf7b255098d8860df4536b53cf0105e1
+                request-digest: sha256:9bb40bf77ee7af16cd0a1bc4aefff46e544f719ab48e2d74c7fda28bb84a7d26
+                room-ref: ./review/backlog/briefing-1
 ---
 # Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
 

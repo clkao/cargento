@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:c8ex5x308ssq305b62n3szxm:backlog:attempt-1:revision-1",
+  "question": "Admit to ideation: fix the Pi collector's state model so in-flight tools read working/running and thinking blocks read working/thinking?",
+  "artifacts": [
+    {
+      "id": "artifact:c8ex5x308ssq305b62n3szxm:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/9b4b79f1a1153685413897bc3cefb6aec8ad56ef/pi-session-state-model/index.md",
+      "rev": "sha256:2877c06c858c13a1a2da76c1b712156d285311dfc9f2a4d207c6f8681785b431",
+      "mediaType": "text/markdown",
+      "summary": "Seed has falsifiable ACs (AC-1/2 in-flight-tool + thinking detection observable via live /api/data on 4553; AC-3 preserves genuine-awaiting; AC-4 suite green). Scope is collector-only, root-cause not UI. Fits workflow: ships a dashboard truthfulness improvement with external-proof ACs. Ready for ideation design."
+    }
+  ]
+}
