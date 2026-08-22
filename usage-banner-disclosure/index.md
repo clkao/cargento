@@ -1,6 +1,6 @@
 ---
 title: Usage-limit disclosure is a blocking modal — should be a dismissable banner
-status: backlog
+status: ideation
 source: captain seed
 id: rj95tbw2vde46v8xjgcvgm9q
 gates:
@@ -25,7 +25,7 @@ gates:
                 reason: 'Conn: captain granted ''you have the conn to push to the forked repo and open PR; when you have the conn, you should still do gate attempt and record your autonomous approval as resolution'' (session 01a02216, reaffirmed ''just do some'' this session). Evidence: seed verified against live 4553 screenshot showing modal walling the product; ACs screenshot-falsifiable; presentation-only scope (usage.js + styles.css). Ideation owes banner placement + calm-palette design consistent with the 3-piece IA.'
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
 ---
 # Usage-limit disclosure is a blocking modal — should be a dismissable banner
 
