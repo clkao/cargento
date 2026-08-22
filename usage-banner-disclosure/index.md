@@ -26,6 +26,7 @@ gates:
               application:
                 target-stage: ideation
                 state: consumed
+started: 2026-08-22T05:54:44Z
 ---
 # Usage-limit disclosure is a blocking modal — should be a dismissable banner
 
