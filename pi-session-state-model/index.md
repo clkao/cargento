@@ -47,6 +47,7 @@ gates:
                 target-stage: implementation
                 state: consumed
 started: 2026-08-22T05:54:23Z
+worktree: .worktrees/spacedock-ensign-pi-session-state-model
 ---
 # Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
 
