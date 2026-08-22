@@ -15,6 +15,17 @@ gates:
                 digest: sha256:542d08d7790eb21d52dc775a9b632105bf7b255098d8860df4536b53cf0105e1
                 request-digest: sha256:9bb40bf77ee7af16cd0a1bc4aefff46e544f719ab48e2d74c7fda28bb84a7d26
                 room-ref: ./review/backlog/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:c8ex5x308ssq305b62n3szxm:backlog:1
+                briefing: briefing:c8ex5x308ssq305b62n3szxm:backlog:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-22T05:53:01.653842444Z"
+                decision: approve
+                reason: 'Conn: captain granted ''you have the conn to push to the forked repo and open PR; when you have the conn, you should still do gate attempt and record your autonomous approval as resolution'' (session 01a02216, reaffirmed ''just do some'' this session). Evidence: seed reviewed in full — 4 falsifiable ACs against live /api/data (AC-1 in-flight tool reads working/running regardless of age; AC-2 thinking block reads working/thinking; AC-3 genuine-awaiting preserved; AC-4 suite green), root-cause collector scope (pi.py+sessions.py), not UI. Ideation owes the detection design.'
+              application:
+                target-stage: ideation
+                state: pending
 ---
 # Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
 
