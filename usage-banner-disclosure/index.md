@@ -15,6 +15,17 @@ gates:
                 digest: sha256:61051bb5e93413c97c0a3e171b3b10f36505269fa9fcf2d2eb2da9f1bc2e0066
                 request-digest: sha256:a5fbbfac59fb160ba00aeee38055876ac470c79d1c2934212298962823c5ae56
                 room-ref: ./review/backlog/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:rj95tbw2vde46v8xjgcvgm9q:backlog:1
+                briefing: briefing:rj95tbw2vde46v8xjgcvgm9q:backlog:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-22T05:53:26.336853232Z"
+                decision: approve
+                reason: 'Conn: captain granted ''you have the conn to push to the forked repo and open PR; when you have the conn, you should still do gate attempt and record your autonomous approval as resolution'' (session 01a02216, reaffirmed ''just do some'' this session). Evidence: seed verified against live 4553 screenshot showing modal walling the product; ACs screenshot-falsifiable; presentation-only scope (usage.js + styles.css). Ideation owes banner placement + calm-palette design consistent with the 3-piece IA.'
+              application:
+                target-stage: ideation
+                state: pending
 ---
 # Usage-limit disclosure is a blocking modal — should be a dismissable banner
 
