@@ -68,6 +68,7 @@ gates:
                 state: pending
 started: 2026-08-21T08:42:31Z
 worktree: .worktrees/spacedock-ensign-pi-live-worker-attribution
+mod-block: merge:pr-merge
 ---
 
 The Pi collector passes an empty `worker_names` list to `session_workflows`, so the session view's "live workers first" source is always empty for Pi FO sessions — even when ensigns are actively running. The source of truth for "what is this session doing right now" is the live ensigns; the dashboard should reflect that.
