@@ -35,6 +35,17 @@ gates:
                 digest: sha256:d44c437551bfd8db1bce538f506043b6acb730f042c8ac6b9217fd6eb969e0ab
                 request-digest: sha256:976286c8ddb0cadf3e87145848268283f48459c196a847f198d124aec17f87c2
                 room-ref: ./review/ideation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:rj95tbw2vde46v8xjgcvgm9q:ideation:1
+                briefing: briefing:rj95tbw2vde46v8xjgcvgm9q:ideation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-22T06:14:05.377646569Z"
+                decision: approve
+                reason: 'Conn: ''you have the conn ... record your autonomous approval as resolution'' (session 01a02216, reaffirmed ''just do some'' this session). Evidence: checklist 3/3 DONE; mock.html FO-rendered via headless chromium — banner under control bar with product visible on first paint (AC-1/AC-2 shape); rejected alternative named with reason; AC-3/AC-4 wire tokens + unchanged disclosure text carried explicitly in design. Ready for implementation: replace u-overlay with in-flow u-banner, keep consent wiring.'
+              application:
+                target-stage: implementation
+                state: pending
 started: 2026-08-22T05:54:44Z
 ---
 # Usage-limit disclosure is a blocking modal — should be a dismissable banner
