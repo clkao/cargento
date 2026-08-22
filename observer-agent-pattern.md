@@ -1,6 +1,6 @@
 ---
 title: Observer agent pattern beside an active session
-status: validation
+status: implementation
 source: captain seed
 id: 9t63gp52zec23rh0k9t160ft
 gates:
@@ -79,11 +79,11 @@ gates:
                 reason: 'Captain approved validation via Subspace (binding resolution, decision approve). Captain''s appended question ''net loc change?'' answered: +734 net (737 insertions, 3 deletions) across 10 files — observer.py 342, test_observer.py 290, http_api.py 32, observer.js 37, config.py 12, plus small wiring. All 4 ACs independently reproduced with falsifying edits, no-goal sentinel not overridable by a fabricating model, panel renders from sidecar with no hardcoded fallback, pre-PR suite green. Delivery can proceed to done.'
               application:
                 target-stage: done
-                state: pending
+                state: superseded
 started: 2026-08-20T18:30:00Z
 worktree: .worktrees/spacedock-ensign-observer-agent-pattern
-mod-block: merge:pr-merge
-pr: spacedock-dev/cargento#129
+mod-block:
+pr:
 ---
 
 An active coding session accumulates context a bystander cannot easily recover: what it set out to do, what it decided, where it got stuck, what it is doing right now. An observer agent — a separate agent that sits beside an active session, reads its transcript read-only, and derives its goal and the important things (decisions, blocks, in-flight work) — would let an operator ask "what is this session for and what matters in it right now?" without interrupting the session or relying on its self-report.
