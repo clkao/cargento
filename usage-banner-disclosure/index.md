@@ -26,6 +26,15 @@ gates:
               application:
                 target-stage: ideation
                 state: consumed
+        - id: gate:rj95tbw2vde46v8xjgcvgm9q:ideation
+          stage: ideation
+          attempts:
+            - id: gate-attempt:rj95tbw2vde46v8xjgcvgm9q-ideation-1
+              briefing:
+                id: briefing:rj95tbw2vde46v8xjgcvgm9q:ideation:attempt-1:revision-1
+                digest: sha256:d44c437551bfd8db1bce538f506043b6acb730f042c8ac6b9217fd6eb969e0ab
+                request-digest: sha256:976286c8ddb0cadf3e87145848268283f48459c196a847f198d124aec17f87c2
+                room-ref: ./review/ideation/briefing-1
 started: 2026-08-22T05:54:44Z
 ---
 # Usage-limit disclosure is a blocking modal — should be a dismissable banner

@@ -1,0 +1,24 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:rj95tbw2vde46v8xjgcvgm9q:ideation:attempt-1:revision-1",
+  "question": "Approve the in-flow banner design for implementation?",
+  "artifacts": [
+    {
+      "id": "artifact:rj95tbw2vde46v8xjgcvgm9q:ideation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/73cfb48ff67e0ddab75ec9d290e7c30e8ff3d102/usage-banner-disclosure/index.md",
+      "rev": "sha256:ff266519089e431efd8829761db6fae78669831228f4ba9936c4792a32750e44",
+      "mediaType": "text/markdown",
+      "summary": "Approach: fixed overlay → in-flow .u-banner under the control bar (calm) / above hero tiles (regular); consent wiring and disclosure text unchanged (AC-3/AC-4). Rejected alternative named with reason (restyle-in-place still occludes). Mock (mock.html) rendered and FO-verified: banner + product both visible on first paint. ACs carry external Verified-by clauses with falsifying edits. Risk: none material — pure presentation change on a proven surface; no spike needed, handler + localStorage paths unchanged."
+    }
+  ],
+  "context": [
+    {
+      "type": "Reference",
+      "id": "reference:rj95tbw2vde46v8xjgcvgm9q:ideation:attempt-1:revision-1:item-2",
+      "uri": "git-root://state/73cfb48ff67e0ddab75ec9d290e7c30e8ff3d102/usage-banner-disclosure/mock.html",
+      "mediaType": "application/octet-stream",
+      "rev": "sha256:9713f5537f2b16b21e5c8d513f69f61a471503ee5ccf44c81a5072f6575f06ba"
+    }
+  ]
+}
