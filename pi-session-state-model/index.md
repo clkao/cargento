@@ -1,6 +1,6 @@
 ---
 title: Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
-status: ideation
+status: implementation
 source: captain seed
 id: c8ex5x308ssq305b62n3szxm
 gates:
@@ -45,7 +45,7 @@ gates:
                 reason: 'Conn: ''you have the conn ... record your autonomous approval as resolution'' (01a02216, reaffirmed ''just do some'' this session). Evidence: checklist 3/3 DONE; 5290-record census corrected the seed assumption and AC-2 was recast on the real transcript shape (stopReason census + spike cited in body); AC-3 is the required moving-baseline AC (today''s fresh-stop lie documented with its own falsifying edit); AC-1..4 all carry Verified-by clauses with named falsifying edits. Design confined to pi.py + sessions.py. Ready for implementation.'
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
 started: 2026-08-22T05:54:23Z
 ---
 # Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
