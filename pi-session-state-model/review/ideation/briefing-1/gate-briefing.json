@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:c8ex5x308ssq305b62n3szxm:ideation:attempt-1:revision-1",
+  "question": "Approve the recast state model (open-toolCall / post-assistant-record detection) for implementation?",
+  "artifacts": [
+    {
+      "id": "artifact:c8ex5x308ssq305b62n3szxm:ideation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/4c77a462897fe36cc4ec226dc9a80c8d3419a3a6/pi-session-state-model/index.md",
+      "rev": "sha256:f67be6485182cbef6e026c63a8f3eb2ca6748f2690dc819b98a5752124c6d82a",
+      "mediaType": "text/markdown",
+      "summary": "Ideation ran a 5290-record transcript census and CORRECTED the seed's assumption (AC-2 recast on real on-disk shape: newest record during a thinking block is user/toolResult, not assistant text). Riskiest mechanism spiked end-to-end. Design confined to pi.py + sessions.py; no mock (backend). ACs carry live-scenario Verified-by clauses with falsifying edits."
+    }
+  ]
+}

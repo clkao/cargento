@@ -26,6 +26,15 @@ gates:
               application:
                 target-stage: ideation
                 state: consumed
+        - id: gate:c8ex5x308ssq305b62n3szxm:ideation
+          stage: ideation
+          attempts:
+            - id: gate-attempt:c8ex5x308ssq305b62n3szxm-ideation-1
+              briefing:
+                id: briefing:c8ex5x308ssq305b62n3szxm:ideation:attempt-1:revision-1
+                digest: sha256:f4f40abe251a732310017be3d04329535ccb2e2399ef9bdf1b2632ed7837dd6b
+                request-digest: sha256:ab3dff95bae8f2d7266a8dc4225903312880accdef243a10d6cd6be8eb20d3ff
+                room-ref: ./review/ideation/briefing-1
 started: 2026-08-22T05:54:23Z
 ---
 # Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
