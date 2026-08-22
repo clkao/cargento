@@ -35,6 +35,17 @@ gates:
                 digest: sha256:f4f40abe251a732310017be3d04329535ccb2e2399ef9bdf1b2632ed7837dd6b
                 request-digest: sha256:ab3dff95bae8f2d7266a8dc4225903312880accdef243a10d6cd6be8eb20d3ff
                 room-ref: ./review/ideation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:c8ex5x308ssq305b62n3szxm:ideation:1
+                briefing: briefing:c8ex5x308ssq305b62n3szxm:ideation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-22T06:16:04.051766584Z"
+                decision: approve
+                reason: 'Conn: ''you have the conn ... record your autonomous approval as resolution'' (01a02216, reaffirmed ''just do some'' this session). Evidence: checklist 3/3 DONE; 5290-record census corrected the seed assumption and AC-2 was recast on the real transcript shape (stopReason census + spike cited in body); AC-3 is the required moving-baseline AC (today''s fresh-stop lie documented with its own falsifying edit); AC-1..4 all carry Verified-by clauses with named falsifying edits. Design confined to pi.py + sessions.py. Ready for implementation.'
+              application:
+                target-stage: implementation
+                state: pending
 started: 2026-08-22T05:54:23Z
 ---
 # Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
