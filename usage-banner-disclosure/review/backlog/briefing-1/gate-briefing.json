@@ -1,0 +1,15 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:rj95tbw2vde46v8xjgcvgm9q:backlog:attempt-1:revision-1",
+  "question": "Admit to ideation: convert the blocking usage-limit modal into a dismissable inline banner?",
+  "artifacts": [
+    {
+      "id": "artifact:rj95tbw2vde46v8xjgcvgm9q:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/9e0a865a035964160cd0a49e163f03eb0094f2be/usage-banner-disclosure/index.md",
+      "rev": "sha256:a8d57ea1544ba377d3452d4cbae326f2069552218401a9d799b3c73d584449ce",
+      "mediaType": "text/markdown",
+      "summary": "Seed verified against live 4553 screenshot: modal blocks the whole dashboard on first load. ACs are screenshot-falsifiable (AC-1 product visible without dismissal; AC-2 banner non-blocking; AC-3 existing handlers keep working; AC-4 disclosure text unchanged). Presentation-layer scope only. Fits workflow: first-impression user-impact fix with rendered-output proof."
+    }
+  ]
+}
