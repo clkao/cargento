@@ -50,40 +50,184 @@ computes session state by *recency of transcript events* (`is_fresh` + the 90s
    block, reported "running bash."
 
 ## Acceptance criteria
-- **AC-1**: A Pi session whose last transcript record is an `assistant` message
-  containing a `toolCall` with no subsequent `toolResult` (the tool is in
-  flight) reports `state: working`, `state_detail: running <tool>` — regardless
-  of how long ago the last event was. Verify: the spacedock session
-  (`01a02221`) mid-bash shows `working / running bash`, not
-  `idle / awaiting your message`.
-- **AC-2**: A Pi session whose last transcript record is an `assistant`
-  message with text/thinking content and no `toolCall` (a thinking block)
-  reports `state: working`, `state_detail: thinking` — not
-  `running <stale-tool>`. Verify: the cargento session (`01a02216`) during a
-  thinking block shows `working / thinking`, not `running bash`.
-- **AC-3**: A Pi session whose last record is a `toolResult` followed by a
-  user message (genuinely awaiting) reports `idle / awaiting your message`
-  as before (the in-flight-tool + thinking detection must not break the
-  genuine-awaiting case).
-- **AC-4**: The full unittest suite passes (this is a collector change with
-  test surface; the state-detection logic in `pi.py` + `sessions.py` likely
-  has existing tests that pin the current behavior — update them to the new
-  behavior, don't break unrelated tests).
+- **AC-1**: A Pi session whose newest live-branch record is an `assistant`
+  message with `stopReason: "toolUse"` (an open `toolCall`, no subsequent
+  `toolResult` — the tool is in flight) reports `state: working`,
+  `state_detail: running <tool-of-that-record>` at any event age.
+  Verified by: live scenario — a real Pi session running a bash longer than
+  90 s shows `working / running bash` via `/api/data` on the dogfood server
+  (spike already replayed this shape from session `01a02221`: last record
+  assistant/`toolUse`, 746 s stale). Falsifying edit: drop the
+  `tool_in_flight` branch in `collect` so the decision returns to
+  `is_fresh`-only — the row flips back to `idle / awaiting your message`.
+- **AC-2**: A Pi session whose newest live-branch record is a `toolResult` or
+  user message within `working_threshold_sec` (the model holds the turn and is
+  generating — a thinking block) reports `state: working`,
+  `state_detail: thinking` — never `running <tool>`. Verified by: live
+  scenario — the cargento session (`01a02216`) during a thinking block shows
+  `working / thinking` via `/api/data` (spike replayed the toolResult-last
+  shape from `01a02221`: current code answered `running bash`). Falsifying
+  edit: `working_detail` consulting `info["last_tool"]` before the thinking
+  hint — the detail reads `running bash` again.
+- **AC-3**: A Pi session whose newest live-branch record is an `assistant`
+  message with `stopReason` `stop`/`aborted`/`error`, or a `toolResult`/user
+  record older than `working_threshold_sec` (genuinely awaiting), reports
+  `idle / awaiting your message`. Verified by: suite tests pinning each
+  stop-reason class, plus a live check that a parked real Pi session (last
+  record assistant/`stop`) reads idle. Falsifying edit: classifying
+  assistant/`stop` as responding — the row reports `working / thinking` for a
+  session waiting on the human. This is the baseline that can move the wrong
+  way: today a *fresh* assistant/`stop` row reads `working / generating…`,
+  and the fix tightens that to idle without ever relabeling it thinking.
+- **AC-4**: The full unittest suite passes under the AGENTS.md pre-PR block
+  (`test_pi.py` state tests updated to the new classification,
+  `test_sessions.py` gains the `working_detail` thinking case; no unrelated
+  test touched). Verified by: `coverage run -m unittest discover -s
+  cargento/skills/cargento/tests -t .` green with the pyproject `fail_under`
+  threshold. Falsifying edit: any test that would pass under both the old
+  and new behavior is not one of the added tests — each added test names the
+  edit that fails it.
+
+## Transcript evidence (riskiest mechanism, exercised)
+The riskiest mechanism — distinguishing an in-flight `toolCall` from a
+thinking block in a real Pi `.jsonl` — needs no new machinery, only reading
+fields Pi already writes. Census across every local Pi session store
+(`~/.pi/agent/sessions/**/*.jsonl`, 5290 assistant records):
+
+- Every assistant record is written on message completion and carries a
+  `stopReason` (`toolUse` 5209, `stop` 657, `aborted` 16, `error` 8). There
+  are no partial/streamed assistant records, so during a live thinking block
+  the newest record on disk is the previous `user` or `toolResult` — never an
+  assistant text/thinking record. The seed's AC-2 precondition ("last record
+  is assistant text/thinking, no toolCall") cannot occur as a generating
+  state; that shape is exactly `stopReason: "stop"`, i.e. turn over. AC-2 is
+  therefore recast on the shape that actually marks thinking: newest record
+  `toolResult`/user.
+- `stopReason: "toolUse"` is followed by a `toolResult` in all 21923 observed
+  parent→child pairs; `stop`/`aborted` is never followed by assistant or
+  toolResult (children are user 1184, custom_message 495, compaction 38,
+  bashExecution 19, session_info 4, model_change 1). So `toolUse`-last ⇔
+  tool in flight, and `stop`-last ⇔ turn over, with no observed exception.
+- `custom_message` records are background subagent-notification injections,
+  not streaming state.
+
+End-to-end spike (`/tmp/pi-state-spike/spike.py`, read-only; runs the shipped
+`scan_pi_session` + `collect` state logic against truncated copies of the real
+`01a02221` transcript, mtime replayed faithfully):
+
+| Scenario (last live-branch record)     | Current code                  | Proposed classification      |
+|----------------------------------------|-------------------------------|------------------------------|
+| assistant/`toolUse` bash, 746 s stale  | idle / awaiting your message  | working / running bash (AC-1)|
+| toolResult, fresh (thinking next)      | working / running bash        | working / thinking (AC-2)    |
+| assistant/`stop` (turn over)           | idle / awaiting your message  | idle / awaiting your message |
+
+Both reported mislabels reproduce against the shipped collector on real data,
+and the proposed classification resolves them on the same data. No spike
+beyond this run is needed: the fields (`role`, `stopReason`, per-record tool
+name) are already parsed or trivially carried by `_projection`.
+
+## Chosen approach
+Design is confined to the collector data model (`collectors/pi.py` +
+`sessions.working_detail`). Classify from *what* the newest live-branch record
+is, with recency gating only the one genuinely ambiguous class:
+
+1. `_projection` (~ pi.py:44) also carries `role` and a bounded `stop_reason`
+   for message entries (the per-entry tool name is already extracted).
+2. `_info` (~ pi.py:290) derives an `activity` classification from the newest
+   path entry: `tool_in_flight` (assistant/`toolUse`; tool name from that same
+   entry, not the stale `last_tool`), `awaiting` (assistant
+   `stop`/`aborted`/`error`), `responding` (user or toolResult last), else
+   `None` for non-message leaves (`compaction`, `model_change`,
+   `session_info`, `thinking_level_change`, `bashExecution`,
+   `custom_message`).
+3. `collect` (~ pi.py:440) replaces the single `is_fresh`/`working_detail`
+   branch: `tool_in_flight` → `working / running <tool>` regardless of age
+   (AC-1); `awaiting` → `idle / awaiting your message` even when fresh
+   (tightens today's fresh-stop lie, AC-3); `responding` → keep the existing
+   90 s freshness gate, detail `thinking` when fresh, idle when stale
+   (AC-2 + the stale half of AC-3); `None` → today's behavior unchanged.
+4. `sessions.working_detail` (~ sessions.py:369) gains a thinking case: a
+   collector-supplied hint on `info` is honored before the `last_tool` branch.
+   Signature and subagent branch unchanged; other collectors untouched.
+
+Known asymmetry, recorded so review does not "tidy" it away: `tool_in_flight`
+ignores age but `responding` does not. A `toolUse`-last record is the agent's
+own committed marker that work is in progress; a `toolResult`/user-last record
+cannot distinguish "model is generating" from "process is gone", so the 90 s
+liveness proxy stays there. Residual accepted risk: a Pi process killed
+mid-tool reads `working / running <tool>` until the row ages out of the
+freshness window — no transcript signal can do better, and the alternative
+re-lies about every long tool.
+
+## Simplest rejected alternative
+Raise/extend `working_threshold_sec` (pure recency — e.g. treat staleness up
+to an hour as working). It fails because both failure states are just *stale
+transcripts*: recency alone cannot separate "blocked on a long tool" from
+"genuinely idle". Any threshold long enough for hour-long bashes marks every
+parked session working for that span — the lie inverts but does not die. Only
+reading the last record's `stopReason` separates the two, which is the
+collector data-model change proposed. Also rejected: probing process liveness
+(pid/open-file check). It leaves the collector data model, is
+platform-specific, and Pi records no pid↔transcript mapping in the store —
+inferring one violates the same no-inference rule the codebase applies to
+model attribution.
+
+## Expected surface (files, lines, tolerance)
+- `cargento/skills/cargento/cargento_runtime/collectors/pi.py`:
+  `_projection` +~6 lines, `_info` +~20 lines, `collect` state branch ~12
+  lines rewritten. Total ±40 lines.
+- `cargento/skills/cargento/cargento_runtime/sessions.py`:
+  `working_detail` +~6 lines.
+- `cargento/skills/cargento/tests/test_pi.py`: rewrite the state-detection
+  tests around the current `running bash` pin (~line 748–773) and add one
+  test per leaf class listed in the test plan (±150 lines).
+- `cargento/skills/cargento/tests/test_sessions.py`: `working_detail`
+  thinking case (~20 lines).
+- No frontend, SKILL.md, hook, or manifest changes. Portability rules
+  untouched (no shipped skill body edit).
+
+## Test plan
+`test_pi.py`, through `collect` against synthetic transcripts (the suite's
+existing `_message`/`_jsonl` fixture style):
+- stale assistant/`toolUse` leaf (event age > 90 s) → `working / running
+  <tool>`; the tool name comes from the in-flight record (earlier `read`,
+  in-flight `bash` → `running bash`). Fails if the age gate returns.
+- fresh `toolResult` leaf after a bash `toolUse` → `working / thinking`.
+  Fails if `last_tool` is consulted first.
+- stale `toolResult` leaf → `idle / awaiting your message`. Fails if the
+  responding class drops its age gate.
+- fresh assistant/`stop` leaf → `idle / awaiting your message`. Fails under
+  today's fresh-stop-is-working behavior — pins the tightening.
+- `stop`/`aborted`/`error` leaves at any age → idle. Guards AC-3.
+- fresh user leaf → `working / thinking`; stale user leaf → idle.
+- non-message leaf (`compaction`) → unchanged recency behavior.
+`test_sessions.py`: `working_detail` honors the thinking hint before
+`last_tool`, and unchanged when no hint is present.
+Live scenario (per the workflow rule): dogfood the integration server against
+a real Pi session — a >90 s in-flight bash shows `working / running bash`
+via `/api/data` (AC-1), a thinking block shows `working / thinking` (AC-2).
+
+## Mock
+no mock: not a user-facing surface — the change only alters the
+`state`/`state_detail` strings the collector publishes; the page already
+renders whatever it is given.
 
 ## Scope notes
-- The fix is in the Pi collector (`collectors/pi.py`) — `scan_pi_session` should
+- The fix is in the Pi collector (`collectors/pi.py`) — `scan_pi_session`/`_info`
   surface whether the last tool is in-flight (open `toolCall`, no matching
-  `toolResult`) and whether the session is in a thinking block (last record is
-  assistant text, no toolCall). Then the state decision in the `pi_sessions`
-  function (~line 544) uses that, not just `is_fresh`.
+  `toolResult`) and whether the session is responding (last record user or
+  `toolResult`). The state decision in `collect` uses that, not just
+  `is_fresh`. (The seed's "`pi_sessions` function (~line 544)" is `collect` in
+  the current tree; "last record is assistant text, no toolCall" was corrected
+  by the transcript evidence above.)
 - `sessions.working_detail` (~line 369) needs a "thinking" case.
 - This is the collector's data model, not the session-view UI. The UI renders
   whatever `state_detail` the collector gives it; fixing the collector fixes
   the UI's lie for free.
 - A user-impact gate (not just suite-green): dogfood on the live integration
-  server — the spacedock session running bash shows `working / running bash`,
-  and the cargento session during a thinking block shows `working / thinking`,
-  verified via `/api/data` (or a screenshot).
+  server — a real Pi session running a long bash shows `working / running
+  bash`, and during a thinking block shows `working / thinking`, verified via
+  `/api/data`.
 
 ## Why it matters
 The activity row (piece 2 of the 3-glancable-pieces) lies to the captain about
@@ -93,3 +237,25 @@ bash, or "running bash" for a session that's thinking. The mirror is
 supposed to show what's happening *now*; the state model can't distinguish
 "blocked on a long tool" from "genuinely idle" or "thinking" from "running."
 Fixing the collector is the root; the UI is a symptom.
+
+## Stage Report: ideation
+
+- DONE: Each acceptance criterion carries an external Verified-by clause naming the concrete edit that would falsify it — AC-1/AC-2 proven by a live scenario against a real Pi transcript (per workflow live-scenario rule), not by suite presence alone
+  All four ACs rewritten with Verified-by + falsifying edits; AC-1/AC-2 live-scenario shapes already replayed from real transcript 01a02221 in the spike (mid-bash toolUse-last at 746 s, fresh toolResult-last), leaving the same observation to repeat through /api/data at implementation.
+- DONE: Riskiest mechanism — distinguishing an in-flight toolCall from a thinking block in a real Pi .jsonl transcript — is exercised end-to-end and its evidence is in the body, or a 'no spike needed' names the already-proven mechanisms
+  Census over all local Pi stores (5290 assistant records: stopReason always present; toolUse→toolResult in 21923/21923 pairs; stop never mid-turn) plus spike /tmp/pi-state-spike/spike.py running the shipped scan_pi_session + collect logic on truncated real transcripts: reproduced both mislabels with current code, resolved by the proposed classification on the same data.
+- DONE: Design is confined to the collector data model (pi.py + sessions.py); body records 'no mock: not a user-facing surface' and names the simplest rejected alternative and why it fails
+  Approach touches only _projection/_info/collect + working_detail (±40 runtime lines, ±170 test lines, no frontend/manifests); simplest rejected alternative (longer recency threshold) named with why it cannot separate long-tool from idle; process-liveness probing also rejected.
+
+### Summary
+
+Ideation validated the seed against the actual code and corrected one seed
+assumption with transcript evidence: Pi writes assistant records only on
+completion with a stopReason, so a thinking block's newest on-disk record is a
+user or toolResult record, not an assistant text/thinking record — AC-2 is
+recast on that real shape. The design classifies from the newest live-branch
+record (toolUse-last → running regardless of age; stop-last → idle even when
+fresh; user/toolResult-last → fresh-gated thinking), confined to
+collectors/pi.py + sessions.working_detail. The riskiest mechanism is proven
+end-to-end by a spike against session 01a02221 that reproduces both mislabels
+on current code and resolves them with the proposed classification.
