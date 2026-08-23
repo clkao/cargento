@@ -283,8 +283,17 @@ on current code and resolves them with the proposed classification.
 
 ## Stage Report: implementation
 
-- Branch `pi-session-state-model`: `4d1b208` leaf stopReason classification in `collectors/pi.py` (`_activity` + `_projection` role/stop_reason plumbing) + `sessions.py`; `592eb46` per-leaf-class tests in `test_pi.py` (+200 lines, realistic running-bash pin); `0aa6783` ruff format.
-- The new tests pin each leaf class: assistant leaf stopReason toolUse=tool in flight, stop/aborted/error=awaiting, user/toolResult leaf=responding (freshness-gated), unknown stopReason=None falls back to recency. Falsifier: misclassify any leaf in `_activity` and its pinned case fails.
-- Spike `/tmp/pi-state-spike/spike.py` run against the implementation: AC-1 working/running bash ✓, AC-2 working/thinking ✓, AC-3 idle/awaiting ✓.
-- Pre-PR suite green on the branch: ruff ✓, format ✓, mypy (80 files) ✓, lint_embedded ✓, validate_plugins ✓, coverage 89.3% ≥ 73 ✓, 1191 dashboard tests OK ✓.
-- Note: implementation worker (fresh agent) landed the change but timed out at 30m before committing; FO reviewed the complete diff against this ideation, re-ran spike + suite, and committed per the worker's intended units. No design deviation.
+- DONE: classify Pi session state from the newest on-disk record (leaf), confined to collectors/pi.py + sessions.py
+  4d1b208 — `_projection` carries role/stop_reason (unknown future stopReasons fall to None); new `_activity` maps assistant-leaf toolUse=tool in flight, stop|aborted|error=awaiting, user/toolResult leaf=responding with the freshness gate kept
+- DONE: per-leaf-class state tests with a realistic running-bash pin
+  592eb46 — +200 lines in test_pi.py; falsifier: misclassify any leaf class in `_activity` and its pinned case fails
+- DONE: the spike reproduces both mislabels on old code and shows them resolved on the implementation
+  /tmp/pi-state-spike/spike.py against the final code: AC-1 working/running bash (tool in flight), AC-2 working/thinking (toolResult leaf), AC-3 idle/awaiting (completed turn)
+- DONE: commit per change; every significant edit is its own commit
+  4d1b208, 592eb46, 0aa6783 (style-only, suite re-run after)
+- DONE: the Cargento pre-PR suite is green on this branch
+  ruff check ✓, ruff format --check ✓, mypy 80 files ✓, lint_embedded ✓, validate_plugins ✓, coverage 89.3% ≥ fail_under 73 ✓, 1191 dashboard tests OK ✓
+
+### Summary
+
+State classification now comes from the leaf record's stopReason rather than record recency, exactly the ideation's chosen approach, with an honest None-fallthrough for unrecognised future spellings. The implementing worker timed out after landing the change but before committing; the FO reviewed the complete diff against this ideation, re-ran spike + suite, and committed per the worker's intended units — no design deviation.

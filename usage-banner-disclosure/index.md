@@ -256,7 +256,17 @@ Fixed the first-load wall: the disclosure modal becomes an in-flow banner — a 
 
 ## Stage Report: implementation
 
-- Ensign worktree `.worktrees/spacedock-ensign-usage-banner-disclosure`: `d80fd45` `.u-overlay` modal → in-flow `.u-banner` (heading + Keep/Turn-off actions, three disclosure paragraphs preserved verbatim); `f19f2d6` page byte-oracle re-pin (5 failures found and fixed — the only test surface pinning the old layout); `65f488f` docs (modal→banner prose).
-- Byte-oracle re-pin asserts the served page matches the banner build exactly; falsifier: revert any hunk of d80fd45 and the digests fail.
-- FO visual verification `/tmp/banner.png` read against `usage-banner-disclosure/mock.html`: in-flow top banner, consent actions right-aligned, copy unchanged, page unobstructed — mock contract met.
-- Pre-PR suite green in the worktree: ruff ✓, format ✓, mypy (80 files) ✓, lint_embedded ✓, validate_plugins ✓, dashboard tests OK ✓.
+- DONE: replace the `.u-overlay` blocking modal with one in-flow `.u-banner` element per the mock
+  d80fd45 — heading + Keep usage on / Turn it off actions right-aligned, the three disclosure paragraphs preserved verbatim; consent wiring, wire tokens and the usageModalSeen key untouched (presentation and ARIA only), per the ideation summary
+- DONE: byte-oracle tests re-pinned to the banner build
+  f19f2d6 — 5 digest failures found and re-pinned; falsifier: revert any hunk of d80fd45 and the page digests fail
+- DONE: docs name the disclosure a banner, not a modal
+  65f488f — prose kept to presentation naming; SKILL.md untouched
+- DONE: the Cargento pre-PR suite is green in the worktree
+  ruff check ✓, ruff format --check ✓, mypy 80 files ✓, lint_embedded ✓, validate_plugins ✓, dashboard tests OK ✓
+- DONE: visual verification against the mock contract
+  /tmp/banner.png read by the FO: in-flow banner at top, page unobstructed, actions functional — matches usage-banner-disclosure/mock.html
+
+### Summary
+
+The disclosure is now one in-flow banner element; the worker found the prior ensign pass's core edit staged in the worktree, validated it against mock + ACs, fixed the missed byte-oracle pins, and committed in three logical units. First-show disclosure still blocks until dismissed; later expiry re-notifies without blocking.
