@@ -38,7 +38,7 @@
    are known, because a percentage near zero does not say whether the plan is
    barely touched or the allowance is tiny. It is always shown when present,
    because a row whose only figure sits behind `configure` reads as broken.
-   The disclosure modal opens once, the first time a payload carries
+   The disclosure banner appears once, the first time a payload carries
    `usage_fetch` — the capability flag the server raises exactly when a
    discovered harness's quota comes from the network fetcher. Until it is
    answered, no poll carries consent and nothing is fetched. */
@@ -738,9 +738,9 @@ function usageEntry(u){
 function usageCfgPop(){
   if(!usageCfgOpen) return "";
   const shown = USAGE_STATS.filter(([k]) => usageCfg[k]).length;
-  /* The master switch is the modal's off switch, reachable again later — the
-     way back the disclosure promises. It is not part of the stats group and
-     never locks. */
+  /* The master switch is the disclosure's off switch, reachable again later —
+     the way back the disclosure promises. It is not part of the stats group
+     and never locks. */
   const master = `<button type="button" class="u-cfg-row" data-calm="uon"` +
     ` aria-pressed="${usageEnabled}">` +
     `<span class="u-cfg-box${usageEnabled ? " on" : ""}">${usageEnabled ? "✓" : ""}</span>` +
@@ -794,26 +794,32 @@ function usageBandCalm(d){
 
 /* First-run disclosure. The copy quotes the security contract (SECURITY.md,
    "Usage quota reads") — it must not promise anything the contract does not
-   say. */
-function usageModal(d){
+   say.
+   An in-flow banner, deliberately not an overlay: the disclosure is consent,
+   not a gate, and a first-time captain walling it in front of the dashboard
+   would hide the product the page was opened to show. `standalone` marks the
+   regular view's placement — the wrap owns gaps rather than separators, so
+   that variant carries its own border and radius (styles.css). */
+function usageBanner(d, standalone){
   if(!usagePresent(d) || !d.usage_fetch || usageModalSeen) return "";
-  return `<div class="u-overlay" role="dialog" aria-modal="true"` +
-    ` aria-label="usage disclosure"><div class="u-modal">` +
-    `<div class="u-modal-h">Show usage and rate limits?</div>` +
-    `<p class="u-modal-p">Cargento can fetch each vendor's quota so the dashboard` +
+  return `<div class="u-banner${standalone ? " standalone" : ""}" role="region"` +
+    ` aria-label="usage disclosure"><div class="u-banner-top">` +
+    `<span class="u-banner-h">Show usage and rate limits?</span>` +
+    `<span class="u-banner-acts">` +
+    `<button type="button" class="u-primary" data-calm="umodal" data-arg="on">Keep usage on</button>` +
+    `<button type="button" class="u-act" data-calm="umodal" data-arg="off">Turn it off</button>` +
+    `</span></div>` +
+    `<p class="u-banner-p">Cargento can fetch each vendor's quota so the dashboard` +
     ` shows how much of your allowance is used and when it resets — the 5-hour and` +
     ` weekly windows, or the monthly billing period for a vendor that meters spend.</p>` +
-    `<p class="u-modal-p">What is sent: the vendor's own OAuth access token, and` +
+    `<p class="u-banner-p">What is sent: the vendor's own OAuth access token, and` +
     ` nothing else. No transcript content, no prompts, no paths, no project names,` +
     ` no machine identifiers. What comes back is quota numbers. Session data never` +
     ` appears in either direction. The token is never refreshed, never written,` +
     ` never logged, and never served.</p>` +
-    `<p class="u-modal-p">Usage is on by default. Turn it off here and nothing is` +
+    `<p class="u-banner-p">Usage is on by default. Turn it off here and nothing is` +
     ` fetched; turn it back on any time under configure.</p>` +
-    `<div class="u-modal-acts">` +
-    `<button type="button" class="u-primary" data-calm="umodal" data-arg="on">Keep usage on</button>` +
-    `<button type="button" class="u-act" data-calm="umodal" data-arg="off">Turn it off</button>` +
-    `</div></div></div>`;
+    `</div>`;
 }
 
 function usageAction(act, arg){

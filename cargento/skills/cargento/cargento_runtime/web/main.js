@@ -32,7 +32,7 @@ function render(d){
     const focusKey = calmFocusKey();
     renderInProgress = true;
     app.className = "wrap calm";
-    app.innerHTML = modeBar() + calmLedger(d) + usageModal(d);
+    app.innerHTML = modeBar() + calmLedger(d);
     renderInProgress = false;
     calmRestoreScroll();
     calmRestoreFocus(focusKey);
@@ -120,7 +120,7 @@ function render(d){
     `<div class="sub"><span class="live" id="live-dot"></span>` +
     `<span id="live-status">live · updated ${new Date(d.generated*1000).toLocaleTimeString()}${LIVE_SUPPORTED ? "" : " · auto-refresh 5s"}</span>` +
     (d.show_all ? " · showing all" : "") + notifyControl(d) + `</div></div>` +
-    `<div class="hstrip">${harnessStrip(d.harnesses)}</div></div>` + body + usageModal(d);
+    `<div class="hstrip">${harnessStrip(d.harnesses)}</div></div>` + usageBanner(d, true) + body;
   renderInProgress = false;
 
   restoreSparkState(sparkFocused, savedPointer);
@@ -143,7 +143,7 @@ async function refresh(){
   try{
     /* usage=1 is this page's consent to the server's quota fetch riding on
        the poll. It is sent only when the feature is on AND the disclosure
-       modal has been answered, so the first fetch can never precede the
+       banner has been answered, so the first fetch can never precede the
        disclosure. Without it the server answers from cache and fetches
        nothing. */
     const params = [];

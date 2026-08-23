@@ -115,7 +115,7 @@ class HarnessSpec:
     ``usage_is_fetch`` marks a provider whose numbers come from the network
     fetcher rather than from disk. Its presence on a discovered harness is
     what raises the payload's ``usage_fetch`` capability flag, and that flag
-    is what wakes the page's first-run disclosure modal — a disk reader like
+    is what wakes the page's first-run disclosure banner — a disk reader like
     Codex's must never raise it.
 
     ``reports_rate`` says whether this harness's collector can populate
@@ -202,7 +202,7 @@ def default_harnesses(
         HarnessSpec("gemini", "Gemini", gemini.discover, gemini.collect, reports_rate=True),
         # Antigravity's quota arrives as a pushed status-line receipt rather
         # than a fetch, so `usage_is_fetch` stays False: there is no outbound
-        # request to disclose, and the first-run modal must not fire for it.
+        # request to disclose, and the first-run banner must not appear for it.
         # `--no-usage` still drops the provider, because a user turning usage
         # off means the whole section, not just the network half.
         HarnessSpec(
@@ -221,7 +221,7 @@ def default_harnesses(
         HarnessSpec("opencode", "OpenCode", opencode.discover, opencode.collect),
         # Cursor's allowance is money against a monthly billing cycle, fetched
         # from the RPC its own CLI calls, so this is a second `usage_is_fetch`
-        # row: the disclosure modal must cover it exactly as it covers Claude.
+        # row: the disclosure banner must cover it exactly as it covers Claude.
         HarnessSpec(
             "cursor",
             "Cursor",
@@ -365,7 +365,7 @@ class Application:
         if usage_fetch_active:
             # The fetcher's capability flag: present exactly when a discovered
             # harness's quota comes from the network fetcher. The page's
-            # first-run disclosure modal keys on it, so it must never rise for
+            # first-run disclosure banner keys on it, so it must never rise for
             # a disk-read provider or with the fetch disabled.
             collection["usage_fetch"] = True
         return collection

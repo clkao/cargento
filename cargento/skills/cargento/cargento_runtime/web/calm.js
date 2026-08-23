@@ -717,6 +717,7 @@ function calmLedger(d){
         ` aria-pressed="${usageOpen}">usage</button>`
       : "") +
     `<span class="cm-sp"></span><span class="cm-note">${esc(note)}</span></div>` +
+    usageBanner(d) +
     usageBandCalm(d) +
     `<div class="cm-body" id="cm-body">` +
     `<div class="cm-head"><span></span><span></span><span>session</span><span>where</span>` +
