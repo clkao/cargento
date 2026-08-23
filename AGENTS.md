@@ -27,8 +27,10 @@ cargento/                           # plugin root: Claude Code, Codex, Antigravi
         ├── SKILL.md                # shared skill body (all harnesses)
         ├── server.py               # the stable launcher: calls cargento_runtime.cli.main
         ├── notify_hook.py          # loopback POST forwarder for the user-installed Claude hooks
+        ├── mcp_server.py           # stdio MCP server: the one tool a session calls to ask the reader
         ├── cargento_runtime/       # importable dashboard runtime package
         │   ├── aggregate.py        # harness registry, failure boundary, and the application
+        │   ├── asks.py             # outstanding questions and their answer mailboxes, a leaf
         │   ├── claude_data.py      # Claude transcript reads shared by the collector and hooks
         │   ├── cli.py              # argument parsing, runtime assembly, and the serve branches
         │   ├── collectors/         # one harness collector per file, one per supported harness
@@ -70,6 +72,7 @@ shipped skill body, lives in the `sync-docs` skill at `.claude/skills/sync-docs/
 | File | Owns |
 |---|---|
 | `README.md` | The front door: what Cargento is, install per harness, skill inventory, links out. |
+| `HOW_TO_USE.md` | What a person configures by hand: the harness settings the plugin does not install, one verified procedure per task. |
 | `AGENTS.md` | **This file.** The repository contract for agents, the canonical pre-PR command list, and the parallel-worktree hazards measured while burning down the roadmap. |
 | `CLAUDE.md` | Claude-Code-only addenda; imports this file. |
 | `CONTRIBUTING.md` | The human contributor journey, and the dashboard implementation constraints. |

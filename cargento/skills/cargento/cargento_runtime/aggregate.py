@@ -398,6 +398,9 @@ class Application:
             # when the store is live, so `--no-dismiss` leaves the page with no
             # control to offer rather than one that answers 503.
             collection["dismiss"] = True
+        # Folded in rather than branched on here: `collect` sits on ruff's
+        # complexity and statement caps, and an inline `if` puts it over both.
+        collection.update(self._ask_cards(now))
         if usage_supported:
             # Present even when empty: the page distinguishes "no quota data
             # yet" (key with no entries) from "nothing here publishes quota"
@@ -410,6 +413,44 @@ class Application:
             # a disk-read provider or with the fetch disabled.
             collection["usage_fetch"] = True
         return collection
+
+    def _ask_cards(self, now: float) -> dict[str, Any]:
+        """The ask capability flag and its cards, or nothing at all.
+
+        Keyed the way `dismiss` is, and for the same reason: absent means the
+        page draws no control, so `--no-ask` leaves a reader with nothing to
+        click rather than a button whose click answers 503.
+
+        `pending` sweeps as it reads, and it returns only unresolved asks, so an
+        answered card can never reappear on the board between the click and the
+        poller collecting it. The sweep is no longer the only one: `register`
+        sweeps too, because a collection is not guaranteed to happen and a
+        registration is. What the coordinator does guarantee is that an
+        outstanding ask forces collections while it lasts, which is what renders
+        the card here with no browser tab open.
+        """
+        config, state = self.config, self.state
+        if not config.ask_enabled:
+            return {}
+        return {
+            "ask": True,
+            "asks": [
+                {
+                    "id": ask.id,
+                    "harness": ask.harness,
+                    "session_id": ask.session_id,
+                    "project": ask.project,
+                    "question": ask.question,
+                    "options": list(ask.options),
+                    "age_sec": round(now - ask.created),
+                }
+                for ask in state.asks.pending(
+                    now=now,
+                    deadline=config.ask_deadline_sec,
+                    retention=config.ask_retention_sec,
+                )
+            ],
+        }
 
     def _mark_unreachable_by_events(self, out_sessions: list[Session]) -> None:
         """Disclose the rows no event can ever reach, before any overlay lands.

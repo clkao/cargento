@@ -18,12 +18,13 @@ function render(d){
      longest-blocked first, and re-sorting it here would be a second definition of
      the queue order — the one gateQueue() exists to refuse. */
   const needs = gateQueue(d);
+  const waiting = waitingOnYou(d, needs);
   /* An answered queue leaves its cursor behind otherwise, and the same session
      blocking again later would inherit it — landing the cursor mid-queue on a
      board whose head is a gate that has waited longer. */
   if(!needs.length) gateCursorKey = null;
   if(!app){
-    document.title = (needs.length > 0 ? `(${needs.length}!) ` : "") + "Cargento";
+    document.title = (waiting.length > 0 ? `(${waiting.length}!) ` : "") + "Cargento";
     return;
   }
   if(displayMode === "calm"){
@@ -32,6 +33,10 @@ function render(d){
     const outgoing = document.getElementById("cm-body");
     if(calmResetScroll){ calmScrollTop = 0; calmResetScroll = false; }
     else if(outgoing) calmScrollTop = outgoing.scrollTop;
+    // The asks band scrolls in this frame too, and it is never re-filtered, so
+    // it has no calmResetScroll case: its offset is only ever worth keeping.
+    const outgoingAsks = document.getElementById("askband");
+    if(outgoingAsks) askScrollTop = outgoingAsks.scrollTop;
     const focusKey = calmFocusKey();
     renderInProgress = true;
     app.className = "wrap calm";
@@ -40,7 +45,7 @@ function render(d){
     calmRestoreScroll();
     calmRestoreFocus(focusKey);
     restoreStopFocus();
-    document.title = (needs.length > 0 ? `(${needs.length}!) ` : "") + "Cargento";
+    document.title = (waiting.length > 0 ? `(${waiting.length}!) ` : "") + "Cargento";
     return;
   }
   const sparkFocused = !!(document.activeElement && document.activeElement.id === "spark-main");
@@ -62,8 +67,8 @@ function render(d){
   const idle = attentionSort(d, d.sessions.filter(x => x.state === "idle"));
 
   const tiles =
-    countTile("Needs you", {line: "sessions blocked on you",
-      empty: "Nothing is waiting on you."}, needs, true) +
+    countTile("Needs you", {line: needsLine(needs, waiting),
+      empty: "Nothing is waiting on you."}, waiting, true) +
     countTile("Working now", {line: "sessions generating",
       empty: "No agent is generating right now."}, working, false) +
     rateTile(d);
@@ -112,13 +117,19 @@ function render(d){
       `${idleExpanded ? "Show less" : "Show all " + idle.length + " idle"}</button></div></div></div>`;
   }
 
+  /* Assembled outside both branches below, unlike every other section: an ask
+     can come from a session this board is not showing — one outside the display
+     window, or a harness that has since gone quiet — and the empty-board branch
+     would then hide the one card whose session is waiting on a click. */
+  const asksHtml = askBand(d);
   let body;
   if(!d.sessions.length){
-    body = `<div class="empty">No session activity in the last ${esc(d.window_hours)}h.` +
+    body = asksHtml +
+      `<div class="empty">No session activity in the last ${esc(d.window_hours)}h.` +
       (d.show_all ? "" : ` <a href="?all=1">Show all sessions</a>`) + `</div>`;
   } else {
     body = `<div class="hero">${tiles}</div><div class="subnote">${subnote}</div>` +
-      usageSectionRegular(d) + bandHtml + workingHtml + idleHtml;
+      usageSectionRegular(d) + asksHtml + bandHtml + workingHtml + idleHtml;
   }
 
   renderInProgress = true;
@@ -135,7 +146,7 @@ function render(d){
   calmRestoreFocus(actionFocused);
   restoreStopFocus();
   restoreGateCursor();
-  document.title = (needs.length > 0 ? `(${needs.length}!) ` : "") + "Cargento";
+  document.title = (waiting.length > 0 ? `(${waiting.length}!) ` : "") + "Cargento";
 }
 
 async function refresh(){

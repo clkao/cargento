@@ -62,6 +62,7 @@ MAX_CATALOG_TOKEN_ESTIMATE = 4_000
 # NOTICE are not Markdown, so none of them are listed.
 ROOT_DOCS = (
     "README.md",
+    "HOW_TO_USE.md",
     "AGENTS.md",
     "CLAUDE.md",
     "CONTRIBUTING.md",
@@ -133,11 +134,16 @@ CARGENTO_RUNTIME_FILES = (
     "skills/cargento/event_hook.py",
     "skills/cargento/statusline_hook.py",
     "skills/cargento/agy_hook.py",
+    # The stdio MCP server. A top-level `.py` beside the other edge scripts on
+    # purpose: the inventory test globs `skills/cargento/*.py` non-recursively, so a
+    # subdirectory would be invisible here and ship as a broken install.
+    "skills/cargento/mcp_server.py",
     "skills/cargento/cargento_runtime/__init__.py",
     "skills/cargento/cargento_runtime/cli.py",
     "skills/cargento/cargento_runtime/config.py",
     "skills/cargento/cargento_runtime/state.py",
     "skills/cargento/cargento_runtime/stream.py",
+    "skills/cargento/cargento_runtime/asks.py",
     "skills/cargento/cargento_runtime/io.py",
     "skills/cargento/cargento_runtime/probe.py",
     "skills/cargento/cargento_runtime/records.py",
@@ -175,6 +181,7 @@ CARGENTO_RUNTIME_FILES = (
     "skills/cargento/cargento_runtime/web/mode.js",
     "skills/cargento/cargento_runtime/web/usage.js",
     "skills/cargento/cargento_runtime/web/controls.js",
+    "skills/cargento/cargento_runtime/web/ask.js",
     "skills/cargento/cargento_runtime/web/calm.js",
     "skills/cargento/cargento_runtime/web/notify.js",
     "skills/cargento/cargento_runtime/web/main.js",
