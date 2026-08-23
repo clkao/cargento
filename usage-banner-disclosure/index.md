@@ -270,3 +270,20 @@ Fixed the first-load wall: the disclosure modal becomes an in-flow banner — a 
 ### Summary
 
 The disclosure is now one in-flow banner element; the worker found the prior ensign pass's core edit staged in the worktree, validated it against mock + ACs, fixed the missed byte-oracle pins, and committed in three logical units. First-show disclosure still blocks until dismissed; later expiry re-notifies without blocking.
+
+## Stage Report: validation
+
+- DONE: no `.u-overlay` element is rendered; the disclosure is one in-flow `.u-banner`
+  Grep over the worktree (`**/*.{js,css,py,md,html}`) for `u-overlay|u-modal`: zero matches. usage.js:803 `usageBanner()` emits a single `<div class="u-banner">` with `role="region" aria-label="usage disclosure"`; guard byte-identical to the retired modal's (baseline usage.js:798–799 ≡ 803–804). Calm placement calm.js:720 sits inside `.cm-frame` under `.cm-ctl` and above the usage band; regular placement main.js:123 is the `standalone` variant between the brand block and the hero tiles — both match the mock.
+- DONE: consent wiring, wire tokens and disclosure copy unchanged
+  `data-calm="umodal" data-arg="on"/"off"` buttons, key string `cargento.usageModalSeen`, the `umodal` branch of `usageAction` (off also clears `usageEnabled`, on polls immediately), the poll consent clause `usageEnabled && usageModalSeen` (main.js:151), and the three disclosure paragraphs are byte-identical to baseline (AC-3/AC-4). The banner persists until answered; token-expiry re-notification stays the in-band non-blocking `u-expired` note.
+- DONE: mock contract holds in the shipped build
+  styles.css:494–499 define only `.u-banner*` (flex:none row + standalone modifier), identical to the mock's proposed CSS. Implementation-stage captures (/tmp/banner-calm.png, /tmp/banner-regular.png, /tmp/banner-dismissed.png) read by the validator: banner in-flow in both views, copy intact, page unobstructed, dismissal leaves a bannerless dashboard. Note: the mock lives at .spacedock-state/usage-banner-disclosure/mock.html, not under the worktree path the dispatch quoted.
+- DONE: supervisor mechanical re-run (validator session had no shell/write)
+  All 12 probe checks PASS (`shot_banner_validation.mjs` on the 4799 server; probe bug fixed by the FO — default display mode is regular, calm must be set explicitly): no `.u-overlay`, one `.u-banner`, position static, content after banner, copy intact, calm rows + regular heroes visible. Suite: dashboard tests OK (skipped=1); ruff `All checks passed!`; mypy `Success: no issues found in 80 source files`; lint_embedded clean.
+- DONE: adversarial check — deleting `usageBanner(d) +` at calm.js:720 silently removes the banner in calm view (consent unanswerable, fetch never fires)
+  The byte oracle (test_page.py's calm.js size+sha256 pin) fails and names the part — but only as drift: the fix is a re-pin, and f19f2d6's own five-digest re-pin demonstrates how regression gets blessed. No semantic JS test exists for the banner. Severity: note; recommend re-pins enumerate the intended behavior delta.
+
+### Summary
+
+No blockers: the modal is gone, one in-flow banner carries unchanged copy and consent wiring in both placements, and the byte oracle catches tamper (bluntly). Mechanical re-run returned green, including the fixed calm-mode probe. Verdict: PASSED. Low-severity notes: implementation summary's "blocks until dismissed" phrasing (layout is non-blocking; the banner persists until answered), the byte-oracle re-pin blind spot (recommend re-pins enumerate the behavior delta), and the validator's mock-path note (mock.html lives in the state checkout).
