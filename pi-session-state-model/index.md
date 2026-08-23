@@ -1,6 +1,6 @@
 ---
 title: Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
-status: implementation
+status: validation
 source: captain seed
 id: c8ex5x308ssq305b62n3szxm
 gates:
@@ -297,3 +297,20 @@ on current code and resolves them with the proposed classification.
 ### Summary
 
 State classification now comes from the leaf record's stopReason rather than record recency, exactly the ideation's chosen approach, with an honest None-fallthrough for unrecognised future spellings. The implementing worker timed out after landing the change but before committing; the FO reviewed the complete diff against this ideation, re-ran spike + suite, and committed per the worker's intended units — no design deviation.
+
+## Stage Report: validation
+
+- DONE: independently reproduced the classification from the code — `_projection` (pi.py) bounds `stopReason` to the four known spellings and lets unknown ones fall to None; `_activity` maps assistant-leaf toolUse→tool_in_flight (tool name from the leaf itself), stop|aborted|error→awaiting, user/toolResult leaf→responding, non-message leaf→None; `collect` gates only `responding` on freshness and leaves the None branch byte-identical to the old `is_fresh` rule — genuinely behavior-preserving
+  pi.py `_activity` + `collect` branch, sessions.py:368-379 `working_detail` thinking hint ahead of `last_tool`; None-fallthrough confirmed behavior-preserving by inspection of the `elif fresh:` arm.
+- DONE: spike re-run on the final code reproduces and resolves both mislabels
+  AC-1: assistant/toolUse leaf 8012 s stale → working / running bash; AC-2: toolResult leaf → working / thinking; AC-3: assistant/aborted leaf → idle / awaiting your message.
+- DONE: full unittest suite green on the branch
+  `Ran 1191 tests in 53.269s` / `OK (skipped=1)`.
+- DONE: lint and type gates green
+  ruff: `All checks passed!`; mypy: `Success: no issues found in 80 source files`.
+- DONE: adversarial edit proven caught by a named pin
+  Misclassifying stop/aborted as tool_in_flight (`if stop_reason != "error":` in `_activity`) fails `test_stop_aborted_and_error_leaves_await_at_any_age` with `FAILED (failures=4)`; edit reverted, tree clean.
+
+### Summary
+
+Validation independently reproduced every Verified-by clause: the classification matches the ideation's chosen approach in the code, the spike resolves AC-1/AC-2/AC-3 on real transcript shapes, the suite (1191 tests) plus ruff and mypy are green, and the adversarial misclassification is caught by the stopReason pin. One noted deviation from AC-4's expected surface: `test_sessions.py` did not gain a direct `working_detail` thinking case — the precedence is pinned through `test_pi.py::test_a_fresh_tool_result_leaf_reports_thinking` (a row with `last_tool` bash plus the thinking hint asserts `thinking`, so the falsifying edit `last_tool` consulted first fails there). Coverage is real, only not at the location the AC named. Verdict: PASSED; optional follow-up, not blocking: add the direct `working_detail` hint-ordering unit test in `test_sessions.py`.

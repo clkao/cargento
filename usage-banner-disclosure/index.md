@@ -1,6 +1,6 @@
 ---
 title: Usage-limit disclosure is a blocking modal — should be a dismissable banner
-status: implementation
+status: validation
 source: captain seed
 id: rj95tbw2vde46v8xjgcvgm9q
 gates:
