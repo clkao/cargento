@@ -1008,7 +1008,11 @@ class PiCollectorTest(PiScanTestCase):
                     stop_reason="toolUse",
                 ),
                 self._message(
-                    "read-out", "read", self.NOW - 340, "toolResult", [{"type": "text", "text": "f"}]
+                    "read-out",
+                    "read",
+                    self.NOW - 340,
+                    "toolResult",
+                    [{"type": "text", "text": "f"}],
                 ),
                 self._message(
                     "bash",
@@ -1106,9 +1110,7 @@ class PiCollectorTest(PiScanTestCase):
                 with self.subTest(stop_reason=stop_reason, age=age):
                     row = self._state_row(
                         [
-                            self._message(
-                                "prompt", None, self.NOW - age - 50, "user", "Question"
-                            ),
+                            self._message("prompt", None, self.NOW - age - 50, "user", "Question"),
                             self._message(
                                 "done",
                                 "prompt",
@@ -1137,9 +1139,7 @@ class PiCollectorTest(PiScanTestCase):
         )
 
         self.assertEqual(("working", "thinking"), (fresh["state"], fresh["state_detail"]))
-        self.assertEqual(
-            ("idle", "awaiting your message"), (stale["state"], stale["state_detail"])
-        )
+        self.assertEqual(("idle", "awaiting your message"), (stale["state"], stale["state_detail"]))
 
     def test_a_non_message_leaf_keeps_recency_only_behavior(self) -> None:
         # A compaction (or model_change, …) leaf says nothing about turn
@@ -1168,9 +1168,7 @@ class PiCollectorTest(PiScanTestCase):
         stale = self._state_row(compaction_leaf(300), self.NOW - 300)
 
         self.assertEqual(("working", "generating…"), (fresh["state"], fresh["state_detail"]))
-        self.assertEqual(
-            ("idle", "awaiting your message"), (stale["state"], stale["state_detail"])
-        )
+        self.assertEqual(("idle", "awaiting your message"), (stale["state"], stale["state_detail"]))
 
 
 class TurnTrackingTest(unittest.TestCase):
