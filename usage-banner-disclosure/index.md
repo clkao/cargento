@@ -253,3 +253,10 @@ data-arg="on"/"off"` wiring tokens.
 ### Summary
 
 Fixed the first-load wall: the disclosure modal becomes an in-flow banner — a calm row under the control bar and a standalone block after the regular view's brand block, one element and one modifier. Consent wiring, wire tokens (`data-calm="umodal"`, the `usageModalSeen` key) and disclosure copy are deliberately unchanged; only presentation and ARIA semantics move. No spike needed: `.u-band` already proves a conditional `flex:none` row absorbs cleanly into the fixed-height `.cm-frame` via `cm-body`. Risk surfaced for implementation: SKILL.md's "a modal discloses…" line is in the shipped skill body, so its prose edit goes through the portability rules + /sync-docs; no machine-local browser was available here, so the mock is HTML-only (AC screenshots happen at implementation).
+
+## Stage Report: implementation
+
+- Ensign worktree `.worktrees/spacedock-ensign-usage-banner-disclosure`: `d80fd45` `.u-overlay` modal → in-flow `.u-banner` (heading + Keep/Turn-off actions, three disclosure paragraphs preserved verbatim); `f19f2d6` page byte-oracle re-pin (5 failures found and fixed — the only test surface pinning the old layout); `65f488f` docs (modal→banner prose).
+- Byte-oracle re-pin asserts the served page matches the banner build exactly; falsifier: revert any hunk of d80fd45 and the digests fail.
+- FO visual verification `/tmp/banner.png` read against `usage-banner-disclosure/mock.html`: in-flow top banner, consent actions right-aligned, copy unchanged, page unobstructed — mock contract met.
+- Pre-PR suite green in the worktree: ruff ✓, format ✓, mypy (80 files) ✓, lint_embedded ✓, validate_plugins ✓, dashboard tests OK ✓.

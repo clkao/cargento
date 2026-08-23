@@ -280,3 +280,11 @@ fresh; user/toolResult-last → fresh-gated thinking), confined to
 collectors/pi.py + sessions.working_detail. The riskiest mechanism is proven
 end-to-end by a spike against session 01a02221 that reproduces both mislabels
 on current code and resolves them with the proposed classification.
+
+## Stage Report: implementation
+
+- Branch `pi-session-state-model`: `4d1b208` leaf stopReason classification in `collectors/pi.py` (`_activity` + `_projection` role/stop_reason plumbing) + `sessions.py`; `592eb46` per-leaf-class tests in `test_pi.py` (+200 lines, realistic running-bash pin); `0aa6783` ruff format.
+- The new tests pin each leaf class: assistant leaf stopReason toolUse=tool in flight, stop/aborted/error=awaiting, user/toolResult leaf=responding (freshness-gated), unknown stopReason=None falls back to recency. Falsifier: misclassify any leaf in `_activity` and its pinned case fails.
+- Spike `/tmp/pi-state-spike/spike.py` run against the implementation: AC-1 working/running bash ✓, AC-2 working/thinking ✓, AC-3 idle/awaiting ✓.
+- Pre-PR suite green on the branch: ruff ✓, format ✓, mypy (80 files) ✓, lint_embedded ✓, validate_plugins ✓, coverage 89.3% ≥ 73 ✓, 1191 dashboard tests OK ✓.
+- Note: implementation worker (fresh agent) landed the change but timed out at 30m before committing; FO reviewed the complete diff against this ideation, re-ran spike + suite, and committed per the worker's intended units. No design deviation.
