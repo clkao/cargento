@@ -46,6 +46,26 @@ gates:
               application:
                 target-stage: implementation
                 state: consumed
+        - id: gate:rj95tbw2vde46v8xjgcvgm9q:validation
+          stage: validation
+          attempts:
+            - id: gate-attempt:rj95tbw2vde46v8xjgcvgm9q-validation-1
+              briefing:
+                id: briefing:rj95tbw2vde46v8xjgcvgm9q:validation:attempt-1:revision-1
+                digest: sha256:187ed04d50e791ab828ca3141dd70d35b71204a7c47672435dbbc3c9de0ce894
+                request-digest: sha256:f4a38f40cf687f3a87f7bec8befde21f695f07b9a962d50ab3d90f0e391d7d38
+                room-ref: ./review/validation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:rj95tbw2vde46v8xjgcvgm9q:validation:1
+                briefing: briefing:rj95tbw2vde46v8xjgcvgm9q:validation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-23T05:10:18.232224194Z"
+                decision: approve
+                reason: 'conn: fresh validator PASSED on code/contract evidence; supervisor mechanical re-run green (12/12 probe checks after fixing the probe''s calm-mode entry assumption; tests/ruff/mypy/lint_embedded green). Report 2ded013. Non-blocking notes: byte-oracle re-pin blind spot, ''blocks until dismissed'' phrasing.'
+              application:
+                target-stage: done
+                state: pending
 started: 2026-08-22T05:54:44Z
 worktree: .worktrees/spacedock-ensign-usage-banner-disclosure
 ---

@@ -1,0 +1,24 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:rj95tbw2vde46v8xjgcvgm9q:validation:attempt-1:revision-1",
+  "question": "Validation PASSED (re-run green incl. fixed calm-mode probe; stage report 2ded013) — advance usage-banner-disclosure to done?",
+  "artifacts": [
+    {
+      "id": "artifact:rj95tbw2vde46v8xjgcvgm9q:validation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/2ded013527716581f1c35fc6664761f0e7e24fee/review/rj9-validation.md",
+      "rev": "sha256:4bec083ccce7f2d33656ab771f5d4688b8a4173cc5101dc1cea4f65ec7d9e512",
+      "mediaType": "text/markdown",
+      "summary": "Validation PASSED; byte-oracle re-pin blind spot noted as low-severity follow-up"
+    }
+  ],
+  "context": [
+    {
+      "type": "Reference",
+      "id": "reference:rj95tbw2vde46v8xjgcvgm9q:validation:attempt-1:revision-1:item-2",
+      "uri": "git-root://state/2ded013527716581f1c35fc6664761f0e7e24fee/usage-banner-disclosure/index.md",
+      "mediaType": "text/markdown",
+      "rev": "sha256:b196439df7c4a8eceed2f86d474fbd8d4bcd51a3bd184252f92e5d1cc7ba84f2"
+    }
+  ]
+}
