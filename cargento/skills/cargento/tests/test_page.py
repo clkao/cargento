@@ -76,24 +76,24 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "6baf5aa67046d4fca5027646f7797ed55f555c7d96f9e7bf8cfee516316c00a4",
             ),
             "usage.js": (
-                51_066,
-                "3eb8d87fb2f809058678218cf57bc6b381bb7750d7523efea0eeb56628db70fe",
+                51_500,
+                "9e8e530f60e679357662394d61146338220c5ca19fe8eaed4cf367e754641758",
             ),
             "controls.js": (
                 3_363,
                 "b45a331ff631f4293b463765c85f45ae9bc2b5b7b43401034727a5867a1ac0e7",
             ),
             "calm.js": (
-                42_009,
-                "413e946d188c56ecb7403d199d79042777f6e2e022c31b2b70bc1520a426ae30",
+                42_030,
+                "b7547fcdd3c883bb8e6f88e6b8837eafe174c184e34a1f7066ccd4d136982ecc",
             ),
             "notify.js": (
                 3_185,
                 "afd7a8ff735ea52b95e31a22f60f024d0bb752b7063860abc0e7bb1ae1c0fcae",
             ),
             "main.js": (
-                9_094,
-                "7ce44003973ca6845f63d5dc1be20e100ce254cd7221d4b8c47d70baa836f920",
+                9_086,
+                "fa9bc0cc3b22aa210d9a9a007429950de3bca14adcf46d3f9c051ae714f74522",
             ),
             "live.js": (
                 6_176,
@@ -108,16 +108,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(44_998, len(styles))
+        self.assertEqual(45_191, len(styles))
         self.assertEqual(
-            "505bdf665d67465e48364105c43f211c7a59102309c6c4be7e53dedff92ba1f0",
+            "27be9cf09ad7e1e427cc9221687aa9af6190afd35cd4eb9433375d81776c92d1",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(227_688, len(assembled))
+        self.assertEqual(228_328, len(assembled))
         self.assertEqual(
-            "e81de7a1056c4eca5a5a374209f4bf837662547c839281ebcd5421c74246252e",
+            "22daca5b330ab8cc0ec5ca2f0ea358ac81013561e3974e51a637fe3357220aae",
             hashlib.sha256(assembled).hexdigest(),
         )
 
