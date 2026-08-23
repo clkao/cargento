@@ -1,0 +1,24 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:c8ex5x308ssq305b62n3szxm:validation:attempt-1:revision-1",
+  "question": "Validation PASSED by fresh independent validator (stage report committed at b45db03) — advance pi-session-state-model to done?",
+  "artifacts": [
+    {
+      "id": "artifact:c8ex5x308ssq305b62n3szxm:validation:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/a6f8b2660e91b975e2addcf341e03cf32e488481/review/c8-validation.md",
+      "rev": "sha256:d8b86f4928d59994dc4dbea7983f0e6667e12fbc351139a3dbe5086500b9f9c5",
+      "mediaType": "text/markdown",
+      "summary": "Fresh validation PASSED; adversarial pin verified; see entity ## Stage Report: validation"
+    }
+  ],
+  "context": [
+    {
+      "type": "Reference",
+      "id": "reference:c8ex5x308ssq305b62n3szxm:validation:attempt-1:revision-1:item-2",
+      "uri": "git-root://state/a6f8b2660e91b975e2addcf341e03cf32e488481/pi-session-state-model/index.md",
+      "mediaType": "text/markdown",
+      "rev": "sha256:2eb90c582e7204b0bf52add6b2d4deff4809c75888928f0115718c2b50ede116"
+    }
+  ]
+}

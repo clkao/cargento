@@ -46,6 +46,26 @@ gates:
               application:
                 target-stage: implementation
                 state: consumed
+        - id: gate:c8ex5x308ssq305b62n3szxm:validation
+          stage: validation
+          attempts:
+            - id: gate-attempt:c8ex5x308ssq305b62n3szxm-validation-1
+              briefing:
+                id: briefing:c8ex5x308ssq305b62n3szxm:validation:attempt-1:revision-1
+                digest: sha256:d195c6b1105e0cc6b7f04cf712068014b6ef09de7cb46a04c6903e329a58a06a
+                request-digest: sha256:834d88f4f5caa48446182326e35626590ff6154bc81bf89a47273b652a1a5719
+                room-ref: ./review/validation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:c8ex5x308ssq305b62n3szxm:validation:1
+                briefing: briefing:c8ex5x308ssq305b62n3szxm:validation:attempt-1:revision-1
+                by: agent:first-officer
+                at: "2026-08-23T04:54:25.775260952Z"
+                decision: approve
+                reason: 'conn: fresh independent validator returned PASSED (report b45db03): classification matches ideation code-wise, spike ACs resolved, 1191 tests + ruff + mypy green, adversarial misclassification caught by the stopReason pin. AC-4 note (thinking precedence pinned in test_pi.py not test_sessions.py) is real coverage; optional direct-test follow-up logged, non-blocking.'
+              application:
+                target-stage: done
+                state: pending
 started: 2026-08-22T05:54:23Z
 worktree: .worktrees/spacedock-ensign-pi-session-state-model
 ---
