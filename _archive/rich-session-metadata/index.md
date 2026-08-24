@@ -1,6 +1,6 @@
 ---
 title: Rich session metadata — entities touched, state, decisions, and progress
-status: validation
+status: done
 source: captain dogfood feedback
 id: z4tjfzz9y4dz1vvaz588mc81
 gates:
@@ -65,11 +65,14 @@ gates:
                 reason: 'conn granted: ''you have the conn to push to the forked repo and open PR'' (re-granted). Per captain: when you have the conn, no presentation — just record the gate and resolution. Implementation verified: 1182 tests green, commit landed. Delivery proceeds to done.'
               application:
                 target-stage: done
-                state: pending
+                state: consumed
 started: 2026-08-21T08:07:11Z
 worktree: .worktrees/spacedock-ensign-rich-session-metadata
-mod-block: merge:pr-merge
+mod-block:
 pr: pr-merge:155
+verdict: PASSED
+completed: 2026-08-24T21:21:52Z
+archived: 2026-08-24T21:21:52Z
 ---
 
 The session view should show, for the session being viewed, the entities it
