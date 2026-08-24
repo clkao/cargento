@@ -456,6 +456,41 @@ class SpacedockReadContractTest(unittest.TestCase):
         assert result_no is not None
         self.assertEqual("", result_no["goal"])
 
+    def test_the_goal_is_bounded_and_stripped_like_every_other_row_value(self) -> None:
+        """The one piece of project-authored *text* that reaches `/api/data`.
+
+        Every other published value is a grammar-checked slug or a stage name,
+        so this is the only one that needed a width. Unbounded, the README byte
+        cap was the only limit — a 64 KiB title on every snapshot and every SSE
+        push. And a bidi control in it reorders how the line after it renders,
+        which is how a title reads as something it does not say.
+
+        Falsifying edit: drop the `records.safe_text` call at the `goal` key.
+        """
+        config, state = runtime()
+
+        def workflow_with(title: str) -> Path:
+            return self.workflow(
+                "---\n"
+                "commissioned-by: spacedock@0.22.0\n"
+                f"title: {title}\n"
+                "stages:\n"
+                "  states:\n"
+                "    - name: intake\n"
+                "---\n"
+            )
+
+        long_root = workflow_with("x" * 5_000)
+        long_result = spacedock.read_workflow(config, state, str(long_root))
+        assert long_result is not None
+        self.assertEqual(config.spacedock_goal_cap_chars, len(long_result["goal"]))
+
+        # U+202E, right-to-left override.
+        hostile_root = workflow_with("Ship it\u202e nope")
+        hostile = spacedock.read_workflow(config, state, str(hostile_root))
+        assert hostile is not None
+        self.assertNotIn("\u202e", hostile["goal"])
+
     def test_session_workflows_publish_goal_alongside_stages(self) -> None:
         """The goal survives the trip from `read_workflow` through
         `session_workflows` into the render-ready workflow strip."""

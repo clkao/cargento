@@ -192,6 +192,15 @@
 
   /* working card */
   .card{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:22px 24px;display:flex;flex-direction:column;gap:15px}
+  /* A card and an idle row became click targets (they open the session view),
+     and a div that does something with no cursor change and no hover is a
+     control the reader has to discover by accident. Attribute-scoped so the
+     affordance cannot outlive the handler, and the same cursor+hover pairing
+     `.sv-pick` already uses. No role or tabindex: no clickable div on this page
+     carries one, and `role="button"` would announce a whole card as one button.
+     The keyboard route is `c` to calm and the drawer's `view`. */
+  .card[data-calm]{cursor:pointer}
+  .card[data-calm]:hover{border-color:var(--line2)}
   .card-top{display:flex;align-items:flex-start;gap:16px}
   .card-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:11px}
   .card-headrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -269,6 +278,8 @@
   .idle-wrap{position:relative}
   .idle-clip{position:relative;overflow:hidden;transition:max-height .5s cubic-bezier(.4,0,.2,1)}
   .idle-row{display:flex;align-items:center;gap:14px;padding:14px 4px;border-bottom:1px solid var(--line)}
+  .idle-row[data-calm]{cursor:pointer}
+  .idle-row[data-calm]:hover{background:var(--sunk)}
   .idle-dot{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex:none;opacity:.7}
   .idle-title{font-weight:500;font-size:var(--fs-lg);color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .idle-proj{font-family:var(--mono);font-size:var(--fs-sm);color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:270px}

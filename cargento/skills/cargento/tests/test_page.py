@@ -89,20 +89,20 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "b3427d36b59995b468c6cb8d31bef21b20167d41dd302b56c4781ff9d37b038a",
             ),
             "calm.js": (
-                51_965,
-                "653da24fd8f3cd96a7c948011b242ed9d4dbcf78fa2f8f3ea48888682cee7404",
+                52_957,
+                "65688c4eb8ed4f0170c48e6ee4be6612948fca778818599c4df95e1b24e44287",
             ),
             "session.js": (
-                6_693,
-                "95946c58f15aa4ccd2fd0f0e1b8c482f58c974244a9f17432089f8b38c10b957",
+                6_988,
+                "d1fcdde8cee18cdc9757f025437c87602313ae56b9cc98b3c5a5e96aaa8fd224",
             ),
             "notify.js": (
                 7_797,
                 "d340a6d8870d2cb210c6e961afbfb6015e4ca915dce41e0193f7aed95c193154",
             ),
             "main.js": (
-                10_741,
-                "ca9222a80caae8c25551831b1b784c0bc155cf5d7f5f755428b04af5c990d27e",
+                12_172,
+                "4a5ce3873b8eab1fe273e6d08f198ecba4dd52ba1b875af2676c24a8fec1f737",
             ),
             "live.js": (
                 6_176,
@@ -117,16 +117,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(56_072, len(styles))
+        self.assertEqual(56_789, len(styles))
         self.assertEqual(
-            "094fd0483d516063d169a1a7bd6a1937c2d8eaf0cd9ac88aaf57e83e6492d246",
+            "295f207853fef4a258d68498eb5f9d5599fc9bcb012b84b03b0ce069c088bf91",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(296_386, len(assembled))
+        self.assertEqual(299_821, len(assembled))
         self.assertEqual(
-            "85d3ea3249ce83aea013f100c4c9d94a6dce9a9c2863e22b16a325b6adde8002",
+            "7c1ed21085d0fbc6eeaa8bceb146215570ea1b560c395e6884edad269a177a4c",
             hashlib.sha256(assembled).hexdigest(),
         )
 

@@ -41,7 +41,13 @@ const setTimeout = fn => {{ __timers.push(fn); return __timers.length; }};
     # A fixture FO session with two workflows and three entities at different
     # stages. The goal is the workflow frontmatter `title` scalar, already
     # published as `workflow.goal` by spacedock.read_workflow.
+    #
+    # `__els.app` is registered because these tests drive `render()`. The
+    # original set called `sessionView()` directly, which is why deleting the
+    # whole `displayMode === "session"` branch out of `render()` left all
+    # fifteen of them green: the view was tested and the route to it was not.
     FIXTURE = """
+__els.app = {innerHTML: "", className: "", querySelectorAll: () => []};
 const mk = o => Object.assign({
   harness: "claude", session: "1234abcd", sid: "1234abcd", project: "repo/proj",
   title: "Active dispatch", last_prompt: "", state: "working", state_detail: "running Bash",
@@ -77,6 +83,103 @@ const board = sessions => ({
   sessions
 });
 """
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_session_mode_carries_the_ask_band_and_the_liveness_line(self) -> None:
+        # Both of these are board-level and both were missing. An ask can come
+        # from a session this view is not the one for, so a reader parked here
+        # had a question on the board and no way to answer it. And nothing on a
+        # dispatch spine ticks, so without the dot a dead server looks exactly
+        # like a live tree.
+        checks = """
+const out = {};
+const d = board([fo]);
+// `ask: true` is the capability flag `askBand` gates on — the band is empty
+// without it however many asks the payload carries.
+d.ask = true;
+d.asks = [{id: "a1", harness: "claude", session_id: "9999zzzz", project: "repo/other",
+           question: "Ship it?", options: ["yes", "no"], age_sec: 5}];
+d.summary.needs_input = 0;
+setDisplayMode("session");
+sessionViewKey = "claude:1234abcd";
+render(d);
+const html = __els.app.innerHTML;
+out.band = html.includes('id="askband"');
+out.question = html.includes("Ship it?");
+out.liveDot = html.includes('id="live-dot"');
+out.liveStatus = html.includes('id="live-status"');
+out.title = document.title;
+out.tree = html.includes("sv-tree");
+console.log(JSON.stringify(out));
+"""
+        out = self.run_session(checks)
+        self.assertTrue(out["band"], "session mode rendered no asks band")
+        self.assertTrue(out["question"], "an outstanding question was not rendered")
+        self.assertTrue(out["liveDot"], "session mode rendered no liveness dot")
+        self.assertTrue(out["liveStatus"], "refresh()'s catch arm had no #live-status to write")
+        # The count is `waitingOnYou`, the same as the other three modes: a
+        # pending ask counts, and a title that disagreed with the band above it
+        # was the reason to change it.
+        self.assertTrue(out["title"].startswith("(1!)"), out["title"])
+        self.assertTrue(out["tree"], "the tree stopped rendering")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_a_stage_named_constructor_does_not_throw(self) -> None:
+        # `byStage` groups entities under workflow-authored stage names. On a
+        # bare object `byStage["constructor"]` is an inherited function, so
+        # `|| []` keeps it and `.push` throws inside render() — which wedges the
+        # board on "stalled · retrying" until a reload. Falsifying edit: put
+        # `const byStage = {}` back.
+        checks = """
+const out = {};
+const d = board([mk({spacedock: {role: "first-officer", workflows: [
+  sdWf({workflow: "hostile", stages: ["constructor", "toString", "__proto__"], entities: [
+    ent("drc-9", "constructor", true), ent("drc-8", "toString", false)
+  ]})
+]}})]);
+setDisplayMode("session");
+sessionViewKey = "claude:1234abcd";
+try{ render(d); out.threw = false; }catch(e){ out.threw = true; out.msg = String(e); }
+out.html = __els.app.innerHTML.includes("drc-9");
+console.log(JSON.stringify(out));
+"""
+        out = self.run_session(checks)
+        self.assertFalse(out.get("threw"), out.get("msg"))
+        self.assertTrue(out["html"], "the entity under a prototype-named stage was dropped")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_board_keys_do_not_act_on_a_queue_this_view_does_not_draw(self) -> None:
+        # `j`, `k` and Enter move and copy from the gate queue. The session view
+        # draws no gate band, so Enter put a session id on the clipboard with no
+        # visible cause. `c` and `g` still work and both leave. Falsifying edit:
+        # drop the `displayMode === "session"` early return in calm.js.
+        checks = """
+const out = {};
+const blocked = mk({sid: "bbbb2222", session: "bbbb2222", state: "needs_input",
+                    state_detail: "waiting on you", flag: "blocked"});
+const d = board([fo, blocked]);
+d.summary.needs_input = 1;
+setDisplayMode("session");
+sessionViewKey = "claude:1234abcd";
+render(d);
+const before = gateCursorKey;
+__fire("keydown", {key: "j", target: {}, preventDefault(){}, stopPropagation(){}});
+__fire("keydown", {key: "k", target: {}, preventDefault(){}, stopPropagation(){}});
+__fire("keydown", {key: "Enter", target: {}, preventDefault(){}, stopPropagation(){}});
+out.cursorUnmoved = gateCursorKey === before;
+out.stillSession = displayMode;
+// `g` is one of the two that still applies, and it leaves on the way to the
+// queue rather than landing a cursor nothing draws.
+__fire("keydown", {key: "g", target: {}, preventDefault(){}, stopPropagation(){}});
+out.afterG = displayMode;
+out.gCursor = gateCursorKey;
+console.log(JSON.stringify(out));
+"""
+        out = self.run_session(checks)
+        self.assertTrue(out["cursorUnmoved"], "j/k/Enter moved a cursor the view does not draw")
+        self.assertEqual("session", out["stillSession"])
+        self.assertEqual("regular", out["afterG"], "`g` left the reader in a view with no queue")
+        self.assertEqual("claude:bbbb2222", out["gCursor"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_ac1_session_view_renders_dispatch_tree(self) -> None:
@@ -211,18 +314,22 @@ out.before = displayMode;
 setDisplayMode("session");
 out.mode = displayMode;
 out.stored = __store["cargento.displayMode"];
-out.sessionKeyCleared = sessionViewKey === null;
 // An invalid value is a no-op.
 setDisplayMode("invalid");
 out.rejectsJunk = displayMode;
+// The clear is on the way *out*, not the way in — asserting it here after
+// entering only ever compared null to null, because nothing had set a key.
+sessionViewKey = "claude:1234abcd";
+setDisplayMode("regular");
+out.clearedOnLeave = sessionViewKey === null;
 console.log(JSON.stringify(out));
 """
         out = self.run_session(checks)
         self.assertEqual("regular", out["before"])
         self.assertEqual("session", out["mode"], "setDisplayMode did not accept 'session'")
         self.assertEqual("session", out["stored"], "the mode was not persisted")
-        self.assertTrue(out["sessionKeyCleared"], "entering session mode left a stale key")
         self.assertEqual("session", out["rejectsJunk"], "an invalid mode was accepted")
+        self.assertTrue(out["clearedOnLeave"], "leaving session mode left a stale key")
 
     # ── rework: routable URL, distinct empty states, calm navigation ─────────
 
@@ -376,13 +483,20 @@ out.isLoading = h.includes("sv-loading");
 out.hasBack = h.includes("sv-back");
 out.noPicker = !h.includes("sv-picker");
 out.mentionsKey = h.includes("claude:deadbeef");
+out.href = (h.match(/href="([^"]*)"/) || [])[1];
 console.log(JSON.stringify(out));
 """
-        out = self.run_session(checks)
+        out = self.run_session(checks, hash_val="#session=claude%3Adeadbeef")
         self.assertTrue(out["isLoading"], "the loading state is missing")
         self.assertTrue(out["hasBack"], "the back button is missing")
         self.assertTrue(out["noPicker"], "the picker was shown instead of loading")
         self.assertTrue(out["mentionsKey"], "the session key is not in the loading message")
+        # The recovery link's whole point is to widen the window and come back
+        # to *this* session. Turning the fragment into a query parameter
+        # (`?all=1&session=…`) dropped the target on the way: mode.js reads the
+        # hash, and nothing reads a `session` query parameter, so the link
+        # landed on the picker with the session it named nowhere in sight.
+        self.assertEqual("?all=1#session=claude%3Adeadbeef", out["href"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_back_button_in_session_view(self) -> None:

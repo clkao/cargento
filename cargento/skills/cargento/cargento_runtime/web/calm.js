@@ -544,6 +544,11 @@ function gateJump(){
   } else {
     gateCursorKey = sessKey(queue[0]);
     gateRevealCursor = true;
+    /* The queue is a board-level list and the session view draws no gate band,
+       so `g` leaves session mode on the way to it. The cursor is set first
+       because `setDisplayMode` renders, and that render is the one that reaches
+       `restoreGateCursor` and consumes the reveal flag. */
+    if(displayMode === "session"){ setDisplayMode("regular"); return; }
   }
   render(lastData);
 }
@@ -582,6 +587,15 @@ document.addEventListener("keydown", e => {
   /* A focused button already answers Enter and Space itself. */
   if((k === "Enter" || k === " ") && e.target && e.target.closest &&
      e.target.closest("a[href],button,select,textarea,input,[tabindex]")) return;
+  /* Session mode has no queue on screen, so the gate cursor's keys are not its
+     keys — `j`, `k` and Enter would move and copy from a list the reader cannot
+     see, and Enter in particular put a session id on the clipboard with no
+     visible cause. `c` and `g` above still apply and are the two ways out.
+     Returned without `stop()`, so nothing is swallowed. This has to be its own
+     early return rather than narrowing the condition below to `=== "regular"`:
+     calm's own bindings sit directly under that block, so session mode would
+     inherit them instead. */
+  if(displayMode === "session") return;
   /* `j`/`k` and nothing else. Calm binds the arrows and Space as well, and can:
      its ledger scrolls inside its own frame, under its own cursor. The regular
      view is an ordinary long page, so preventDefault on those would take away

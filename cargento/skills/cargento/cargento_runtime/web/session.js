@@ -59,7 +59,11 @@ function sessionWorkflow(wf){
   const entities = wf.entities || [];
   const goal = wf.goal || "";
   const goalHtml = goal ? `<div class="sv-goal">${esc(goal)}</div>` : "";
-  const byStage = {};
+  /* Null-prototype: a stage is a workflow-authored name, and `constructor` or
+     `toString` on a bare object returns an inherited function, so
+     `byStage[stage] || []` would `.push` onto it and throw inside render(). A
+     throw there wedges the board on "stalled · retrying" until a reload. */
+  const byStage = Object.create(null);
   for(const ent of entities){
     const stage = ent.stage || "";
     (byStage[stage] = byStage[stage] || []).push(ent);
@@ -122,7 +126,7 @@ function sessionView(d){
       `<div class="sv-loading">` +
       `<div class="sv-loading-text">Looking for session ${esc(sessionViewKey)}…</div>` +
       `<div class="sv-loading-p">It may be outside the display window. ` +
-      `Try <a href="?all=1${location.hash ? "&" + location.hash.slice(1) : ""}">showing all sessions</a>.` +
+      `Try <a href="?all=1${esc(location.hash || "")}">showing all sessions</a>.` +
       `</div></div>`;
   }
   const sd = sess.spacedock;
