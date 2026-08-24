@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ipaddress
 import json
 import os
 import sys
@@ -50,10 +51,60 @@ def runtime_environ(home: str | None = None) -> dict[str, str]:
     return environ
 
 
+# The two binds the rest of the runtime works against. Not a taste for round
+# numbers: everything that talks *to* the server talks to loopback, and loopback
+# is an interface of both of these and of nothing else. `--status` and `--stop`
+# probe `127.0.0.1:<port>`; the four hook forwarders and the MCP server refuse a
+# non-loopback destination by design (SECURITY.md's first invariant); the
+# announced URL is loopback. A single-interface bind like `--host 10.0.0.2`
+# leaves all of them talking to a closed port, and the worst of them is not the
+# dead hook — `--stop` reads "not running", exits 0, and deletes the live
+# instance's state file, event-ingress capability tokens and all, while the
+# server keeps serving. Binding one interface is a reasonable thing to want; it
+# needs the bind address threaded through the state file and every client, and
+# refusing it is the honest answer until that exists.
+BIND_HOSTS = ("127.0.0.1", "0.0.0.0")  # noqa: S104 — the documented wildcard opt-in
+
+
+def bind_host(value: str) -> str:
+    """An argparse type for the dashboard's bind address.
+
+    Two accepted values, and IPv6 is not among them: the server is IPv4-only, so
+    ``::`` or ``::1`` is out of scope and rejected at parse time rather than
+    becoming a confusing bind failure. See ``BIND_HOSTS`` for why a single
+    non-loopback interface is refused rather than allowed and left broken.
+
+    ``ipaddress`` rather than a hand-rolled dotted-quad split, which is where
+    this started: ``int()`` accepts a sign, surrounding whitespace and
+    non-ASCII digits, so ``"+1.2.3.4"`` and ``"1.2.3.4\n"`` parsed and then
+    reached ``socket.bind`` — the confusing bind failure the check exists to
+    turn into a usage error.
+    """
+    try:
+        ipaddress.IPv4Address(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"must be an IPv4 address, one of {' or '.join(BIND_HOSTS)}"
+        ) from exc
+    if value not in BIND_HOSTS:
+        raise argparse.ArgumentTypeError(
+            f"must be {' or '.join(BIND_HOSTS)}. A single-interface bind is refused rather "
+            "than half-supported: --status, --stop, the hook forwarders and the MCP server all "
+            "reach the dashboard over loopback, which such a bind does not answer"
+        )
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The CLI surface. argparse owns --help and its own usage errors."""
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--port", type=lifecycle.tcp_port, default=4553)
+    parser.add_argument(
+        "--host",
+        type=bind_host,
+        default="127.0.0.1",
+        help="bind address: 127.0.0.1 (default) or 0.0.0.0 for remote access",
+    )
     parser.add_argument(
         "--diagnose",
         action="store_true",
@@ -146,6 +197,7 @@ def build_runtime(
         platform_name=sys.platform,
         os_name=os.name,
         launcher_path=launcher_path,
+        host=args.host,
         port=args.port,
         window_hours=args.window_hours,
         spacedock_enabled=not args.no_spacedock,
@@ -262,8 +314,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         runtime_io.diag(message, print)
         return code
 
-    # Bind to loopback only — this exposes local session data.
-    #
     # Bind before detaching. bind_error_message() exists so a busy port gets an
     # explanation rather than a traceback, and SKILL.md tells the agent to look
     # for an already-running dashboard when it sees one. Forking first would
@@ -280,13 +330,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             coordinator = observation.Observation(application)
             application.overlays = coordinator
         server = http_api.CargentoHTTPServer(
-            ("127.0.0.1", args.port),
+            (args.host, args.port),
             application,
             page_bytes,
             coordinator,
         )
     except OSError as exc:
-        runtime_io.diag(http_api.bind_error_message(exc, args.port), print)
+        runtime_io.diag(http_api.bind_error_message(exc, args.port, args.host), print)
         return 1
 
     announce_fd: int | None = None

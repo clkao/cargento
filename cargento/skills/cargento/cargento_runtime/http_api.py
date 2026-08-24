@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import ipaddress
 import json
 import os
 import socket
@@ -68,13 +69,18 @@ def reuse_address_allowed(os_name: str) -> bool:
     return os_name != "nt"
 
 
-def bind_error_message(exc: OSError, port: int) -> str:
+def bind_error_message(exc: OSError, port: int, host: str = "127.0.0.1") -> str:
     """Explain a failed bind instead of dumping a raw traceback."""
     winerror = getattr(exc, "winerror", None)
     if exc.errno == errno.EADDRINUSE or winerror == 10048:  # WSAEADDRINUSE
+        # 0.0.0.0 is a bind address and not a destination, so the hint keeps
+        # loopback there — the wildcard is not connectable, which
+        # `_host_admitted` says in as many words. Any other bind is where the
+        # printed curl was pointing at the wrong machine.
+        reachable = "127.0.0.1" if host in ("127.0.0.1", "0.0.0.0") else host  # noqa: S104
         return (
             f"Cargento: port {port} is already in use. If that is a dashboard "
-            f"already running, use it: curl -s http://127.0.0.1:{port}/api/data. "
+            f"already running, use it: curl -s http://{reachable}:{port}/api/data. "
             f"Otherwise pick another port with --port."
         )
     if exc.errno == errno.EACCES or winerror == 10013:  # WSAEACCES
@@ -85,7 +91,7 @@ def bind_error_message(exc: OSError, port: int) -> str:
             f"held by another process, reserved by the system, or blocked by "
             f"local policy. Try another port with --port."
         )
-    return f"Cargento: cannot bind 127.0.0.1:{port} — {type(exc).__name__}: {exc}"
+    return f"Cargento: cannot bind {host}:{port} — {type(exc).__name__}: {exc}"
 
 
 class CargentoHTTPServer(ThreadingHTTPServer):
@@ -113,6 +119,10 @@ class CargentoHTTPServer(ThreadingHTTPServer):
         # default would be sampled from the host os.name at import, which is
         # the ambient read D-4 exists to stop.
         self.allow_reuse_address = reuse_address_allowed(application.config.os_name)
+        # The bind host from the constructor address, read by _local_ok to
+        # decide whether a non-loopback Host header is the operator's opt-in
+        # (--host 0.0.0.0) rather than a DNS-rebinding probe.
+        self.bound_host = address[0]
         super().__init__(address, _RequestHandler)
 
     def server_bind(self) -> None:
@@ -211,8 +221,45 @@ class _RequestHandler(BaseHTTPRequestHandler):
         self._drain_body()
         self.send_error(code)
 
+    def _host_admitted(self, host: str) -> bool:
+        """Whether a host string is local enough for this server's bind.
+
+        The default loopback bind keeps the exact LOCAL_HOSTS gate. A
+        non-loopback bind (--host 0.0.0.0 or an explicit address) is the
+        operator's opt-in to remote access, so the gate widens to the address
+        they asked for: exactly that address, or under 0.0.0.0 any address a
+        client could reach the machine on.
+
+        It widens to *addresses*, never to names, and that is the whole
+        rebinding defense rather than a tidiness rule. `Host` and `Origin` are
+        attacker-chosen strings, so admitting any non-empty one hands a page on
+        `http://evil.example:4553` both `/api/data` and every POST route the
+        moment its DNS points at this machine — measured before this narrowing,
+        against a 0.0.0.0 bind. Rebinding needs a name to rebind; an operator
+        typing a remote dashboard's URL has a literal address to type, so
+        refusing every name costs them nothing and closes it.
+        """
+        if host in self.LOCAL_HOSTS:
+            return True
+        bound = getattr(self.server, "bound_host", "127.0.0.1")
+        if bound == "127.0.0.1":
+            return False
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            return False  # a DNS name, or garbage
+        if bound == "0.0.0.0":  # noqa: S104
+            # The operator asked for every interface, so any address a client
+            # could have arrived on is theirs. The wildcard itself is not a
+            # connectable destination, and neither is a multicast group.
+            return not (literal.is_unspecified or literal.is_multicast)
+        # `cli.BIND_HOSTS` no longer produces a bind that reaches here, but this
+        # server is constructible directly, so the gate answers for whatever
+        # address it was actually given rather than assuming the launcher.
+        return host == bound
+
     def _local_ok(self, *, allow_cross_site_navigation: bool = False) -> bool:
-        if normalize_host(self.headers.get("Host") or "") not in self.LOCAL_HOSTS:
+        if not self._host_admitted(normalize_host(self.headers.get("Host") or "")):
             return False
         if (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site" and not (
             allow_cross_site_navigation and self._is_document_navigation()
@@ -227,7 +274,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # then trusted it. Any unrelated local dev server could POST here
         # (text/plain is CORS-safelisted, so no preflight would stop it).
         parsed = urlparse(origin)
-        if parsed.scheme != "http" or (parsed.hostname or "") not in self.LOCAL_HOSTS:
+        if parsed.scheme != "http" or not self._host_admitted(parsed.hostname or ""):
             return False
         listening_port = getattr(self.server, "server_port", None)
         try:
