@@ -1,6 +1,6 @@
 ---
 title: Usage-limit disclosure is a blocking modal — should be a dismissable banner
-status: done
+status: validation
 source: captain seed
 id: rj95tbw2vde46v8xjgcvgm9q
 gates:
@@ -71,7 +71,7 @@ worktree: .worktrees/spacedock-ensign-usage-banner-disclosure
 mod-block: merge:pr-merge
 verdict: PASSED
 completed: 2026-08-24T20:57:54Z
-pr: pr-merge:146
+
 ---
 # Usage-limit disclosure is a blocking modal — should be a dismissable banner
 
