@@ -1001,8 +1001,14 @@ class RuntimeImportGraphTest(unittest.TestCase):
             "cargento_runtime.sessions",
             "cargento_runtime.state",
         },
+        # `records` for `safe_text`: the workflow README's `title` is published
+        # as the goal line, the one piece of project-authored text on the
+        # surface, and it goes through the same bounding and control-character
+        # stripping every other untrusted string does. `records` is a leaf, so
+        # this is not a layering break.
         "cargento_runtime.spacedock": {
             "cargento_runtime.config",
+            "cargento_runtime.records",
             "cargento_runtime.sessions",
             "cargento_runtime.state",
         },

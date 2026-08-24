@@ -137,7 +137,7 @@ function modeBar(){
   return `<div class="modebar">` + clearedChip(lastData) +
     `<span class="modebar-k">display</span>` +
     `<div class="modeseg" role="group" aria-label="display mode">` +
-    btn("regular") + btn("calm") + `</div>` +
+    btn("regular") + btn("calm") + btn("session") + `</div>` +
     `<span class="modebar-split" aria-hidden="true"></span>` + stopControl() + `</div>` +
     clearedPanel(lastData);
 }

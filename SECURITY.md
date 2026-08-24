@@ -91,14 +91,18 @@ stands in for containment instead: an entity file counts only if its name is a w
 state) and its `status` names a stage the README declared.
 
 Hard caps: at most 64 KiB read from a README and 8 KiB from an entity file, 400 frontmatter lines
-scanned, 32 stage names taken, 96 entity files read per workflow (newest first), 12 entities
-rendered per workflow, and 8 workflows per session. Both reads are cached on
+scanned, 32 stage names taken, 120 characters of the README's `title`, 96 entity files read per
+workflow (newest first), 12 entities rendered per workflow, and 8 workflows per session. Both reads are cached on
 `(realpath, st_mtime_ns, st_size)`, so an unchanged file costs one `stat` per refresh. Entity files
 older than the dashboard's freshness window are not opened at all.
 
 Only derived scalars reach `/api/data`: stage names (each validated against Spacedock's
-`^[a-z0-9][a-z0-9-]*[a-z0-9]$` grammar), entity slugs, and cycle markers. No file text, no
-frontmatter body and no filesystem path is ever published, and the page HTML-escapes every value.
+`^[a-z0-9][a-z0-9-]*[a-z0-9]$` grammar), entity slugs, cycle markers, and the README frontmatter's
+`title` scalar, shown as the workflow's goal line in the session view. That title is the one piece of
+project-authored *text* on the surface, and it is there because a stage spine says where the work is
+without saying what it is for; it is capped at 120 characters and passes through the same
+control-character and bidi stripping every untrusted string does. No other file text, no frontmatter
+body and no filesystem path is ever published, and the page HTML-escapes every value.
 Pass `--no-spacedock` to switch the feature off. The read surface is then exactly the documented
 store paths.
 
