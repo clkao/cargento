@@ -65,7 +65,7 @@ gates:
                 reason: 'conn: fresh independent validator returned PASSED (report b45db03): classification matches ideation code-wise, spike ACs resolved, 1191 tests + ruff + mypy green, adversarial misclassification caught by the stopReason pin. AC-4 note (thinking precedence pinned in test_pi.py not test_sessions.py) is real coverage; optional direct-test follow-up logged, non-blocking.'
               application:
                 target-stage: done
-                state: pending
+                state: consumed
 started: 2026-08-22T05:54:23Z
 worktree: .worktrees/spacedock-ensign-pi-session-state-model
 mod-block: merge:pr-merge
