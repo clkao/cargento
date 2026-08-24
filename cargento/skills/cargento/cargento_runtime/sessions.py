@@ -395,6 +395,11 @@ def working_detail(info: dict[str, Any] | None, subagents: list[Any]) -> str:
     if subagents:
         n = len(subagents)
         return f"running {n} subagent{'s' if n > 1 else ''}"
+    if info and info.get("thinking"):
+        # Before `last_tool`: a collector that can see the model holding the
+        # turn (no tool call in flight) must not let a tool name from an
+        # earlier, completed turn relabel a thinking block as running it.
+        return "thinking"
     if info and info.get("last_tool"):
         return f"running {info['last_tool']}"
     return "generating…"

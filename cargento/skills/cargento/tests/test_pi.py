@@ -701,10 +701,18 @@ class PiCollectorTest(PiScanTestCase):
         content: Any,
         *,
         usage: dict[str, int] | None = None,
+        # `Any`, not `str | None`: the vocabulary guard has to be shown refusing
+        # a value that is not a string at all, which is what an untrusted record
+        # can carry.
+        stop_reason: Any = None,
     ) -> dict[str, Any]:
         message: dict[str, Any] = {"role": role, "content": content}
         if usage is not None:
             message["usage"] = usage
+        if stop_reason is not None:
+            # Real Pi assistant records always carry one; the fixture only adds
+            # it when the test's state classification depends on it.
+            message["stopReason"] = stop_reason
         return {
             "type": "message",
             "id": entry_id,
@@ -747,6 +755,7 @@ class PiCollectorTest(PiScanTestCase):
                         "assistant",
                         [{"type": "toolCall", "name": "bash"}],
                         usage={"output": 100},
+                        stop_reason="toolUse",
                     ),
                 ],
                 self.NOW - 20,
@@ -971,6 +980,251 @@ class PiCollectorTest(PiScanTestCase):
         # Subscript, not `.get`: with `.get` this passes even if the key were
         # dropped from the published row altogether.
         self.assertIsNone(rows[0]["spacedock"])
+
+    def _state_row(self, records: list[dict[str, Any]], mtime: float) -> dict[str, Any]:
+        """One collected Pi row for a one-file store holding ``records``."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _jsonl(root / "s.jsonl", [self._header("s"), *records], mtime)
+            with store_patch(PI_SESSIONS_DIR=str(root)):
+                config, state = runtime()
+                rows = pi_collector.collect(config, state, self.NOW, 24, True)
+        (row,) = rows
+        return row
+
+    def test_a_tool_use_leaf_stays_working_past_the_freshness_window(self) -> None:
+        # An assistant leaf with stopReason toolUse is a toolCall whose
+        # toolResult Pi has not written yet — a tool in flight. It outlives
+        # the 90 s freshness window because recency alone cannot tell a long
+        # bash from a parked session. Falsifying edit: gate the tool_in_flight
+        # branch on `working_threshold_sec` — this row reads idle / awaiting
+        # your message. Its ceiling is the sibling test below.
+        row = self._state_row(
+            [
+                self._message("prompt", None, self.NOW - 400, "user", "Run it"),
+                self._message(
+                    "read",
+                    "prompt",
+                    self.NOW - 350,
+                    "assistant",
+                    [{"type": "toolCall", "name": "read"}],
+                    usage={"output": 5},
+                    stop_reason="toolUse",
+                ),
+                self._message(
+                    "read-out",
+                    "read",
+                    self.NOW - 340,
+                    "toolResult",
+                    [{"type": "text", "text": "f"}],
+                ),
+                self._message(
+                    "bash",
+                    "read-out",
+                    self.NOW - 300,
+                    "assistant",
+                    [{"type": "toolCall", "name": "bash"}],
+                    stop_reason="toolUse",
+                ),
+            ],
+            self.NOW - 300,
+        )
+
+        self.assertEqual("working", row["state"])
+        # The tool name comes from the in-flight record itself: the earlier
+        # completed `read` must not win an order-dependent name race.
+        self.assertEqual("running bash", row["state_detail"])
+
+    def test_a_tool_use_leaf_past_the_ceiling_reads_idle(self) -> None:
+        # The other side of the bound. A transcript records that a tool started
+        # and can never record that the process died, so a Pi hard-killed
+        # mid-tool leaves a toolUse leaf as the permanent branch tip. Without a
+        # ceiling that row read `running bash` for the whole display window,
+        # counted in the working tile and sorted to the top of the board with a
+        # multi-hour long-turn flag. Falsifying edit: drop the
+        # `pi_tool_in_flight_max_sec` gate — this reads working / running bash.
+        age = 4_000.0  # comfortably past the 900 s ceiling
+        row = self._state_row(
+            [
+                self._message("prompt", None, self.NOW - age - 100, "user", "Run it"),
+                self._message(
+                    "bash",
+                    "prompt",
+                    self.NOW - age,
+                    "assistant",
+                    [{"type": "toolCall", "name": "bash"}],
+                    usage={"output": 5},
+                    stop_reason="toolUse",
+                ),
+            ],
+            self.NOW - age,
+        )
+
+        self.assertEqual(("idle", "awaiting your message"), (row["state"], row["state_detail"]))
+
+    def test_an_unknown_stop_reason_keeps_recency_only_behavior(self) -> None:
+        # The vocabulary allowlist in `_projection`. An unrecognised spelling
+        # must fall through to None and leave the row on recency, not be read as
+        # a finished turn — the four values were timed, a fifth was not.
+        # Falsifying edit: drop the allowlist — every value here reads
+        # idle / awaiting your message even though the session is generating.
+        for stop_reason in ("maxTokens", {"type": "stop"}, 0):
+            with self.subTest(stop_reason=stop_reason):
+                row = self._state_row(
+                    [
+                        self._message("prompt", None, self.NOW - 60, "user", "Question"),
+                        self._message(
+                            "done",
+                            "prompt",
+                            self.NOW - 10,
+                            "assistant",
+                            "Answer",
+                            usage={"output": 5},
+                            stop_reason=stop_reason,
+                        ),
+                    ],
+                    self.NOW - 10,
+                )
+                self.assertEqual(("working", "generating…"), (row["state"], row["state_detail"]))
+
+    def test_a_fresh_tool_result_leaf_reports_thinking(self) -> None:
+        # A toolResult leaf hands the turn to the model, which is generating —
+        # never "running" the tool that already completed. Falsifying edit:
+        # `working_detail` consulting `last_tool` before the thinking hint —
+        # the detail reads "running bash" again.
+        row = self._state_row(
+            [
+                self._message("prompt", None, self.NOW - 60, "user", "Run it"),
+                self._message(
+                    "bash",
+                    "prompt",
+                    self.NOW - 50,
+                    "assistant",
+                    [{"type": "toolCall", "name": "bash"}],
+                    stop_reason="toolUse",
+                ),
+                self._message(
+                    "out", "bash", self.NOW - 10, "toolResult", [{"type": "text", "text": "ok"}]
+                ),
+            ],
+            self.NOW - 10,
+        )
+
+        self.assertEqual("working", row["state"])
+        self.assertEqual("thinking", row["state_detail"])
+
+    def test_a_stale_tool_result_leaf_awaits(self) -> None:
+        # A user/toolResult leaf can also mean the process is gone, so the
+        # responding class keeps its freshness gate. Falsifying edit: drop the
+        # freshness gate on the responding branch — a parked session reads
+        # working / thinking.
+        row = self._state_row(
+            [
+                self._message("prompt", None, self.NOW - 400, "user", "Run it"),
+                self._message(
+                    "bash",
+                    "prompt",
+                    self.NOW - 350,
+                    "assistant",
+                    [{"type": "toolCall", "name": "bash"}],
+                    stop_reason="toolUse",
+                ),
+                self._message(
+                    "out", "bash", self.NOW - 300, "toolResult", [{"type": "text", "text": "ok"}]
+                ),
+            ],
+            self.NOW - 300,
+        )
+
+        self.assertEqual("idle", row["state"])
+        self.assertEqual("awaiting your message", row["state_detail"])
+
+    def test_a_fresh_assistant_stop_leaf_awaits(self) -> None:
+        # A stop leaf ends the turn the moment it is written, even seconds old.
+        # This fails under the pre-fix behavior (fresh leaf → working /
+        # generating…) and under the falsifying edit of classifying
+        # assistant/stop as responding (working / thinking): both relabel a
+        # session that is waiting on the human.
+        row = self._state_row(
+            [
+                self._message("prompt", None, self.NOW - 60, "user", "Question"),
+                self._message(
+                    "done", "prompt", self.NOW - 10, "assistant", "Answer", stop_reason="stop"
+                ),
+            ],
+            self.NOW - 10,
+        )
+
+        self.assertEqual("idle", row["state"])
+        self.assertEqual("awaiting your message", row["state_detail"])
+
+    def test_stop_aborted_and_error_leaves_await_at_any_age(self) -> None:
+        # Every turn-over stopReason reads awaiting whether the leaf is fresh
+        # or stale — guards the idle half of the classification.
+        for stop_reason in ("stop", "aborted", "error"):
+            for age in (10, 300):
+                with self.subTest(stop_reason=stop_reason, age=age):
+                    row = self._state_row(
+                        [
+                            self._message("prompt", None, self.NOW - age - 50, "user", "Question"),
+                            self._message(
+                                "done",
+                                "prompt",
+                                self.NOW - age,
+                                "assistant",
+                                "Answer",
+                                stop_reason=stop_reason,
+                            ),
+                        ],
+                        self.NOW - age,
+                    )
+
+                    self.assertEqual("idle", row["state"])
+                    self.assertEqual("awaiting your message", row["state_detail"])
+
+    def test_a_user_leaf_gates_thinking_on_freshness(self) -> None:
+        # A user leaf means the model now holds the turn, but only while the
+        # process is alive — fresh reads thinking, stale reads awaiting.
+        fresh = self._state_row(
+            [self._message("prompt", None, self.NOW - 10, "user", "Question")],
+            self.NOW - 10,
+        )
+        stale = self._state_row(
+            [self._message("prompt", None, self.NOW - 300, "user", "Question")],
+            self.NOW - 300,
+        )
+
+        self.assertEqual(("working", "thinking"), (fresh["state"], fresh["state_detail"]))
+        self.assertEqual(("idle", "awaiting your message"), (stale["state"], stale["state_detail"]))
+
+    def test_a_non_message_leaf_keeps_recency_only_behavior(self) -> None:
+        # A compaction (or model_change, …) leaf says nothing about turn
+        # state, so the old recency rule stays. Falsifying edit: classifying
+        # non-message leaves as awaiting silences a session mid-work.
+        def compaction_leaf(age: int) -> list[dict[str, Any]]:
+            return [
+                self._message("prompt", None, self.NOW - age - 50, "user", "Question"),
+                self._message(
+                    "done",
+                    "prompt",
+                    self.NOW - age - 40,
+                    "assistant",
+                    "Answer",
+                    stop_reason="stop",
+                ),
+                {
+                    "type": "compaction",
+                    "id": "compact",
+                    "parentId": "done",
+                    "timestamp": _iso(self.NOW - age),
+                },
+            ]
+
+        fresh = self._state_row(compaction_leaf(10), self.NOW - 10)
+        stale = self._state_row(compaction_leaf(300), self.NOW - 300)
+
+        self.assertEqual(("working", "generating…"), (fresh["state"], fresh["state_detail"]))
+        self.assertEqual(("idle", "awaiting your message"), (stale["state"], stale["state_detail"]))
 
 
 class TurnTrackingTest(unittest.TestCase):

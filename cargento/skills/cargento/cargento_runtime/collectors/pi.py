@@ -50,13 +50,23 @@ def _projection(record: Any) -> dict[str, Any] | None:
         parent_id = None
     message = records.message_dict(record)
     role = message.get("role")
+    role = role if isinstance(role, str) else None
     prompt = None
     tool = None
     provider = None
     model = None
+    stop_reason = None
     usage_source: Any = record.get("usage")
     if kind == "message":
         usage_source = message.get("usage")
+        # Pi writes an assistant record only when the message finished, always
+        # with a stopReason, so the field is the record of *how* the leaf
+        # ended — and letting an unknown future spelling fall through to None
+        # keeps an unrecognized reason on the recency-only behavior instead of
+        # guessing at a state it was never timed against.
+        stop_reason = message.get("stopReason")
+        if stop_reason not in ("toolUse", "stop", "aborted", "error"):
+            stop_reason = None
         if role == "user":
             text = records.extract_text(message.get("content")).strip()
             prompt = text or None
@@ -92,6 +102,8 @@ def _projection(record: Any) -> dict[str, Any] | None:
         "tool": tool,
         "name": name,
         "kind": kind,
+        "role": role,
+        "stop_reason": stop_reason,
         "provider": provider,
         "model": model,
     }
@@ -293,6 +305,37 @@ def _authority(path_entries: list[dict[str, Any]]) -> tuple[str | None, str | No
     return None, None
 
 
+def _activity(path_entries: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """What the newest live-branch record says the session is doing, or None.
+
+    Pi writes an assistant record only once its message finished, stamped with
+    one stopReason, so the leaf itself — not the recency of recent records — is
+    the ground truth for the leaf classes: an assistant leaf with
+    ``stopReason: "toolUse"`` is a toolCall whose toolResult has not been
+    written, i.e. a tool in flight; ``stop``/``aborted``/``error`` mean the
+    turn is over even seconds after it was written. A user or toolResult leaf
+    hands the turn to the model, but only ever while the process is alive,
+    which the transcript cannot witness — that class therefore goes out as
+    ``responding`` with the thinking hint set, and the collector keeps the
+    freshness gate on it. Non-message leaves (compaction, model_change, …) say
+    nothing and fall to None, which keeps the recency-only behavior.
+    """
+    leaf = path_entries[-1]
+    if leaf["kind"] != "message":
+        return None
+    role = leaf["role"]
+    if role == "assistant":
+        stop_reason = leaf["stop_reason"]
+        if stop_reason == "toolUse":
+            return {"kind": "tool_in_flight", "tool": leaf["tool"] or "tool"}
+        if stop_reason is not None:
+            return {"kind": "awaiting"}
+        return None
+    if role in ("user", "toolResult"):
+        return {"kind": "responding"}
+    return None
+
+
 def _info(config: RuntimeConfig, scan: dict[str, Any]) -> dict[str, Any] | None:
     """Dashboard analyzer output from the compact active-branch projection."""
     path_entries = scan["path"]
@@ -312,6 +355,7 @@ def _info(config: RuntimeConfig, scan: dict[str, Any]) -> dict[str, Any] | None:
         if entry["timestamp"] and entry["usage"] is not None
     ]
     tools = [entry["tool"] for entry in path_entries if entry["tool"]]
+    activity = _activity(path_entries)
     return {
         "title": title,
         "last_prompt": prompts[-1] if prompts else None,
@@ -321,6 +365,11 @@ def _info(config: RuntimeConfig, scan: dict[str, Any]) -> dict[str, Any] | None:
         "turn": _turn(config, path_entries),
         "provider": provider,
         "model": model,
+        "activity": activity,
+        # `working_detail` honors the thinking hint ahead of `last_tool`: a
+        # responding leaf means the model is generating, so a tool name from a
+        # completed earlier turn must not outrank it.
+        "thinking": activity is not None and activity["kind"] == "responding",
     }
 
 
@@ -473,8 +522,40 @@ def collect(
         active = sessions.is_fresh(config, now, last_activity, window_hours * 3600)
         if not (active or show_all):
             continue
+        fresh = sessions.is_fresh(config, now, last_activity, config.working_threshold_sec)
         session_state, state_detail = "idle", "awaiting your message"
-        if sessions.is_fresh(config, now, last_activity, config.working_threshold_sec):
+        activity_info = (info or {}).get("activity") or {}
+        activity = activity_info.get("kind")
+        if activity == "tool_in_flight" and sessions.is_fresh(
+            config, now, last_activity, config.pi_tool_in_flight_max_sec
+        ):
+            # A toolUse leaf is the agent's own committed in-progress marker, so
+            # it outlives `working_threshold_sec`: recency alone cannot tell
+            # "blocked on a long bash" from "parked". It does not outlive
+            # everything, and the ceiling is not timidity — a transcript can
+            # record that a tool started and can never record that the process
+            # died, so a Pi hard-killed mid-tool leaves this marker as the
+            # permanent branch tip, and without a bound that row reads
+            # `running bash` for the whole display window, counts in the
+            # working tile, and sorts to the top of the board carrying a
+            # multi-hour long-turn flag. Past the ceiling it falls to the idle
+            # default rather than back to recency, which would be a lie for the
+            # same reason. A user-initiated interrupt is a different case and
+            # needs no ceiling: Pi writes `aborted`, which `_activity` routes to
+            # `awaiting`.
+            session_state = "working"
+            state_detail = f"running {activity_info['tool']}"
+        elif activity in ("awaiting", "tool_in_flight"):
+            # A stop/aborted/error leaf ends the turn the moment it lands, so
+            # it reads awaiting even while fresh — recency must not shout over
+            # a completed turn. An expired in-flight leaf lands here too: the
+            # tool it started can no longer be vouched for either way.
+            pass
+        elif activity == "responding":
+            if fresh:
+                session_state = "working"
+                state_detail = sessions.working_detail(info, [])
+        elif fresh:
             session_state = "working"
             state_detail = sessions.working_detail(info, [])
         project = sessions.project_from_cwd(config, meta.get("cwd") or "") or "pi"
