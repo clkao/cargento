@@ -10,7 +10,7 @@ APP_PARTS: tuple[str, ...] = (
     "spark.js",  # shared page state, rate buffers, the sparkline
     "regular.js",  # regular-mode components: badges, tiles, cards, rows
     "mode.js",  # display-mode state, its switch, and the calm ledger's mutable state
-    "usage.js",  # the usage band, configure, and the disclosure modal
+    "usage.js",  # the usage band, configure, and the disclosure banner
     "controls.js",  # the stop control, stopped panel, and mode bar
     "ask.js",  # the asks band: a session's question and its answer POST
     "calm.js",  # the calm ledger: tables, actions, listeners, renderers

@@ -584,13 +584,20 @@
   .u-cfg-box.on{background:var(--accent-ink);border-color:var(--accent-ink)}
   .u-cfg-box.on.locked{background:var(--line2);border-color:var(--line2)}
 
-  /* usage disclosure modal — opens once, when a payload first carries the
-     fetcher's capability flag. Until the fetcher ships, never. */
-  .u-overlay{position:fixed;inset:0;z-index:60;background:color-mix(in oklab,var(--ink) 32%,transparent);display:flex;align-items:center;justify-content:center;padding:24px}
-  .u-modal{max-width:520px;background:var(--panel);border:1px solid var(--line2);border-radius:16px;box-shadow:0 24px 60px -24px rgba(0,0,0,.5);padding:26px 28px;display:flex;flex-direction:column;gap:14px}
-  .u-modal-h{font-size:var(--fs-xl);font-weight:700;letter-spacing:-.01em}
-  .u-modal-p{margin:0;font-size:var(--fs-sm);line-height:1.65;color:var(--ink2)}
-  .u-modal-acts{display:flex;gap:10px;margin-top:6px;flex-wrap:wrap}
+  /* usage disclosure banner — opens once, when a payload first carries the
+     fetcher's capability flag. In-flow, never position:fixed — the disclosure
+     is consent, not a gate.
+     Calm: a row inside .cm-frame, ruled like the frame's chrome (.cm-head,
+     .cm-foot, and the frame's own border) rather than like its ledger rows,
+     which are a tone lighter. The frame is genuinely mixed, so "matches the
+     other separators" would name the wrong half. Regular: .standalone carries
+     its own border because .wrap owns gaps rather than separators. */
+  .u-banner{flex:none;display:flex;flex-direction:column;gap:8px;background:var(--sunk);border-bottom:1px solid var(--line2);padding:13px 24px 15px}
+  .u-banner.standalone{border:1px solid var(--line2);border-radius:12px}
+  .u-banner-top{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .u-banner-h{font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em}
+  .u-banner-acts{margin-left:auto;display:flex;gap:10px;flex:none}
+  .u-banner-p{margin:0;font-size:var(--fs-xs);line-height:1.55;color:var(--ink2);max-width:88ch}
   .u-primary{font-family:var(--mono);font-size:var(--fs-sm);font-weight:700;color:var(--bg);background:var(--ink);border:1px solid var(--ink);border-radius:9px;padding:9px 18px;cursor:pointer;transition:opacity .12s}
   .u-primary:hover{opacity:.86}
   .u-primary:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
