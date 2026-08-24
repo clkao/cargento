@@ -45,6 +45,15 @@ The posture rests on two invariants:
    unchanged. What that file holds and how to clear it is in Dismissals. One forwarder writes too:
    `statusline_hook.py`'s deduplication memo under the same directory, which holds a normalized state
    name and a timestamp and nothing about the session's content.
+   One `GET` writes as well, which is why it is named here rather than left to the count above.
+   `GET /api/observe` is a trigger rather than a poll: it derives one session's goal, stage and open
+   block and records the answer as a sidecar under `~/.cargento/observer/`, again Cargento's own
+   state and never a harness store. Its two components are the harness key and the session id, and
+   both must match `[A-Za-z0-9._-]{1,128}` before either reaches a path — `records.safe_text`
+   bounds a string and strips control characters, and passes a separator straight through, so the
+   grammar is what keeps the write inside that directory rather than the join. What the route reads
+   is covered by Project reads below: the transcript, and the same two kinds of frontmatter a stage
+   strip reads, under the same guards and the same `--no-spacedock` switch.
 
 Anything that weakens either invariant is a security bug: a bind reaching an address the operator did
 not ask for, a request admitted that the bind's own Host gate should have refused, file reads outside

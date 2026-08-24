@@ -12,12 +12,13 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any, ClassVar
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import ParseResult, parse_qs, urlparse
 
 from cargento_runtime import asks as runtime_asks
 from cargento_runtime import dismissals, notifications, quota, records
 from cargento_runtime import events as runtime_events
 from cargento_runtime import io as runtime_io
+from cargento_runtime import observer as runtime_observer
 from cargento_runtime import snapshot as runtime_snapshot
 from cargento_runtime import stream as runtime_stream
 
@@ -388,43 +389,98 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         url = urlparse(self.path)
+        if url.path == "/":
+            self._send(self.server.page_bytes, "text/html; charset=utf-8")
+        elif not self._get_api(url):
+            self.send_error(404)
+
+    def _get_api(self, url: ParseResult) -> bool:
+        """Route one GET API path, or return False so `do_GET` can 404 it.
+
+        Split off the page arm rather than kept as one chain: adding the
+        observer route took the single method to mccabe 11 against ruff's cap
+        of 10, and this file has never needed a complexity exemption. The
+        split keeps the next route free rather than buying it one.
+        """
         if url.path == "/api/data":
-            query = parse_qs(url.query)
-            show_all = query.get("all", ["0"])[0] == "1"
-            # `usage=1` is the page's consent to the quota fetch riding along
-            # on its poll: the page sends it only with the feature switched on
-            # and the first-run disclosure already shown. The fetch is a
-            # background side effect behind its own floor and in-flight gates;
-            # this request is answered from whatever is already cached. A bare
-            # request without the parameter never triggers network traffic.
-            if query.get("usage", ["0"])[0] == "1":
-                self.server.application.request_usage_fetch()
-            revision, body = self.server.application.collect_json(show_all=show_all)
-            # The cursor rides in a header rather than the body, so the
-            # documented JSON contract and every curl caller stay untouched.
-            self._send(
-                body,
-                "application/json",
-                headers={"X-Cargento-Revision": runtime_snapshot.format_revision(revision)},
-            )
+            self._data(url)
         elif url.path == "/api/overlays":
             self._overlays()
         elif url.path == "/api/cleared":
             self._cleared()
         elif url.path.startswith("/api/ask/"):
-            # Prefix-matched, so it cannot join the exact-match arms above. One
-            # arm and not two, deliberately: `do_GET` measures mccabe 9 against
-            # ruff's cap of 10, and this file has never needed a complexity
-            # exemption. A second arm would buy it its first.
+            # Prefix-matched, so it cannot join the exact-match arms above.
             self._ask_poll(url.path[len("/api/ask/") :])
         elif url.path == "/api/stream":
             self._stream()
         elif url.path == "/api/health":
             self._health()
-        elif url.path == "/":
-            self._send(self.server.page_bytes, "text/html; charset=utf-8")
+        elif url.path == "/api/observe":
+            self._observe(url)
         else:
-            self.send_error(404)
+            return False
+        return True
+
+    def _data(self, url: ParseResult) -> None:
+        query = parse_qs(url.query)
+        show_all = query.get("all", ["0"])[0] == "1"
+        # `usage=1` is the page's consent to the quota fetch riding along
+        # on its poll: the page sends it only with the feature switched on
+        # and the first-run disclosure already shown. The fetch is a
+        # background side effect behind its own floor and in-flight gates;
+        # this request is answered from whatever is already cached. A bare
+        # request without the parameter never triggers network traffic.
+        if query.get("usage", ["0"])[0] == "1":
+            self.server.application.request_usage_fetch()
+        revision, body = self.server.application.collect_json(show_all=show_all)
+        # The cursor rides in a header rather than the body, so the
+        # documented JSON contract and every curl caller stay untouched.
+        self._send(
+            body,
+            "application/json",
+            headers={"X-Cargento-Revision": runtime_snapshot.format_revision(revision)},
+        )
+
+    def _observe(self, url: ParseResult) -> None:
+        """Trigger the observer analyzer on demand and return the sidecar JSON.
+
+        A thin trigger, not a polling endpoint: read the transcript + entity
+        dir, derive goal + stage + block, write the sidecar, return the JSON.
+        The operator triggers it by clicking "observe" on a session card.
+        Strictly same-origin: the route answers only loopback requests.
+        """
+        if not self._local_ok():
+            self.send_error(403)
+            return
+        query = parse_qs(url.query)
+        harness = query.get("harness", [""])[0]
+        sid = query.get("sid", [""])[0]
+        if not harness or not sid:
+            self.send_error(400, "harness and sid are required")
+            return
+        application = self.server.application
+        config = application.config
+        state = application.state
+        transcript_path = runtime_observer.resolve_transcript(config, state, harness, sid)
+        if transcript_path is None:
+            self.send_error(404, "session transcript not found")
+            return
+        # The same clock and window the collection runs on, so the observer's
+        # freshness gate and a strip's agree about what is in flight.
+        now = application.clock()
+        result = runtime_observer.analyze(
+            config,
+            state,
+            transcript_path,
+            now=now,
+            window_sec=config.window_hours * 3600,
+        )
+        if runtime_observer.write_sidecar(config, harness, sid, result) is None:
+            # Refused, not fallen back: the names reached the transcript resolver
+            # so they are shaped ids, and there is no second place a sidecar goes.
+            self.send_error(400, "harness and sid must be plain names")
+            return
+        self._send(json.dumps(result).encode(), "application/json")
 
     def _overlays(self) -> None:
         """The live overlay ledger, for diagnosing a row the reducer produced.
