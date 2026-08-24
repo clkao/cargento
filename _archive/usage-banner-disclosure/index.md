@@ -1,6 +1,6 @@
 ---
 title: Usage-limit disclosure is a blocking modal — should be a dismissable banner
-status: validation
+status: done
 source: captain seed
 id: rj95tbw2vde46v8xjgcvgm9q
 gates:
@@ -65,13 +65,14 @@ gates:
                 reason: 'conn: fresh validator PASSED on code/contract evidence; supervisor mechanical re-run green (12/12 probe checks after fixing the probe''s calm-mode entry assumption; tests/ruff/mypy/lint_embedded green). Report 2ded013. Non-blocking notes: byte-oracle re-pin blind spot, ''blocks until dismissed'' phrasing.'
               application:
                 target-stage: done
-                state: pending
+                state: consumed
 started: 2026-08-22T05:54:44Z
 worktree: .worktrees/spacedock-ensign-usage-banner-disclosure
-mod-block: merge:pr-merge
+mod-block:
 verdict: PASSED
-completed: 2026-08-24T21:00:54Z
+completed: 2026-08-24T21:03:02Z
 pr: pr-merge:146
+archived: 2026-08-24T21:03:02Z
 ---
 # Usage-limit disclosure is a blocking modal — should be a dismissable banner
 
