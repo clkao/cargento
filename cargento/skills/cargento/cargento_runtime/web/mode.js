@@ -4,7 +4,6 @@
    /api/data, so the two modes cannot disagree about what a session is
    doing. The switch is remembered in localStorage and bound to `c`. */
 const DISPLAY_MODE_KEY = "cargento.displayMode";
-const CALM_STALE_SEC = 7200;   // an idle session quiet this long is flagged "stale"
 
 let displayMode = "regular";
 try{
@@ -15,6 +14,10 @@ try{
 let calmSort = "attention";   /* attention | recent | repo | burn */
 let calmStateOnly = null;     /* needs | work | idle */
 let calmFlagOnly = false;
+/* The trailing idle block starts clipped. Session-only, like regular mode's
+   `idleExpanded`: a fresh page should open calm, and nothing else in calm mode
+   persists either — `calmSort` does not. */
+let calmIdleExpanded = false;
 /* Rows are identified by sessKey(), the same (harness, sid) pair the rate
    buffers and the notification map use — dedupe_sessions keys on that pair, so
    a bare sid is not unique across harnesses. */

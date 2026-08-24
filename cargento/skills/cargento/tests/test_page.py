@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest import mock
 
-from cargento_runtime import cli, diagnostics, http_api, lifecycle
+import event_hook
+from cargento_runtime import cli, diagnostics, http_api, lifecycle, notifications
 from cargento_runtime import io as runtime_io
 
 from .page_harness import APP_JS, PAGE_TEXT, STYLES, PageJsHarness
@@ -64,40 +65,44 @@ class FrontendAssetContractTest(unittest.TestCase):
         # part that moved is also the more useful failure of the two.
         expected_parts = {
             "spark.js": (
-                28_084,
-                "287f0971ff09de7a7df3869cdfe93ad002a74450ff0e97f87b9500324acc385c",
+                42_975,
+                "741b3e185654153b0314176ccd48135c1b4499210cd982b4237fcde99c3419ae",
             ),
             "regular.js": (
-                37_585,
-                "b080f3f4b738ff5a11b2a4f66a012276964e5a522e2085f67329a51d5a1e9d2f",
+                43_651,
+                "266b5e52a9b17485fe714bf4d009a74c9c33476e4aeb777d12bfbc466960e8f9",
             ),
             "mode.js": (
-                4_470,
-                "e73530555aa7298ced94cffef9962c34fb74046026e3ab619e02226f294857f6",
+                4_619,
+                "526b9cae4ee29f756e2e00fca6c88213a1a7423cb5daa111dfbde59c0d121561",
             ),
             "usage.js": (
                 51_066,
                 "3eb8d87fb2f809058678218cf57bc6b381bb7750d7523efea0eeb56628db70fe",
             ),
             "controls.js": (
-                3_380,
-                "c72970464c0ab3c2f621343eda3b25ee4ab5da8a4d937402f333ecd40876d8ec",
+                7_271,
+                "f1fe1ebd088d69c14f72364e88249f625cdba4d82f95239992dc76daceabcd0e",
+            ),
+            "ask.js": (
+                7_064,
+                "b3427d36b59995b468c6cb8d31bef21b20167d41dd302b56c4781ff9d37b038a",
             ),
             "calm.js": (
-                42_366,
-                "639e2081b587fb8e7d6ff236744ec42e00d66c80357591b04742d30f0122e038",
+                51_965,
+                "653da24fd8f3cd96a7c948011b242ed9d4dbcf78fa2f8f3ea48888682cee7404",
             ),
             "session.js": (
                 6_693,
                 "95946c58f15aa4ccd2fd0f0e1b8c482f58c974244a9f17432089f8b38c10b957",
             ),
             "notify.js": (
-                3_185,
-                "afd7a8ff735ea52b95e31a22f60f024d0bb752b7063860abc0e7bb1ae1c0fcae",
+                7_797,
+                "d340a6d8870d2cb210c6e961afbfb6015e4ca915dce41e0193f7aed95c193154",
             ),
             "main.js": (
-                9_409,
-                "ca92f14a5287500ec4f197b128b07de2551538d6612d424698a570010b38207d",
+                10_741,
+                "ca9222a80caae8c25551831b1b784c0bc155cf5d7f5f755428b04af5c990d27e",
             ),
             "live.js": (
                 6_176,
@@ -112,18 +117,36 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(48_596, len(styles))
+        self.assertEqual(56_072, len(styles))
         self.assertEqual(
-            "41a10e42b0b49f183216e6849cac0dd5eaca5ad06bcfc71537fa4120e6d4072a",
+            "094fd0483d516063d169a1a7bd6a1937c2d8eaf0cd9ac88aaf57e83e6492d246",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(241_306, len(assembled))
+        self.assertEqual(296_386, len(assembled))
         self.assertEqual(
-            "d0a106eae7d80efe8d0eef5e1216f810c45aa61d5ee0ff9a0296b7d2b669927f",
+            "85d3ea3249ce83aea013f100c4c9d94a6dce9a9c2863e22b16a325b6adde8002",
             hashlib.sha256(assembled).hexdigest(),
         )
+
+    def test_both_layers_render_the_same_ask_sentence(self) -> None:
+        # The two layers hardcode this sentence in two languages, and nothing
+        # else compares them: `waiting_title`'s docstring records the gate lane
+        # drifting apart the moment more than one harness could raise it. No node
+        # needed — the JS is read as text.
+        source = frontend_page.asset_path("notify.js").read_text(encoding="utf-8")
+        # Matched in CODE rather than anywhere in the file. An `assertIn` over the
+        # whole source is satisfied by a comment mentioning the sentence, so the
+        # literal this test exists to pin could be changed while it stayed green.
+        code = "\n".join(
+            line for line in source.splitlines() if not line.lstrip().startswith(("/*", "*", "//"))
+        )
+        fallback = notifications.ASK_HARNESS_FALLBACK
+        self.assertIn(f'|| "{fallback}") + " is asking you"', code)
+        self.assertEqual(f"{fallback} is asking you", notifications.asking_title(""))
+        # And the Python side composes it the same way round.
+        self.assertEqual("Claude is asking you", notifications.asking_title("Claude"))
 
     def test_load_page_names_a_missing_asset(self) -> None:
         with (
@@ -492,6 +515,63 @@ class CargentoServerTest(PageJsHarness):
         self.assertEqual(
             {"claude", "codex", "pi", "gemini", "antigravity", "goose"},
             {spec.key for spec in REGISTRY if spec.reports_rate},
+        )
+
+    def test_only_the_two_harnesses_with_a_gate_path_declare_one(self) -> None:
+        # The same shape as `reports_rate` above and for the same reason, on the
+        # field where getting it wrong is worse. A harness with no gate detection
+        # publishes no needs-input row, which is the identical payload a harness
+        # WITH detection publishes when nothing is waiting -- so a row, a count and
+        # a quiet board cannot say which of the two they are. Declaring it per
+        # harness is what lets a reader tell "nothing is waiting" from "nothing
+        # here could tell you".
+        #
+        # A literal set, not a re-read of the registry: comparing the flag to
+        # itself would pass whichever way a row was set. Flipping one on here
+        # without teaching its collector to emit `needs_input` would publish a
+        # promise the board cannot keep, which is strictly worse than the gap.
+        self.assertEqual(
+            {"claude", "codex"},
+            {spec.key for spec in REGISTRY if spec.reports_needs_input},
+        )
+
+    def test_the_gate_flag_matches_the_harnesses_that_actually_have_a_path(self) -> None:
+        # The check that would have caught the defect this test was written for.
+        # `reports_needs_input` is a hand-set bool, and the first review of the
+        # change that added it found Codex shipping gate detection through the
+        # event overlay while its own strip chip said "no gate detection" -- the
+        # exact inversion the disclosure exists to prevent, pinned green by a
+        # sibling test asserting a literal set.
+        #
+        # So derive the truth instead of restating it. A gate reaches the board by
+        # exactly two routes: a collector that sets the state itself, which is
+        # Claude alone, or an adapter that maps `input_requested`, which is
+        # whatever `EVENTS_BY_HARNESS` says today. Anyone adding the second kind
+        # gets a failure here rather than a lying chip.
+        by_adapter = {
+            harness
+            for harness, table in event_hook.EVENTS_BY_HARNESS.items()
+            if "input_requested" in table.values()
+        }
+        self.assertEqual(
+            {"claude"} | by_adapter,
+            {spec.key for spec in REGISTRY if spec.reports_needs_input},
+        )
+
+    def test_the_payload_publishes_the_gate_coverage_per_harness(self) -> None:
+        # Nine of the ten rows are silent about gates by construction, and the page
+        # cannot derive that from anything else it is sent. Without this the server
+        # could stop publishing the flag and every page-side test would stay green,
+        # because they all feed synthetic payloads.
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            store_patch(**dict.fromkeys(STORE_KEYS, tmp)),
+        ):
+            data = collect()
+
+        self.assertEqual(
+            {spec.key: spec.reports_needs_input for spec in REGISTRY},
+            {h["key"]: h["reports_needs_input"] for h in data["harnesses"]},
         )
 
     def test_the_payload_publishes_the_rate_window_and_the_rate_coverage(self) -> None:
@@ -1137,16 +1217,20 @@ console.log(JSON.stringify(out));
         # Copilot fills `consumption` and, on this fixture, no model — so the same
         # line carries a printed figure and an unread dash, which is the pairing
         # that makes the two absences readable side by side.
-        self.assertEqual("proj · cp1 · model — · used 6.43 AIU", out["working"])
+        # Four sessions on the label `proj`, three of them live, so these two
+        # rows also carry the shared-label marker. Pinned in the same string
+        # rather than dodged with a per-row label, because a board of four
+        # sessions in one project is what this fixture is.
+        self.assertEqual("proj 3 live · cp1 · model — · used 6.43 AIU", out["working"])
         # The needs row leads with the harness badge, whose tooltip text survives
         # the tag strip; the clause still lands at the end of the same line.
-        self.assertEqual("Copilotproj · cp2 · model — · used 0.00 AIU", out["needs"])
+        self.assertEqual("Copilotproj 3 live · cp2 · model — · used 0.00 AIU", out["needs"])
         # A harness with no ledger says nothing about spend and still declares the
         # model slot: the consumption clause vanishes, the model dash does not.
         # The two absences are different — no `used` claims nothing, whereas every
         # session does run on some model.
         self.assertEqual(
-            "proj · cl1 · model —", out["plain"], "a session with no ledger drew a stray dot"
+            "proj 3 live · cl1 · model —", out["plain"], "a session with no ledger drew a stray dot"
         )
         self.assertEqual("proj · pi1 · via Copilot · gpt-5 · used 1.20 AIU", out["both"])
         self.assertNotIn("AIU", out["idle"], "the idle drawer grew a second unit")
@@ -2260,6 +2344,111 @@ console.log(JSON.stringify(out));
         self.assertEqual("", out["nullish"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_harness_strip_says_which_rows_cannot_report_a_gate(self) -> None:
+        # The strip is where a reader asks what these rows cover, so it is where
+        # the answer belongs. Four states, and the fourth is the one that matters:
+        # an absent flag must claim nothing, because "this harness cannot report a
+        # gate" is a much louder sentence than a missing field earns -- it tells
+        # the reader the gap is by design, which is how a bug report does not get
+        # filed. Same discipline harnessRateKnown() applies to its fallback.
+        checks = """
+const row = (over) => Object.assign(
+  {key:"codex", label:"Codex", discovered:true, error:null,
+   reports_needs_input:false}, over || {});
+console.log(JSON.stringify({
+  blind:   harnessStrip([row()]),
+  able:    harnessStrip([row({key:"claude", label:"Claude",
+                              reports_needs_input:true})]),
+  broken:  harnessStrip([row({error:"OSError: nope"})]),
+  absent:  harnessStrip([row({discovered:false})]),
+  noField: harnessStrip([{key:"codex", label:"Codex", discovered:true, error:null}])}));
+"""
+        out = self._run_page_js(checks)
+
+        self.assertIn("no gate detection", out["blind"])
+        self.assertNotIn("no gate detection", out["able"])
+        # A collector that raised outranks it: whatever the store might have said
+        # was never read, so the harness's own capability is not the fact to lead
+        # with. Same precedence the strip already gives `error` over `no data`.
+        self.assertIn("collector error", out["broken"])
+        self.assertNotIn("no gate detection", out["broken"])
+        self.assertIn("no data", out["absent"])
+        self.assertNotIn("no gate detection", out["noField"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_a_zero_needs_you_tile_says_how_much_of_the_board_it_speaks_for(self) -> None:
+        # "Needs you 0 · Nothing is waiting on you." over a board of ten harnesses
+        # where one can detect a gate is the same false reassurance cargento#116
+        # was filed for, and waitingOnYou() only fixed the half of it that the ask
+        # lane caused. Nine rows are silent about gates by construction, so the
+        # zero has to say what it covers. Scoped to the empty case deliberately:
+        # a non-zero tile draws its per-harness breakdown, which shows the reader
+        # which rows the number came from.
+        checks = """
+const row = (key, label, over) => Object.assign(
+  {key, label, discovered:true, error:null, reports_needs_input:false}, over || {});
+const out = {};
+out.mixed = countTile("Needs you", gateEmpty({harnesses:[
+  row("claude", "Claude", {reports_needs_input:true}),
+  row("codex", "Codex"), row("copilot", "Copilot")]}), [], true);
+out.claudeOnly = countTile("Needs you", gateEmpty({harnesses:[
+  row("claude", "Claude", {reports_needs_input:true})]}), [], true);
+out.noField = countTile("Needs you", gateEmpty({harnesses:[
+  {key:"codex", label:"Codex", discovered:true, error:null}]}), [], true);
+console.log(JSON.stringify(out));
+"""
+        out = self._run_page_js(checks)
+
+        # The claim is scoped to what could not tell, and it names them, so the
+        # sentence is a quantity rather than a hedge.
+        self.assertIn("Codex", out["mixed"])
+        self.assertIn("Copilot", out["mixed"])
+        self.assertNotIn("Nothing is waiting on you.", out["mixed"])
+        # Every discovered row can report, so the old sentence is true as written.
+        self.assertIn("Nothing is waiting on you.", out["claudeOnly"])
+        # And a payload that never sent the flag claims nothing either way.
+        self.assertIn("Nothing is waiting on you.", out["noField"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_zero_tile_counts_a_harness_it_could_not_read_at_all(self) -> None:
+        # The first version of this named the blind rows and silently dropped the
+        # ones whose collector raised -- which are the rows that could have told
+        # you, so the tooltip read as a complete enumeration while omitting the
+        # load-bearing gap. `rateFloor` settled this shape already: an unread
+        # harness makes the figure a floor and says so.
+        checks = """
+const row = (key, label, over) => Object.assign(
+  {key, label, discovered:true, error:null, reports_needs_input:false}, over || {});
+const out = {};
+// Every row can report, but one of them could not be read this refresh.
+out.unreadOnly = gateEmpty({harnesses:[
+  row("claude", "Claude", {reports_needs_input:true, error:"PermissionError: nope"}),
+  row("codex", "Codex", {reports_needs_input:true})]});
+// Both kinds at once.
+out.both = gateEmpty({harnesses:[
+  row("claude", "Claude", {reports_needs_input:true, error:"OSError: nope"}),
+  row("copilot", "Copilot")]});
+// Neither: the old sentence is true as written.
+out.clean = gateEmpty({harnesses:[
+  row("claude", "Claude", {reports_needs_input:true}),
+  row("codex", "Codex", {reports_needs_input:true})]});
+console.log(JSON.stringify(out));
+"""
+        out = self._run_page_js(checks)
+
+        # A row nobody could read is not an all-clear, even when every harness
+        # present is gate-capable.
+        self.assertNotEqual("Nothing is waiting on you.", out["unreadOnly"]["empty"])
+        self.assertIn("Claude", out["unreadOnly"]["emptyTip"])
+        # And when both kinds are present the tooltip names both, so the reader
+        # is not told a partial list is the whole of it.
+        self.assertIn("Copilot", out["both"]["emptyTip"])
+        self.assertIn("Claude", out["both"]["emptyTip"])
+        # Nothing to disclose, so nothing is claimed.
+        self.assertEqual("Nothing is waiting on you.", out["clean"]["empty"])
+        self.assertNotIn("emptyTip", out["clean"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_every_working_card_draws_the_same_anatomy(self) -> None:
         # Two cards stacked in one column with different parts present reads as
         # missing data. A turn with no estimate still draws its track, marked
@@ -2366,6 +2555,56 @@ console.log(JSON.stringify(out));
         self.assertEqual([None, None], out["allUnknown"], "ranked harnesses that report no rate")
         self.assertEqual("fastest", out["idleIgnored"][0])
         self.assertIn("the highest of the 1 working session that report", out["idleIgnored"][1])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_card_column_says_when_two_live_sessions_share_a_project_label(self) -> None:
+        # The card view has no grouping to lean on, so without a marker the two
+        # agents about to overwrite each other read as two unrelated cards. The
+        # gate row carries it for the same reason it counts as live: answering
+        # that gate is the keystroke that lets one session write over the other.
+        checks = """
+const base = {harness: "claude", session: "aaa", sid: "aaa", project: "repo/proj",
+  title: "t", last_prompt: "", state: "working", state_detail: "running Bash",
+  active: true, last_activity: 990, rate_per_min: 100, total: 0, done: 0, open: 0,
+  progress_pct: 0, eta_h: null, turn: null, subagents: [], tasks: [], spacedock: null};
+const s = o => Object.assign({}, base, o);
+const mate = s({sid: "bbb", session: "bbb", harness: "codex", rate_per_min: 3000});
+const gate = s({sid: "ccc", session: "ccc", state: "needs_input",
+                state_detail: "permission needed", blocked_since: 900});
+const solo = s({sid: "ddd", session: "ddd", project: "repo/solo"});
+const dead = s({sid: "eee", session: "eee", state: "idle", active: false,
+                last_activity: 400});
+const strip = [
+  {key: "claude", label: "Claude", discovered: true, error: null, reports_rate: true},
+  {key: "codex", label: "Codex", discovered: true, error: null, reports_rate: true}];
+const d = {generated: 1000, rate_window_sec: 600, harnesses: strip,
+           summary: {rate_per_min: 0}, sessions: [base, mate, gate, solo, dead]};
+const has = h => h.includes('class="dupmark"');
+const out = {};
+out.card = has(workingCard(d, base));
+out.mate = has(workingCard(d, mate));
+out.solo = has(workingCard(d, solo));
+out.gate = has(needRow(d, gate, 1, null));
+// An idle row on the same label is not one of the sessions in the collision:
+// it has stopped, so it is not about to write anything.
+out.dead = has(idleRow(d, dead));
+// The marker sits with the project label it is about, not in the pill row —
+// the card's pills claim things about burn, and this claims nothing about burn.
+out.headrow = workingCard(d, base).split('class="card-title"')[0];
+out.pillTip = (workingCard(d, mate).match(/class="pill" title="([^"]*)"/) || [])[1];
+console.log(JSON.stringify(out));
+"""
+        out = self._run_page_js(checks)
+        self.assertEqual(
+            [True, True, False, True, False],
+            [out["card"], out["mate"], out["solo"], out["gate"], out["dead"]],
+            "the shared-label marker is on the wrong set of rows",
+        )
+        self.assertNotIn("dupmark", out["headrow"], "the marker landed in the pill row")
+        self.assertTrue(
+            (out["pillTip"] or "").startswith("3,000 tok/min, the highest of the"),
+            f"the fastest pill's tooltip is no longer the card's first pill: {out['pillTip']}",
+        )
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_a_working_card_says_when_the_rate_is_unknown_rather_than_zero(self) -> None:
@@ -2836,6 +3075,113 @@ console.log(JSON.stringify(out));
         self.assertEqual(0, out["primed"], "popped for a pre-existing block on first paint")
         self.assertEqual(0, out["ungranted"])
         self.assertEqual(0, out["inactive"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_browser_notifications_cover_an_arriving_ask_where_the_server_cannot(self) -> None:
+        # The same split as a gate (design decision D-3), keyed on the ask id
+        # rather than on a transition: a question has no prior state, and it
+        # leaves the payload for good once answered, withdrawn or expired.
+        checks = """
+__els.app = {innerHTML:""};
+const blocked = {
+  harness:"claude", session:"12345678", sid:"12345678", project:"proj",
+  title:null, last_prompt:"", state:"needs_input", state_detail:"open question",
+  active:true, last_activity:100, blocked_since:970, rate_per_min:0,
+  total:0, done:0, open:0, progress_pct:0, eta_h:null, turn:null,
+  subagents:[], tasks:[]
+};
+const idle = {...blocked, state:"idle", state_detail:"awaiting your message"};
+const ask = (id, over) => Object.assign({
+  id, harness:"claude", session_id:"12345678-90ab-cdef-1234-567890abcdef",
+  project:"repo/proj", question:"Ship it?", options:["yes", "no"], age_sec:1
+}, over || {});
+/* A registry row, because a label is only ever resolved through one: with
+   harnesses:[] every case below would read "An agent" and prove nothing. */
+const registry = [{key:"claude", label:"Claude", discovered:true, error:null}];
+const payload = (asks, native, sessions) => ({
+  generated:1000, window_hours:24, show_all:false, native_notify:native,
+  harnesses:registry, sessions:sessions || [], ask:true, asks,
+  summary:{needs_input:0, working:0, rate_per_min:0, active_sessions:1,
+           open_tasks:0, progress_pct:0, total_tasks:0, total_done:0}
+});
+const reset = perm => {
+  __notifications = []; __notifyPermission = perm;
+  notifyState = new Map(); notifyPrimed = false; notifiedAsks = new Set();
+};
+const out = {};
+
+// The server already popped natively: the page must stay silent.
+reset("granted");
+render(payload([ask("a1")], "osascript"));
+out.nativeOwnsIt = __notifications.length;
+
+// No native backend (Linux/Windows today): the page notifies, and it notifies
+// on the FIRST payload it sees. An ask id is single-use and nothing ever
+// re-registers it, so there is no repeat for priming to protect against — and
+// the reader who opened the tab because an agent said it would ask lands here.
+reset("granted");
+render(payload([ask("a1")], ""));
+out.firstPaint = __notifications.length;
+out.title = __notifications[0] && __notifications[0].title;
+out.body = __notifications[0] && __notifications[0].body;
+out.tag = __notifications[0] && __notifications[0].tag;
+
+// Still pending on the next poll: notified once, not once per refresh.
+render(payload([ask("a1")], ""));
+out.noRepeat = __notifications.length;
+
+// A second question is its own alert with its own tag, so it cannot replace the
+// banner for a question still on the board.
+render(payload([ask("a1"), ask("a2")], ""));
+out.second = __notifications.length;
+out.secondTag = __notifications[1] && __notifications[1].tag;
+
+// Two arriving in one pass coalesce: `ask_max_pending` is 16 and this layer has
+// no cooldown, so one banner names the count instead of stacking sixteen.
+reset("granted");
+render(payload([ask("b1"), ask("b2")], ""));
+out.burst = __notifications.length;
+out.burstTitle = __notifications[0] && __notifications[0].title;
+
+// Permission not granted: record the ids, raise nothing. Then granting it must
+// not dump a banner for a question already on the board.
+reset("default");
+render(payload([ask("c1")], ""));
+out.ungranted = __notifications.length;
+__notifyPermission = "granted";
+render(payload([ask("c1")], ""));
+out.afterGrant = __notifications.length;
+
+// An unattributable harness names no harness. The registry is non-empty here,
+// so "An agent" is proved to come from a failed lookup.
+reset("granted");
+render(payload([ask("d1", {harness:"unknown", session_id:""})], ""));
+out.unknownTitle = __notifications[0] && __notifications[0].title;
+
+// The session pass still works, and keeps its own tag.
+reset("granted");
+render(payload([], "", [idle]));
+render(payload([ask("e1")], "", [blocked]));
+out.both = __notifications.length;
+out.bothTags = __notifications.map(n => n.tag).sort();
+console.log(JSON.stringify(out));
+"""
+        out = self._run_page_js(checks)
+        self.assertEqual(0, out["nativeOwnsIt"], "would double-notify on macOS")
+        self.assertEqual(1, out["firstPaint"])
+        self.assertEqual("Claude is asking you", out["title"])
+        self.assertEqual("Ship it? · repo/proj", out["body"])
+        self.assertEqual("cargento-ask:a1", out["tag"])
+        self.assertEqual(1, out["noRepeat"], "notified again for a question already seen")
+        self.assertEqual(2, out["second"])
+        self.assertEqual("cargento-ask:a2", out["secondTag"])
+        self.assertEqual(1, out["burst"], "one banner per pass, however many arrived")
+        self.assertEqual("2 questions are waiting for your answer", out["burstTitle"])
+        self.assertEqual(0, out["ungranted"])
+        self.assertEqual(0, out["afterGrant"], "granting permission dumped the whole board")
+        self.assertEqual("An agent is asking you", out["unknownTitle"])
+        self.assertEqual(2, out["both"])
+        self.assertEqual(["cargento-ask:e1", "claude:12345678"], out["bothTags"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_the_notification_title_names_the_harness_that_is_waiting(self) -> None:
@@ -3382,3 +3728,159 @@ console.log(JSON.stringify(out));
             },
             out,
         )
+
+
+class AttentionOrderTest(PageJsHarness):
+    """One attention ordering, read by both views.
+
+    The card view used to render its sections in payload order, so a board with
+    a long-running turn or a freshly-woken idle session put the two views'
+    sequences in different orders on the same payload. These execute both views
+    against one payload rather than asserting on either comparator's source.
+    """
+
+    # A board that exercises every rung of the ladder, published in the order
+    # aggregate.py would publish it: gates longest-blocked first, then working
+    # and idle rows in bare session-id order. Every fixture below states its ids
+    # so that id order is the WRONG answer, so neither the payload's sequence
+    # nor the tiebreaker can produce the expected order on its own.
+    ATTENTION_FIXTURE = """
+let __focused = null;
+const __controls = () => [...__els.app.innerHTML.matchAll(
+    /data-calm="([^"]*)"(?: data-arg="([^"]*)")?/g)].map(m => ({
+  getAttribute: a => a === "data-calm" ? m[1]
+    : (a === "data-arg" ? (m[2] === undefined ? null : m[2]) : null),
+  focus(){ __focused = m[1]; }
+}));
+__els.app = {innerHTML: "", className: "",
+             querySelectorAll: () => __controls(), querySelector: () => null};
+let __scrollTop = 0;
+__els["cm-body"] = {get scrollTop(){ return __scrollTop; },
+                    set scrollTop(v){ __scrollTop = v; },
+                    querySelector: () => null};
+const sess = o => Object.assign({
+  harness: "claude", session: "s", sid: "s", project: "repo/proj", title: null,
+  last_prompt: "", state: "idle", state_detail: "", active: false,
+  last_activity: 99000, rate_per_min: 0, total: 0, done: 0, open: 0,
+  progress_pct: 0, eta_h: null, turn: null, subagents: [], tasks: [],
+  spacedock: null}, o);
+const attnBoard = sessions => ({
+  generated: 100000, window_hours: 24, show_all: false, harnesses: [],
+  rate_window_sec: 600,
+  summary: {needs_input: 0, working: 0, rate_per_min: 0, active_sessions: 0,
+            open_tasks: 0, progress_pct: 0, total_tasks: 0, total_done: 0},
+  sessions});
+const busyRow = (sid, over) => sess(Object.assign({
+  sid, session: sid, title: sid, state: "working", active: true,
+  state_detail: "running Bash", last_activity: 99990}, over || {}));
+const quietRow = (sid, at) => sess({sid, session: sid, title: sid,
+                                    last_activity: at});
+const gateRow = (sid, since) => sess({sid, session: sid, title: sid,
+  state: "needs_input", active: true, state_detail: "permission needed",
+  last_activity: since, blocked_since: since});
+const LONG = {elapsed_h: "2h", eta_h: null, pct: 99, long: true};
+const bandOrder = () => [...__els.app.innerHTML.matchAll(
+  /class="need-title">([^<]*)/g)].map(m => m[1]);
+const cardOrder = () => [...__els.app.innerHTML.matchAll(
+  /class="card-title">([^<]*)/g)].map(m => m[1]);
+const idleOrder = () => [...__els.app.innerHTML.matchAll(
+  /class="idle-title">([^<]*)/g)].map(m => m[1]);
+const calmOrderOnScreen = () => [...__els.app.innerHTML.matchAll(
+  /class="cm-title"[^>]*>([^<]*)/g)].map(m => m[1]);
+"""
+
+    def run_attention(self, checks: str) -> Any:
+        prelude = (
+            "const localStorage = {getItem: () => null, setItem(){}};\n"
+            "const navigator = {};\n"
+            "let __timers = [];\nconst setTimeout = fn => { __timers.push(fn); };\n"
+        )
+        return self._run_page_js(self.ATTENTION_FIXTURE + checks, prelude=prelude)
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_working_cards_lead_with_the_long_running_turn(self) -> None:
+        # Rank 1 before rank 2, the same rung calm's ladder has always had. Safe
+        # to move a card on, where rate is not: `long` latches within a turn
+        # (turns.py's candidate median is non-decreasing in elapsed), so a card
+        # moves at most once per turn rather than on every poll.
+        checks = """
+const out = {};
+const board = attnBoard([busyRow("work-a"), busyRow("work-b"),
+                         busyRow("work-c", {turn: LONG})]);
+render(board);
+out.hoisted = cardOrder();
+// Same payload a minute later: the hoist must not churn as the rows age.
+render({...board, generated: 100060});
+out.stable = cardOrder();
+// A working row with no turn at all is the ordinary case for a non-Claude
+// collector, and it must not throw the whole ordering out.
+render(attnBoard([busyRow("work-a", {turn: null}), busyRow("work-b")]));
+out.nullTurn = cardOrder();
+console.log(JSON.stringify(out));
+"""
+        out = self.run_attention(checks)
+        self.assertEqual(["work-c", "work-a", "work-b"], out["hoisted"])
+        self.assertEqual(["work-c", "work-a", "work-b"], out["stable"])
+        self.assertEqual(["work-a", "work-b"], out["nullTurn"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_idle_list_leads_with_the_most_recently_active(self) -> None:
+        # The idle block is clipped, so this ordering decides which idle rows a
+        # reader ever sees without clicking. Most recently active first, taken
+        # from calm unchanged: the two views' visible idle rows must not be
+        # opposite ends of the same list.
+        checks = """
+const out = {};
+// Ids ascend as the activity descends, so server order is the wrong answer.
+const board = attnBoard([quietRow("aaa", 90000), quietRow("bbb", 95000),
+                         quietRow("ccc", 99000)]);
+render(board);
+out.recentFirst = idleOrder();
+// Two rows quiet since the same instant fall through to the session id, the
+// same last tiebreaker every other ordering uses.
+render(attnBoard([quietRow("zzz", 95000), quietRow("mmm", 95000)]));
+out.ties = idleOrder();
+console.log(JSON.stringify(out));
+"""
+        out = self.run_attention(checks)
+        self.assertEqual(["ccc", "bbb", "aaa"], out["recentFirst"])
+        self.assertEqual(["mmm", "zzz"], out["ties"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_both_views_order_the_same_payload_the_same_way(self) -> None:
+        # The anti-drift fence, and the only assertion a duplicated comparator
+        # fails. The card view's three sections and calm's single ledger are
+        # different renderings of one ladder, so the sequence a reader reads down
+        # the page must be the same sequence in both.
+        checks = """
+const out = {};
+const board = attnBoard([
+  // Gates as the server publishes them: longest-blocked first.
+  gateRow("gate-old", 98000), gateRow("gate-new", 99900),
+  busyRow("work-plain-a"), busyRow("work-plain-b"),
+  busyRow("work-long", {turn: LONG}),
+  quietRow("idle-oldest", 90000), quietRow("idle-mid", 95000),
+  quietRow("idle-newest", 99000)]);
+render(board);
+out.regular = bandOrder().concat(cardOrder(), idleOrder());
+setDisplayMode("calm");
+out.calmSort = calmSort;
+out.calm = calmOrderOnScreen();
+console.log(JSON.stringify(out));
+"""
+        out = self.run_attention(checks)
+        self.assertEqual("attention", out["calmSort"], "calm's default order moved")
+        self.assertEqual(
+            [
+                "gate-old",
+                "gate-new",
+                "work-long",
+                "work-plain-a",
+                "work-plain-b",
+                "idle-newest",
+                "idle-mid",
+                "idle-oldest",
+            ],
+            out["calm"],
+        )
+        self.assertEqual(out["calm"], out["regular"], "the two views disagree on one payload")
