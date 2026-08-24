@@ -778,6 +778,27 @@ class HarnessRegistryTest(RuntimeTestCase):
         # naming the wrong harness, and the body assertion above cannot see that.
         self.assertEqual("Claude is waiting on you", fired[0][0])
 
+    def test_a_harness_label_resolves_only_through_the_registry(self) -> None:
+        # The popup title for an ask goes through this, and an ask's `harness` is
+        # agent-authored text bounded only at `ask_option_cap_chars` — the
+        # shipped stdio server sends the literal "unknown" for every client but
+        # Claude Code. So "" and never the key echoed back: the page's session-row
+        # fallback IS the key, which is right there (a row's harness comes from a
+        # collector and is a registry key by construction) and would title the
+        # common case here "unknown is asking you".
+        application = aggregate.Application(
+            *make_runtime(),
+            aggregate.default_harnesses(lambda _title, _message: None),
+            native_notifier=lambda _platform: "",
+            popup_notifier=lambda _title, _message: None,
+            diagnostic_sink=lambda _line: None,
+        )
+        self.assertEqual("Claude", application.harness_label("claude"))
+        self.assertEqual("Antigravity", application.harness_label("antigravity"))
+        for key in ("unknown", "", "claude ", "x" * 120):
+            with self.subTest(key=key):
+                self.assertEqual("", application.harness_label(key))
+
     def test_the_registry_keys_and_labels_match_the_runtime_default(self) -> None:
         # default_harnesses binds Claude's notifier; nothing downstream may
         # otherwise rewrite the registry the runtime declares.
@@ -797,9 +818,14 @@ class RuntimeImportGraphTest(unittest.TestCase):
         # the rows it just collected and stays below `observation`, which owns the
         # ledger: the coordinator is reached through the `OverlaySource` protocol
         # declared here, so the dependency does not invert.
+        # `dismissals` arrived with the handled control. `aggregate` is the one
+        # place that can subtract a cleared row before `summary` is counted, so
+        # this edge is what keeps every published total honest; `dismissals` is a
+        # leaf beside `records`, so it stays inward.
         "cargento_runtime.aggregate": {
             "cargento_runtime.collectors",
             "cargento_runtime.config",
+            "cargento_runtime.dismissals",
             "cargento_runtime.events",
             "cargento_runtime.io",
             "cargento_runtime.quota",
@@ -820,6 +846,12 @@ class RuntimeImportGraphTest(unittest.TestCase):
             "cargento_runtime.state",
             "cargento_runtime.web",
         },
+        # Outstanding asks and their one-slot answer mailboxes. Imports no
+        # runtime module, for the reason `stream` does not: that is what lets
+        # `state` own the registry while `http_api` and `aggregate` serve from it
+        # without a cycle. The consequence is that it cannot reach
+        # `records.safe_text`, so the HTTP ingress bounds the text instead.
+        "cargento_runtime.asks": set(),
         "cargento_runtime.collectors": set(),
         # `sessions` arrived with the event envelope: an event timestamp passes
         # through the same plausibility filter as every store timestamp, so a
@@ -933,8 +965,23 @@ class RuntimeImportGraphTest(unittest.TestCase):
             "cargento_runtime.transcripts",
             "cargento_runtime.turns",
         },
+        # `dismissals` is here because a gate the reader cleared must raise no
+        # popup, and the popup policy is this module's. The alternative was for
+        # the collector to decide and hand the answer in, which would put half of
+        # one rule in a file that owns none of it.
         "cargento_runtime.notifications": {
             "cargento_runtime.claude_data",
+            "cargento_runtime.config",
+            "cargento_runtime.dismissals",
+            "cargento_runtime.io",
+            "cargento_runtime.records",
+            "cargento_runtime.state",
+        },
+        # The store: `config` for its path and its caps, `records` for the
+        # untrusted-input discipline, `io` for the diagnostic sink, `state` for
+        # the lock and this process's copy. It imports nothing above itself, which
+        # is what lets aggregate, notifications and http_api all consult it.
+        "cargento_runtime.dismissals": {
             "cargento_runtime.config",
             "cargento_runtime.io",
             "cargento_runtime.records",
@@ -994,14 +1041,21 @@ class RuntimeImportGraphTest(unittest.TestCase):
         # through that attribute rather than through a module global. `events`
         # arrived with that route, which reads the registered-harness set to
         # decide whether `/api/events/<harness>` exists at all.
+        # `asks` and `records` arrived together with the ask lane, and for one
+        # reason: `asks` imports nothing, so it cannot bound the untrusted
+        # question and option text it stores. The register route builds the
+        # `PendingAsk` and is therefore the one place that bounding can happen.
         "cargento_runtime.http_api": {
             "cargento_runtime.aggregate",
+            "cargento_runtime.asks",
+            "cargento_runtime.dismissals",
             "cargento_runtime.events",
             "cargento_runtime.io",
             "cargento_runtime.notifications",
             "cargento_runtime.observation",
             "cargento_runtime.observer",
             "cargento_runtime.quota",
+            "cargento_runtime.records",
             "cargento_runtime.snapshot",
             "cargento_runtime.stream",
         },
@@ -1038,6 +1092,7 @@ class RuntimeImportGraphTest(unittest.TestCase):
         # module, which is what lets state own a registry without a cycle.
         "cargento_runtime.stream": set(),
         "cargento_runtime.state": {
+            "cargento_runtime.asks",
             "cargento_runtime.config",
             "cargento_runtime.snapshot",
             "cargento_runtime.stream",

@@ -394,6 +394,58 @@ class GrantedPermissionTest(support.RuntimeTestCase):
         self.assertEqual(now - 950, row["blocked_since"])
 
 
+class GrantedCodexPermissionTest(support.RuntimeTestCase):
+    """The same wiring on the second harness that can report a gate.
+
+    Codex's `PermissionRequest` hook is the only source it has, so nothing ever
+    arrives to say the user answered -- exactly Claude's situation in
+    `GrantedPermissionTest`, and exactly why that class pins the wiring rather
+    than the rule. Without the collector reporting `own_activity` the row stayed
+    red from the approval until the turn's `Stop`, which is DRC-4097 again on a
+    harness that had no such row when DRC-4097 was fixed.
+
+    The signal is measured rather than borrowed. With a real approval prompt
+    standing open on 0.149.0 the session's rollout held at one timestamp across
+    25 seconds and advanced only once the gate was answered, so the newest record
+    in the session's own rollout separates the two states.
+    """
+
+    SID = "019fd197-19e4-77b2-913d-d16c3190bb52"
+
+    def _collect(self, *, rollout_at: float, requested_at: float, now: float) -> dict[str, Any]:
+        with tempfile.TemporaryDirectory() as tmp:
+            seeded = fixtures.build_codex(Path(tmp), rollout_at, self.SID, "seeded")
+            with support.store_patch(**seeded):
+                app = support.build_app()
+                app.clock = lambda: now
+                app.overlays = _StubOverlays(
+                    events.Overlay(
+                        harness="codex",
+                        sid=self.SID,
+                        arrival_seq=1,
+                        kind=events.OVERLAY_NEEDS_INPUT,
+                        at=requested_at,
+                    )
+                )
+                rows = app.collect(show_all=True)["sessions"]
+        return next(r for r in rows if r["harness"] == "codex")
+
+    def test_an_approved_gate_stops_counting_once_the_session_moves_on(self) -> None:
+        # The user approved 16 minutes ago and the turn has been generating since.
+        now = 1_700_000_000.0
+        row = self._collect(rollout_at=now - 30, requested_at=now - 960, now=now)
+        self.assertNotEqual("needs_input", row["state"])
+        self.assertIsNone(row.get("blocked_since"))
+
+    def test_a_gate_still_open_is_still_your_call(self) -> None:
+        # The true positive the fix must not clear: the rollout stopped at the
+        # request and has not moved since, which is what the arm measured.
+        now = 1_700_000_000.0
+        row = self._collect(rollout_at=now - 960, requested_at=now - 950, now=now)
+        self.assertEqual("needs_input", row["state"])
+        self.assertEqual(now - 950, row["blocked_since"])
+
+
 class _StubOverlays:
     """The overlay source shape `Application` consumes, with one overlay in it."""
 
@@ -404,6 +456,10 @@ class _StubOverlays:
         if (harness, sid) == (self.overlay.harness, self.overlay.sid):
             return [self.overlay]
         return []
+
+    def finished_at(self, harness: str, sid: str) -> float:
+        del harness, sid  # this stub remembers no stop
+        return 0.0
 
     def note_rows(self, keys: set[tuple[str, str]]) -> None:
         del keys  # the real coordinator ages unmatched overlays here; a stub has none
@@ -550,6 +606,51 @@ class ReduceTest(unittest.TestCase):
         )
         self.assertEqual("idle", patch["state"])
         self.assertFalse(patch["active"])
+
+    def test_a_stop_publishes_when_the_turn_ended(self) -> None:
+        # DRC-4035: "finished, and nobody read it" needs the stop's own stamp on
+        # the row, not just the Idle state, because Idle alone cannot say whether
+        # the turn ended or the session is still waiting on a reply nobody gave.
+        ledger = [self.overlay(events.OVERLAY_IDLE, seq=1, at=NOW - 600)]
+        patch = events.reduce_overlays(
+            ledger, now=NOW, session_activity=NOW - 601, activity_grace_sec=10.0
+        )
+        self.assertEqual(NOW - 600, patch["finished_at"])
+
+    def test_a_remembered_stop_survives_the_ledger_being_retired(self) -> None:
+        # The `claude -p` case: Stop then SessionEnd arrive back to back, the
+        # ledger is popped, and the row that finished has no overlay left. The
+        # mark is reduced from the coordinator's own memory instead, and it
+        # patches nothing else — the collector still owns the state.
+        patch = events.reduce_overlays(
+            [], now=NOW, session_activity=NOW - 601, activity_grace_sec=10.0, finished_at=NOW - 600
+        )
+        self.assertEqual({"finished_at": NOW - 600}, patch)
+
+    def test_activity_after_a_remembered_stop_clears_the_mark(self) -> None:
+        # DRC-4101 by another door. The mark outlives the ledger by design, so
+        # nothing but this guard stops a session resumed by a background task
+        # from reading "finished" while it generates.
+        patch = events.reduce_overlays(
+            [], now=NOW, session_activity=NOW - 5, activity_grace_sec=10.0, finished_at=NOW - 600
+        )
+        self.assertEqual({}, patch, "a session that worked again is not finished")
+
+    def test_a_live_working_overlay_outranks_a_remembered_stop(self) -> None:
+        # The other way a stop is superseded: a prompt arrived, so the row is
+        # working and the mark from the previous turn must go with it.
+        ledger = [self.overlay(events.OVERLAY_WORKING, seq=2, at=NOW - 5)]
+        patch = events.reduce_overlays(ledger, now=NOW, finished_at=NOW - 600)
+        self.assertEqual("working", patch["state"])
+        self.assertIsNone(patch["finished_at"])
+
+    def test_a_gate_outranks_a_remembered_stop(self) -> None:
+        # A session waiting on a person is the other kind of idle, and it is the
+        # one this mark exists to be told apart from.
+        ledger = [self.overlay(events.OVERLAY_NEEDS_INPUT, seq=2, at=NOW - 5)]
+        patch = events.reduce_overlays(ledger, now=NOW, finished_at=NOW - 600)
+        self.assertEqual("needs_input", patch["state"])
+        self.assertIsNone(patch["finished_at"])
 
     def test_activity_inside_the_grace_does_not_retire_the_stop(self) -> None:
         # The final flush of the transcript can land just after the Stop hook it
@@ -782,9 +883,9 @@ class ApplyPatchTest(unittest.TestCase):
         self.assertEqual("real title", session["title"])
         self.assertEqual(1234, session["tokens"])
 
-    def test_the_patchable_set_is_exactly_the_documented_five(self) -> None:
+    def test_the_patchable_set_is_exactly_the_documented_six(self) -> None:
         self.assertEqual(
-            {"state", "state_detail", "active", "blocked_since", "acquisition"},
+            {"state", "state_detail", "active", "blocked_since", "acquisition", "finished_at"},
             set(events.PATCHABLE),
         )
 

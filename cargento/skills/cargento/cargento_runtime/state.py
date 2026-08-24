@@ -7,6 +7,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from cargento_runtime import asks as runtime_asks
 from cargento_runtime import snapshot as runtime_snapshot
 from cargento_runtime import stream as runtime_stream
 
@@ -34,6 +35,11 @@ class RuntimeState:
     # Connected SSE clients, owned here for the same reason the snapshot is:
     # they belong to the runtime, not to whichever object serves a request.
     streams: runtime_stream.StreamRegistry = field(init=False)
+    # Outstanding questions a session asked, owned here for the reason the
+    # streams are: they belong to the runtime, not to whichever object serves a
+    # request. No `ask_lock` beside this one -- the registry owns its own, and a
+    # second lock at this level would only invite a caller to hold the wrong one.
+    asks: runtime_asks.AskRegistry = field(init=False)
     hook_lock: LockType = field(default_factory=threading.Lock)
     cache_lock: LockType = field(default_factory=threading.Lock)
     scanner_lock: LockType = field(default_factory=threading.Lock)
@@ -89,6 +95,17 @@ class RuntimeState:
     # lock is its own for the reason `usage_fetch_lock` is: this is written
     # inside a collection and read by a request handler, and neither should wait
     # on the other's cache work.
+    # The sessions the reader marked handled, as this process last read them off
+    # disk. `None` means no collection has run yet, which is not the same claim
+    # as "nothing is cleared": the notification path can fire first, and an empty
+    # tuple there would raise a popup for a session already handled.
+    #
+    # Its own lock, for the reason `dispute_lock` has one: it is written by a
+    # request handler and read inside a collection, and neither should wait on the
+    # other's cache work. The file, not this tuple, is the record — a second
+    # dashboard's write is picked up by the next `dismissals.refresh`.
+    dismissal_lock: LockType = field(default_factory=threading.Lock)
+    dismissals: tuple[dict[str, Any], ...] | None = None
     dispute_lock: LockType = field(default_factory=threading.Lock)
     dispute_total: int = 0
     disputes: deque[dict[str, Any]] = field(default_factory=deque)
@@ -106,6 +123,7 @@ class RuntimeState:
         # dispute ring needs its bound from `config`.
         self.snapshot = runtime_snapshot.Snapshot(server_started=self.server_started)
         self.streams = runtime_stream.StreamRegistry()
+        self.asks = runtime_asks.AskRegistry()
         self.disputes = deque(self.disputes, maxlen=self.config.dispute_log_max)
 
 
