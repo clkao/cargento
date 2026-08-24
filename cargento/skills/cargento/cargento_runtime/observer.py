@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import TYPE_CHECKING, Any, Protocol
 
 from . import io as runtime_io
@@ -32,6 +33,15 @@ if TYPE_CHECKING:
 
 NO_GOAL = "no goal derived"
 NO_GOAL_REASON = "generic-opener-only-no-work"
+
+# How many recent messages a model caller is shown. Twenty is one working
+# stretch on the sessions this was read against, not a tuned figure.
+_MODEL_CONTEXT_MESSAGES = 20
+
+# A session id in a sidecar filename. Deliberately narrower than anything a
+# harness actually emits: the value reaches `os.path.join`, and `safe_text`
+# strips control characters without touching a separator or a `..`.
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 # Generic skill-load directives that carry no goal by themselves. Measured
 # against real Pi session transcripts: the opening line is a harness-injected
@@ -59,13 +69,20 @@ _BLOCK_INDICATORS = (
 class ModelCaller(Protocol):
     """A cheap model invocation that derives a goal line, or None on failure.
 
-    The callable receives the transcript head text and an entity-context
-    string and returns a bounded goal line, or None if it cannot produce
-    one. None is the only failure signal: the analyzer degrades to the
-    deterministic fallback rather than raising.
+    The callable receives the most recent turns of the transcript — the *tail*,
+    which is what a goal line is derived from; the head is where the opening
+    directive lives and both are already folded into the deterministic goal —
+    plus the entity's current stage, and returns a goal line, or None if it
+    cannot produce one. None is the only failure signal: the analyzer degrades
+    to the deterministic fallback rather than raising.
+
+    Nothing in the shipped tree passes one. It is the seam for the derivation
+    the design calls for and this module does not yet make, kept typed so the
+    bound above (the sentinel short-circuit, the cap on what goes out and on
+    what comes back) is written down before there is a caller to forget it.
     """
 
-    def __call__(self, transcript_head: str, entity_context: str) -> str | None: ...
+    def __call__(self, recent_text: str, entity_stage: str) -> str | None: ...
 
 
 def _is_generic_opener(text: str) -> bool:
@@ -171,21 +188,40 @@ def _derive_goal_deterministic(
 def _derive_stage(
     config: RuntimeConfig,
     state: RuntimeState,
+    workflow_dir: str | None,
     entity_dir: str | None,
+    now: float,
+    window_sec: float,
 ) -> str:
-    """The current stage from the entity dir's newest file, or empty.
+    """The newest in-flight entity's stage, or empty.
 
-    Reuses the read-only frontmatter reader the Spacedock cartography already
-    proved safe. No file under the entity dir is written; only the
-    ``status`` scalar leaves this function.
+    Through ``read_entities``, not ``entity_files(...)[0]``'s raw ``status``
+    scalar, and the difference is the project-read contract rather than tidiness.
+    Two of that function's guards are load-bearing on this path:
+
+    - the freshness window, without which a workflow retired months ago
+      publishes a stage for a session that merely discovered it;
+    - ``status in declared``, which SECURITY.md names as the per-file
+      discriminator standing in for :func:`spacedock.read_workflow`'s
+      containment check. A ``split-root`` workflow's state directory
+      legitimately sits outside its definition directory, so nothing else
+      bounds what a file under it may say. Reading the scalar directly
+      published an arbitrary line of an unverified file; a declared stage is a
+      name the README already vouched for, and one ``SD_STAGE_RE`` has matched.
+
+    ``--no-spacedock`` withdraws the project reads for this route the same way
+    it does for a strip: the transcript half of the observer is a transcript
+    read and survives, the two frontmatter reads do not.
     """
-    if not entity_dir:
+    if not config.spacedock_enabled or not workflow_dir or not entity_dir:
         return ""
-    files = spacedock.entity_files(config, entity_dir)
-    if not files:
+    workflow = spacedock.read_workflow(config, state, workflow_dir)
+    if workflow is None:
         return ""
-    _slug, path, info = files[0]
-    return spacedock.entity_stage(config, state, path, info)
+    entities = spacedock.read_entities(
+        config, state, entity_dir, workflow["stages"], now, window_sec
+    )
+    return entities[0][1] if entities else ""
 
 
 def _derive_block(
@@ -223,7 +259,8 @@ def analyze(
     state: RuntimeState,
     transcript_path: str,
     *,
-    entity_dir: str | None = None,
+    now: float,
+    window_sec: float,
     model: ModelCaller | Callable[[str, str], str | None] | None = None,
 ) -> dict[str, Any]:
     """Derive goal + stage + block from a session transcript, read-only.
@@ -241,47 +278,76 @@ def analyze(
     """
     messages = _extract_messages(config, transcript_path)
     goal, reason = _derive_goal_deterministic(config, messages)
+    workflow_dir, entity_dir = resolve_workflow(config, state, transcript_path)
+    # Once, not once per consumer. The two frontmatter reads are cached on
+    # (path, mtime, size), but resolving twice also scanned the transcript head
+    # twice, and the model arm below reads the same value the result publishes.
+    stage = _derive_stage(config, state, workflow_dir, entity_dir, now, window_sec)
 
     # The short-circuit bypasses the model entirely: a no-goal session must
     # never produce a fabricated goal, regardless of what the model says.
     if goal != NO_GOAL and model is not None:
-        head_text = " ".join(msg["text"] for msg in messages[-20:])
-        entity_context = _derive_stage(config, state, entity_dir)
+        recent = " ".join(msg["text"] for msg in messages[-_MODEL_CONTEXT_MESSAGES:])
+        # Bounded like every other string that crosses this boundary. The rest
+        # of the module caps what it *publishes*; this caps what it hands out,
+        # because a transcript tail is the one unbounded value here and the
+        # callable is not this module's code.
+        recent = records.safe_text(recent, config.observer_model_context_chars)
         try:
-            enhanced = model(head_text, entity_context)
+            enhanced = model(recent, stage)
         except Exception:  # noqa: BLE001 — a model failure degrades, never crashes
             enhanced = None
         if isinstance(enhanced, str) and enhanced.strip():
             goal = records.safe_text(enhanced.strip(), config.observer_goal_cap_chars)
 
-    stage = _derive_stage(config, state, entity_dir)
     block = _derive_block(config, messages)
     return {"goal": goal, "stage": stage, "block": block, "reason": reason}
 
 
-def sidecar_path(config: RuntimeConfig, harness: str, sid: str) -> str:
-    """The filesystem path to the observer sidecar for one session.
+def sidecar_path(config: RuntimeConfig, harness: str, sid: str) -> str | None:
+    r"""The sidecar path for one session, or None if either name is not a name.
 
     The sidecar lives under the observer's own store (``config.state_dir``),
-    never under the observed session's repo or state tree.
+    never under the observed session's repo or state tree — and the check that
+    keeps it there is the grammar, not the join. ``safe_text`` strips control
+    characters and truncates; it passes ``/``, ``\`` and ``..`` straight
+    through, so a session id carrying separators walked out of the store and
+    truncated whatever it landed on. Both components must be plain names.
     """
-    safe_harness = records.safe_text(harness, 64)
-    safe_sid = records.safe_text(sid, 128)
-    return os.path.join(str(config.state_dir), "observer", f"{safe_harness}_{safe_sid}.json")
+    if not _SAFE_ID_RE.match(harness) or not _SAFE_ID_RE.match(sid):
+        return None
+    root = os.path.join(str(config.state_dir), "observer")
+    path = os.path.join(root, f"{harness}_{sid}.json")
+    # Belt as well as braces: the grammar above is the guard, and this asserts
+    # the result of the join rather than trusting it, the way
+    # `spacedock.read_workflow` asserts its README's containment.
+    if os.path.dirname(os.path.normpath(path)) != os.path.normpath(root):
+        return None
+    return path
 
 
-def write_sidecar(config: RuntimeConfig, harness: str, sid: str, result: dict[str, Any]) -> str:
-    """Write the observer sidecar to the observer's own store; return its path."""
+def write_sidecar(
+    config: RuntimeConfig, harness: str, sid: str, result: dict[str, Any]
+) -> str | None:
+    """Write the observer sidecar to the observer's own store; return its path.
+
+    None when the names are not writable ones, which is a refusal rather than a
+    fallback: there is no second location a sidecar belongs in.
+    """
     path = sidecar_path(config, harness, sid)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if path is None:
+        return None
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(json.dumps(result))
     return path
 
 
 def read_sidecar(config: RuntimeConfig, harness: str, sid: str) -> dict[str, Any] | None:
-    """Read the observer sidecar, or None if absent or malformed."""
+    """Read the observer sidecar, or None if absent, unnamed or malformed."""
     path = sidecar_path(config, harness, sid)
+    if path is None:
+        return None
     try:
         with open(path, encoding="utf-8") as handle:
             value = json.loads(handle.read(config.state_read_cap_bytes))
@@ -302,41 +368,57 @@ def resolve_transcript(
     against the first-line metadata the collectors already use. Read-only;
     no file is opened for writing.
     """
-    store_key = {
-        "pi": "pi.sessions",
-        "claude": "claude.projects",
-    }.get(harness)
-    if store_key is None:
+    if not _SAFE_ID_RE.match(harness) or not _SAFE_ID_RE.match(sid):
         return None
-    for path in runtime_io.glob_stores(config, store_key, "*.jsonl"):
-        meta = transcripts.pi_meta(config, state, path)
-        if meta.get("session_id") == sid:
-            return path
-        # Claude sessions encode the id in the filename, not the first line.
-        if sid in os.path.basename(path):
-            return path
-    # One-level-nested Pi stores.
-    if store_key == "pi.sessions":
-        for path in runtime_io.glob_stores(config, store_key, "*", "*.jsonl"):
-            meta = transcripts.pi_meta(config, state, path)
-            if meta.get("session_id") == sid:
+    if harness == "claude":
+        # `projects/<encoded-cwd>/<session-id>.jsonl`: the transcripts are one
+        # directory deeper than the store root, which `collectors/claude.py`
+        # globs as ("*", "*.jsonl"). A flat glob here matched nothing, so
+        # `?harness=claude` was a 404 on every machine.
+        #
+        # Matched on the stem and not with `sid in basename`, because a
+        # substring match hands back whichever session happens to contain the
+        # characters — `sid=a` observed an arbitrary transcript. The dashboard
+        # shortens an id for display, so a prefix is accepted, and only when it
+        # is unambiguous: two matches is no answer, not the first one.
+        found = [
+            path
+            for path in runtime_io.glob_stores(config, "claude.projects", "*", "*.jsonl")
+            if os.path.basename(path).removesuffix(".jsonl").startswith(sid)
+        ]
+        return found[0] if len(found) == 1 else None
+    if harness != "pi":
+        return None
+    # Pi's default store is nested and a custom one is flat, so both shapes are
+    # globbed, the same pair `collectors/pi.py` reads.
+    for pattern in (("*.jsonl",), ("*", "*.jsonl")):
+        for path in runtime_io.glob_stores(config, "pi.sessions", *pattern):
+            if transcripts.pi_meta(config, state, path).get("session_id") == sid:
                 return path
     return None
 
 
-def resolve_entity_dir(
+def resolve_workflow(
     config: RuntimeConfig,
     state: RuntimeState,
     transcript_path: str,
-) -> str | None:
-    """The workflow entity-state directory from the transcript's boot records.
+) -> tuple[str | None, str | None]:
+    """``(workflow_dir, entity_dir)`` from the transcript's boot records.
 
     Reuses the read-only boot scan the Spacedock cartography already proved
-    safe. Returns None when the session runs no workflow.
+    safe. Both, not just the entity directory: the stage reader needs the
+    workflow README's declared stages to discriminate what it reads out of the
+    state directory, and the entity directory alone cannot produce them.
+
+    ``(None, None)`` when the session runs no workflow, and also under
+    ``--no-spacedock``, so the switch turns off the boot scan too rather than
+    only the frontmatter reads behind it.
     """
+    if not config.spacedock_enabled:
+        return None, None
     boot = spacedock.transcript_boot(config, state, transcript_path)
     for workflow_dir in spacedock.workflow_dirs(config, boot):
         entity_dir = spacedock.boot_entity_dir(boot, workflow_dir)
         if entity_dir:
-            return entity_dir
-    return None
+            return workflow_dir, entity_dir
+    return None, None

@@ -89,16 +89,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "b3427d36b59995b468c6cb8d31bef21b20167d41dd302b56c4781ff9d37b038a",
             ),
             "calm.js": (
-                51_608,
-                "e12da1641dfa3328e0b5a9037163d380ba7f419b60d1709ef64ce18602cbe463",
+                52_261,
+                "60ba515b6b61eebfe422a6356407397264431e731b9b4a927fb6b978f33abbd5",
             ),
             "notify.js": (
                 7_797,
                 "d340a6d8870d2cb210c6e961afbfb6015e4ca915dce41e0193f7aed95c193154",
             ),
             "observer.js": (
-                1_601,
-                "4f2705491cb0e3338f30f525e593cf3ad5123a07bdca2242278d2ffbb6b8d400",
+                2_874,
+                "aeef4f2ad3d702d434bfdafbc5123dec0f216a858b197b6ae00bc61fcf1873d9",
             ),
             "main.js": (
                 10_426,
@@ -117,16 +117,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(52_474, len(styles))
+        self.assertEqual(53_817, len(styles))
         self.assertEqual(
-            "9954221e5579b1fe63758160b3c70ce86aece4b643087332ad5aa92158e12dc9",
+            "f618cdd90852111991096c755bd869f3f9ee16cb1af2a21214db370faeeb3a2a",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(284_369, len(assembled))
+        self.assertEqual(287_638, len(assembled))
         self.assertEqual(
-            "d86fec06717bbad273ed30a749b85bbdfdcb26fec3bc21f341db4edf6008cd46",
+            "60acf9f6b0ecb663549c84a1857fef5da46427bd84e8975ae06db6e0f9354042",
             hashlib.sha256(assembled).hexdigest(),
         )
 

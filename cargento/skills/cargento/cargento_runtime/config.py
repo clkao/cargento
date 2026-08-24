@@ -244,12 +244,15 @@ class RuntimeConfig:
     # The observer analyzer: a read-only bystander that derives goal + stage +
     # block from a target session's transcript head and its workflow entity dir.
     # The head bound is what it reads from the transcript's opening records; the
-    # goal and block caps bound the two derived strings it publishes. The model
-    # is parameterized as a callable rather than a config field, so the model id
-    # (haiku by default; luna if it lands) swaps without changing the analyzer.
+    # goal and block caps bound the two derived strings it publishes, and the
+    # context cap bounds the one string it hands *out*, to a model callable
+    # nothing in the shipped tree supplies. That callable is a parameter rather
+    # than a config field precisely so no model id lives here: naming one would
+    # imply the analyzer calls it, and it does not.
     observer_head_bytes: int
     observer_goal_cap_chars: int
     observer_block_cap_chars: int
+    observer_model_context_chars: int
 
 
 def resolve_store_roots(
@@ -497,6 +500,7 @@ def build_runtime_config(
         observer_head_bytes=65_536,
         observer_goal_cap_chars=200,
         observer_block_cap_chars=200,
+        observer_model_context_chars=8_192,
     )
 
 

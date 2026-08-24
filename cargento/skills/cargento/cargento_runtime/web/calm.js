@@ -453,6 +453,9 @@ function calmAction(act, arg){
     return;
   }
   if(act === "copy"){ calmCopyId(arg); return; }
+  /* Like the three below it: the request paints when it settles, so this
+     returns rather than falling through to the synchronous render. */
+  if(act === "observe"){ observeAction(arg); return; }
   /* These three answer over the network, so they return rather than falling
      through to the synchronous render below — each paints when its own request
      settles. */
@@ -697,13 +700,22 @@ function calmExpansion(r, d){
      eleventh for a control that removes a session would sit one pixel from the
      caret that merely opens it. Calm's keyboard covers the one-keystroke path:
      `x` on the cursor row. */
+  /* `observe` is only offered where the route can answer. It resolves a
+     transcript for Claude and Pi and nothing else, and a control that 404s is
+     worse than an absent one. */
+  const observable = r.harness === "pi" || r.harness === "claude";
+  const observeBtn = observable
+    ? `<button type="button" class="cm-act" data-calm="observe"` +
+      ` data-arg="${esc(r.key)}">observe</button>`
+    : "";
   const acts = `<div class="cm-acts"><button type="button" class="cm-act" data-calm="copy"` +
     ` data-arg="${esc(r.key)}">${copied ? esc(calmCopyNote.text) : "copy id"}</button>` +
+    observeBtn +
     handledButton(d, r.dismiss, "cm-act") +
     `<button type="button" class="cm-act" data-calm="open"` +
     ` data-arg="${esc(r.key)}">collapse</button></div>`;
   return `<div class="cm-exp"><div class="cm-exp-main">${why}${loop}${quote}${tasks}` +
-    sdBlock({spacedock: r.spacedock}) + meta + `</div>` +
+    sdBlock({spacedock: r.spacedock}) + observerBlock(r.key) + meta + `</div>` +
     `<div class="cm-exp-side">${turn}${subs}${acts}</div></div>`;
 }
 

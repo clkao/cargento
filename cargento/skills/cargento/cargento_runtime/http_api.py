@@ -418,9 +418,21 @@ class _RequestHandler(BaseHTTPRequestHandler):
         if transcript_path is None:
             self.send_error(404, "session transcript not found")
             return
-        entity_dir = runtime_observer.resolve_entity_dir(config, state, transcript_path)
-        result = runtime_observer.analyze(config, state, transcript_path, entity_dir=entity_dir)
-        runtime_observer.write_sidecar(config, harness, sid, result)
+        # The same clock and window the collection runs on, so the observer's
+        # freshness gate and a strip's agree about what is in flight.
+        now = application.clock()
+        result = runtime_observer.analyze(
+            config,
+            state,
+            transcript_path,
+            now=now,
+            window_sec=config.window_hours * 3600,
+        )
+        if runtime_observer.write_sidecar(config, harness, sid, result) is None:
+            # Refused, not fallen back: the names reached the transcript resolver
+            # so they are shaped ids, and there is no second place a sidecar goes.
+            self.send_error(400, "harness and sid must be plain names")
+            return
         self._send(json.dumps(result).encode(), "application/json")
 
     def _overlays(self) -> None:
