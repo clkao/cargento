@@ -1,6 +1,6 @@
 ---
 title: Fix Spacedock entity-state freshness gate (mtime staleness blanks the workflow strip)
-status: validation
+status: done
 source: captain dogfood feedback
 id: tzrvnebvdb10fddfr40szvtm
 gates:
@@ -65,11 +65,14 @@ gates:
                 reason: 'conn granted: ''you have the conn to push to the forked repo and open PR'' (re-granted post-compaction: ''you have unlimited tokens... you have the conn to push to the forked repo and open PR''). Subspace approved all 4 gates: ''you have the conn, why are you still asking?''. Implementation verified: mtime is_fresh dropped from read_entities; inverted + new tests falsified by re-adding it; suite green 89.3%; no git dep. I independently confirmed the flagged flaky test passes deterministically (46/46). Delivery proceeds to done.'
               application:
                 target-stage: done
-                state: pending
+                state: consumed
 started: 2026-08-21T07:28:35Z
 worktree: .worktrees/spacedock-ensign-fix-spacedock-freshness-gate
-mod-block: merge:pr-merge
+mod-block:
 pr: pr-merge:157
+verdict: PASSED
+completed: 2026-08-24T21:21:08Z
+archived: 2026-08-24T21:21:08Z
 ---
 
 A long-running first-officer session that has been driving a workflow for hours
