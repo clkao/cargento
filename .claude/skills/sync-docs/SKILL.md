@@ -41,6 +41,7 @@ diff-and-reconcile pass, not a rewrite.
 | File | Owns | Rule |
 |------|------|------|
 | `README.md` | The front door: what Cargento is, prerequisites, per-harness install, the skill inventory table, a short "how it works", links out. | Keep short. No command suites and no reference tables — link to the owner. **Validator-asserted:** the literals `/cargento:cargento` and `codex plugin add cargento@cargento-marketplace` must appear verbatim; rewording either fails the required `validate` check. |
+| `HOW_TO_USE.md` | What the reader configures by hand, one task per section: registering the stdio MCP server per harness, the hooks and status line the plugin cannot install, and resolving the installed plugin path every one of those snippets needs. | Task-oriented, and **every command and snippet must have been run before it is written down**: nothing in CI checks a command block, so an unrun one ships wrong. It may name repository paths and real config paths, which is exactly why it exists, since the shipped skill body is forbidden both. It owns no contract and no install steps. **Frozen path** once it is in `ROOT_DOCS`, and any heading `COMPATIBILITY.md` cites is frozen with it. |
 | `AGENTS.md` | **Canonical** repository contract and the source of truth for process: architecture tree, doc map, commit conventions, PR workflow, the pre-PR command list, the quality gate, versioning/releases, portability rules. | Every process command list is defined here once; other docs link. `CLAUDE.md` imports it, so edits propagate. Never rename or move it — Codex and Claude both load it by name. |
 | `CLAUDE.md` | Claude-Code-only addenda. | Line 1 must stay the bare `@AGENTS.md` import. Nothing that would also be true in Codex — that belongs in `AGENTS.md`. |
 | `CONTRIBUTING.md` | The human contributor journey: clone → dev setup → run locally → the quality gate → tests → what the validator enforces → `server.py` design constraints → commits → PRs → adding a harness → releases. | Task-oriented. Reference the pre-PR suite in `AGENTS.md` rather than re-listing it; duplicated command lists are how they drift. |
@@ -85,7 +86,7 @@ After any edit under `cargento/skills/`, run `python3 scripts/validate_plugins.p
 
 The prose docs are written for people, and they were humanized in one deliberate pass. An agent
 topping them up in model-default voice, one sync at a time, is how that gets undone. Step 7 of the
-Procedure exists to stop it, and check (e) in step 9 is the mechanical backstop, since nothing in CI
+Procedure exists to stop it, and check (e) in step 10 is the mechanical backstop, since nothing in CI
 enforces tone.
 
 **This section is the contract, not the `humanizer` skill.** That skill automates the pass and is
@@ -96,7 +97,7 @@ the rule survives the tool going missing.
 In scope, and the exact set check (e) greps:
 
 ```
-README.md  CONTRIBUTING.md  COMPATIBILITY.md  SECURITY.md  docs/design-*.md  docs/plans/*.md
+README.md  HOW_TO_USE.md  CONTRIBUTING.md  COMPATIBILITY.md  SECURITY.md  docs/design-*.md  docs/plans/*.md
 ```
 
 Out of scope, deliberately: `AGENTS.md` and `CLAUDE.md` (agent contracts loaded verbatim as
@@ -312,7 +313,40 @@ minutes, a Python version. Stale counts are this repository's most common drift.
 6. **Update the pointers.** Keep the `AGENTS.md` architecture tree and doc map, and `README.md`'s
    links, current. `CLAUDE.md` imports `AGENTS.md`, so those edits propagate — but check that no
    Claude-only bullet has become universally true (move it up) or obsolete (delete it).
-7. **Bring the tone back to the standard.** The prose docs are written for humans, and the fastest
+7. **Reconcile the tracker, and shrink it.** If the work is tracked in Linear, the same
+   ownership rule applies there: one surface owns a subject and the others link to it. The failure
+   mode is the opposite of doc drift — nothing goes stale, the overview just accretes, because every
+   burndown leaves a paragraph behind and no single paragraph looks like too much.
+
+   | Linear surface | Owns | Never |
+   |---|---|---|
+   | **Project overview** | Derived counts, in one "As of" block. The sequencing rule. Decision **status**. The score and label legend. | Per-item status, estimates, staleness, what shipped, what it taught. |
+   | **Milestone description** | The group's narrative: what shipped, what it changed for the rest of the group, what the group waits on. | Anything about one item that its own issue could carry. |
+   | **Issue body** | That item's scope, score, and its dated staleness notes. | Another item's status. |
+   | **Issue comment** | Validation findings, build post-mortems, corrections to the body, cross-issue consequences. | Anything the body should have said instead. |
+   | **Labels** | Release row, journey stage, origin. They *are* the record. | Restating a label's content in prose. |
+
+   Four tests, applied to every line of the overview:
+
+   - **Would this change what someone does next?** If not, cut it. A closed defect with no bearing
+     on remaining work belongs to its own ticket and nowhere else.
+   - **Is it about one item?** Issue. **About a group?** Milestone. **A number?** The "As of" block,
+     exactly once.
+   - **Is it a lesson rather than a state?** Comment it on the issue that taught it. An overview is
+     read to decide what to do next, not to learn what went wrong last time.
+   - **Did the overview grow after a burndown?** Then something is in the wrong place. Closing work
+     should make it shorter.
+
+   Refresh the counts whenever an issue is closed, cancelled, re-scoped or re-gated, and take the
+   figures from a fresh query rather than by adjusting the previous block's numbers. Check the
+   blocking relations while there: a closed issue still holding a `blocks` edge reads as a live gate
+   to everyone.
+
+   Corrections are the one thing to keep rather than tidy. A wrong mechanism in a closed issue still
+   misleads whoever reads it next, so record the correction as a comment instead of editing the
+   mistake away.
+
+8. **Bring the tone back to the standard.** The prose docs are written for humans, and the fastest
    way for that to rot is an agent topping them up in model-default voice one sync at a time. Apply
    the Voice and tone section to every human-facing doc this pass edited, and re-read the result: it
    must keep every fact and lose only the tells. Do not touch `AGENTS.md`, `CLAUDE.md`, the shipped
@@ -322,7 +356,7 @@ minutes, a Python version. Stale counts are this repository's most common drift.
    one doc at a time. It is a third-party skill that this repository does not vendor, so treat it as
    an accelerant and never as a prerequisite. Voice and tone is the contract; a contributor with no
    humanizer installed applies it by hand and is equally done.
-8. **Stamp the sync.** Update the marker at the bottom of `COMPATIBILITY.md`:
+9. **Stamp the sync.** Update the marker at the bottom of `COMPATIBILITY.md`:
    `<!-- docs-synced-through: <short-sha> (<YYYY-MM-DD>) -->`. Stamp the `origin/main` tip this
    branch is based on, **not** your branch `HEAD`:
    ```bash
@@ -332,7 +366,7 @@ minutes, a Python version. Stale counts are this repository's most common drift.
    then cannot resolve the marker it is supposed to read. A merge-base sha is already on `main` and
    stays there. (This was learned twice the hard way: markers pointing at `a4eb54c` and `ef480af`
    were both orphaned by the squash that shipped them.)
-9. **Verify.** All five checks, every run. Use `git status`/`git diff HEAD`, **not** plain
+10. **Verify.** All five checks, every run. Use `git status`/`git diff HEAD`, **not** plain
    `git diff` — a bare `git diff` shows neither your new untracked docs nor a staged deletion, so it
    reports "clean" for exactly the changes this pass makes:
    ```bash
@@ -358,13 +392,16 @@ minutes, a Python version. Stale counts are this repository's most common drift.
    #    matches nothing stays literal and makes grep exit 2 on a "No such file" error.
    #    The explicit if/else is here because a bare `grep && echo` exits 1 when the docs are
    #    CLEAN, which reads as failure to anyone (or anything) checking the status.
-   #    Inline code spans are stripped first. A backticked span is a quoted literal, not prose:
+   #    NOTE: the carve-out is for INLINE spans only, not fenced blocks. A dash inside a
+#    ``` fence turns this red, and HOW_TO_USE.md is made of config snippets, so it is
+#    the likeliest file here to trip that way. Snippets need ASCII quotes and hyphens.
+#    Inline code spans are stripped first. A backticked span is a quoted literal, not prose:
    #    the dashed model slot renders as a real em dash, and a doc that documents that string
    #    has to contain it. Matching inside code spans made the check permanently red, which
    #    ends with someone mangling a documented literal to quiet it.
    #    The per-file loop keeps the filename in the output; piping every doc through one sed
    #    would report a line number with nothing to open.
-   if for f in $(ls README.md CONTRIBUTING.md COMPATIBILITY.md SECURITY.md \
+   if for f in $(ls README.md HOW_TO_USE.md CONTRIBUTING.md COMPATIBILITY.md SECURITY.md \
         docs/design-*.md docs/plans/*.md 2>/dev/null); do
         sed 's/`[^`]*`//g' "$f" | grep -n '—\|–\|[“”‘’]' | sed "s|^|$f:|"
       done | grep .; then
@@ -383,7 +420,7 @@ minutes, a Python version. Stale counts are this repository's most common drift.
      verification onto the reviewer.
 
    Never open or update a PR on the strength of a to e alone.
-10. **Stage, commit in the right place, then report.** Never commit to `main`. Stage explicitly —
+11. **Stage, commit in the right place, then report.** Never commit to `main`. Stage explicitly —
     new docs are untracked, so `git commit -a` would silently skip them:
     ```bash
     git add -A -- '*.md'          # plus any comment-only repoints from step 5, named individually
@@ -393,7 +430,7 @@ minutes, a Python version. Stale counts are this repository's most common drift.
       commit onto **that same branch** with `git commit -s` — do not create a new branch or a second
       PR; the doc updates ride in the PR you are about to open.
     - **Standalone/periodic run** (started from `main`, no feature work in flight): create a
-      `docs/…` branch, commit, and open its own PR — having run the full suite per step 9.
+      `docs/…` branch, commit, and open its own PR — having run the full suite per step 10.
 
     **A standalone run is not finished when the PR opens; it is finished when the required checks are
     green.** Watch them. If one goes red, either it is your doing — fix it — or it is unrelated to a

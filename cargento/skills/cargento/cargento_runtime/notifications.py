@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from cargento_runtime import claude_data, records
+from cargento_runtime import claude_data, dismissals, records
 from cargento_runtime import io as runtime_io
 from cargento_runtime import state as runtime_state
 
@@ -115,6 +117,14 @@ def native_notifier(platform_name: str) -> str:
     return "osascript" if platform_name == "darwin" else ""
 
 
+# The AppleScript payload bound, and the reason a composed message has to be
+# assembled against it rather than handed over long: `records.safe_text` keeps
+# the HEAD, so a message trimmed here loses its tail silently. Named rather than
+# inlined below because `ask_popup_detail` composes against this same figure, and
+# two copies of it would drift the day one moved.
+POPUP_MESSAGE_CAP = 180
+
+
 def notify_mac(
     config: RuntimeConfig,
     title: Any,
@@ -128,7 +138,7 @@ def notify_mac(
     def esc(s: str) -> str:
         return str(s).replace("\\", "\\\\").replace('"', '\\"')
 
-    safe_message = records.safe_text(message, 180)
+    safe_message = records.safe_text(message, POPUP_MESSAGE_CAP)
     safe_title = records.safe_text(title, 60)
     script = (
         f'display notification "{esc(safe_message)}"'
@@ -208,6 +218,27 @@ def hook_is_actionable_prompt(hook: Mapping[str, Any] | None) -> bool:
 NOTIFY_HARNESS_LABEL = "Claude"
 
 
+# One fixed cooldown key for the whole ask lane, rather than one per ask or one
+# per asking session. `register` stores an id exactly once and nothing ever
+# re-registers it, so there is no repeat to suppress; and `bounded_put` evicts by
+# INSERTION order without reordering on re-assignment, so an unbounded id
+# namespace would eventually evict the gate lane's `"_global"` and silently reset
+# the machine-wide floor.
+ASK_POPUP_KEY = "_ask"
+
+# The subject when the registry could not resolve the claimed harness, which is
+# the COMMON case rather than an edge: the shipped stdio server reports the
+# literal `unknown` for every client but Claude Code. The browser layer hardcodes
+# this same sentence, and `test_both_layers_render_the_same_ask_sentence` is what
+# holds the two copies together.
+ASK_HARNESS_FALLBACK = "An agent"
+
+# What separates the question from the project in the popup body. The question
+# comes first: `safe_text` keeps the head, so project-first spends the budget on
+# a path and can drop the question entirely.
+ASK_DETAIL_SEP = " \u00b7 "
+
+
 def waiting_title(harness_label: str) -> str:
     """The popup title for a harness that needs the human.
 
@@ -220,14 +251,62 @@ def waiting_title(harness_label: str) -> str:
     return f"{harness_label} is waiting on you"
 
 
+def asking_title(harness_label: str) -> str:
+    """The popup title for a session that registered a question.
+
+    Its own sentence rather than `waiting_title`'s, because the two alerts are
+    answered in different places: a gate in the session's own terminal, a
+    question on the board. That is why the ask band has buttons and the gate band
+    does not, and a reader who cannot tell the two apart from the banner cannot
+    tell where to go.
+
+    An empty label yields the generic subject rather than a blank one. Only a
+    label the registry resolved reaches here — never the `harness` string as
+    sent, which is agent-authored and up to `ask_option_cap_chars` long. The
+    lookup is not verification: a registration that inherits or forges `AI_AGENT`
+    still titles the banner with that harness. What it does stop is a 120-char
+    value reaching `safe_text(title, 60)`, which keeps the head and so would
+    delete the words " is asking you".
+    """
+    return f"{harness_label or ASK_HARNESS_FALLBACK} is asking you"
+
+
+@dataclass(frozen=True)
+class PopupSubject:
+    """Which session a popup would be about, and the readings that gate it.
+
+    One argument rather than four, because they are one fact and were previously
+    drifting apart at every call site as the gate grew: the label without the key
+    cannot find a dismissal, and the key without the activity reading cannot tell
+    a standing one from a lapsed one.
+
+    No defaults, deliberately. ``label`` defaulting to Claude would let a second
+    harness's collector wire itself in and silently claim to be Claude, which is
+    the failure the harness-neutral title exists to prevent; ``activity``
+    defaulting to 0 would make forgetting it look like working code, because 0
+    reads as "this session has not moved" and keeps a dismissal in force. The
+    compiler cannot catch a wrong string, but it can catch a missing field.
+
+    ``harness`` is the registry key and ``label`` is the display name, kept apart
+    because the dismissal store keys on (harness, sid) exactly as
+    ``dedupe_sessions`` does — keying on a label would fold two harnesses together
+    the day one of them is renamed. ``activity`` is the whole-subtree reading, not
+    ``own_activity``: any movement in the tree means the work resumed.
+    """
+
+    harness: str
+    label: str
+    prefix: str
+    activity: float
+
+
 def maybe_popup(
     config: RuntimeConfig,
     state: RuntimeState,
-    prefix: str,
+    subject: PopupSubject,
     session_state: str,
     detail: str | None,
     *,
-    harness_label: str,
     expect_generation: int | None = None,
     popup_notifier: Callable[[str, str], None],
 ) -> None:
@@ -237,12 +316,14 @@ def maybe_popup(
     last-session-state map. Checking it in the caller leaves a window in which a
     SessionEnd commits first, and this would then re-create the state it just
     cleared and fire a popup for a session that has already exited.
-
-    ``harness_label`` is required rather than defaulted to Claude. A default would
-    let a second harness's collector wire itself in and silently claim to be
-    Claude, which is the failure this generalization exists to prevent, and the
-    compiler cannot catch a wrong string but it can catch a missing argument.
     """
+    prefix, harness_label = subject.prefix, subject.label
+    if dismissals.suppresses(config, state, subject.harness, prefix, subject.activity):
+        # Returned before the last-session-state write below, deliberately. This
+        # call is not evidence about the session, so recording a transition from
+        # it would let a dismissal rewrite the history the popup decision after a
+        # restore is made against.
+        return
     now = time.time()
     with state.hook_lock:
         if (
@@ -263,6 +344,114 @@ def maybe_popup(
         runtime_state.bounded_put(state.last_popup, prefix, now, limit=config.max_cache_entries)
         runtime_state.bounded_put(state.last_popup, "_global", now, limit=config.max_cache_entries)
     popup_notifier(waiting_title(harness_label), detail or f"Session {prefix} needs your input")
+
+
+@dataclass(frozen=True)
+class AskSubject:
+    """What a popup about a registered question would say.
+
+    No defaults, for `PopupSubject`'s reason: `label` is the field that can lie,
+    and `""` is a legal value meaning "the registry does not carry this key". A
+    default would make forgetting it look like working code that titles every
+    question with someone else's name.
+
+    `project` arrives already tail-trimmed by `_ask_project` and must not be
+    re-truncated — see `ask_popup_detail`.
+    """
+
+    label: str
+    question: str
+    project: str
+
+
+def ask_popup_detail(question: str, project: str) -> str:
+    """The popup body: the question, and the project only if it fits whole.
+
+    `notify_mac` bounds the message at `POPUP_MESSAGE_CAP` and `safe_text` keeps
+    the head, so composing `question · project` and letting that trim publishes a
+    path that is a PREFIX of the real one and reads as a whole directory. That is
+    the defect `_ask_project` records measuring one layer up: a 122-character cwd
+    against a 120-char cap published `.../e2e/adop` for a directory named
+    `adopt2`. The repo's own parallel-work layout puts several sibling worktree
+    paths one character apart, so a reader would walk to the wrong session.
+
+    So the path is dropped whole rather than cut, and the question is never
+    trimmed here to make room for it. A dropped path is honest and the card on
+    the board still carries it; the question is what the reader has to answer,
+    and it is the half `notify_mac` may still trim.
+    """
+    if project and len(question) + len(ASK_DETAIL_SEP) + len(project) <= POPUP_MESSAGE_CAP:
+        return f"{question}{ASK_DETAIL_SEP}{project}"
+    return question
+
+
+def maybe_ask_popup(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    subject: AskSubject,
+    *,
+    now: float,
+    popup_notifier: Callable[[str, str], None],
+) -> None:
+    """Popup when a session registers a question, once per ask-lane floor.
+
+    One gate and not six. `maybe_popup`'s others are meaningless here — there is
+    no prior state to transition from, no SessionEnd generation to re-check, and
+    no re-emitted message to suppress, because `register` stores an id exactly
+    once — and two of them would be actively harmful: its `last_session_state`
+    write is keyed by 8-char session prefix and only `clear_session` removes an
+    entry, so every ask would leak a permanent entry into that map.
+
+    **The floor keys are deliberately asymmetric with the gate lane's.** This
+    reads and writes `ASK_POPUP_KEY` only, and never the gate lane's `"_global"`.
+    Writing that key would let a question permanently destroy a gate popup rather
+    than delay it: `maybe_popup` records the transition into `last_session_state`
+    ABOVE its cooldown gates, so a transition suppressed by a shared floor is
+    consumed, and every later collection then fails its edge test for as long as
+    the session stays blocked. The transcript path is the only popup source for a
+    gate when no hook is installed, so that loss is total. The reverse direction
+    matters just as much and for the opposite reason: a gate re-emits for as long
+    as it stands, while nothing ever re-registers a question and the sweep deletes
+    it unanswered at `ask_deadline_sec`.
+
+    No dismissal is consulted. The card is published regardless — `_ask_cards`
+    reads no dismissal store — so suppressing the alert would leave the reader an
+    alert and a board that disagree. (A caller *can* send an 8-character
+    `session_id` that would match a Claude mark, so this is a decision about the
+    board agreeing with itself, not an impossibility.)
+
+    `now` is a parameter rather than a `time.time()` sampled here: it is
+    `ask.created`, minted from the application's clock, and it is the reading the
+    registry's own sweep and `ask_deadline_sec` measure this ask against.
+
+    `config.ask_enabled` is not re-checked: `_ask` answers 503 before the body is
+    read, so a check here would be dead code and a second home for the rollback
+    switch.
+    """
+    with state.hook_lock:
+        if now - state.last_popup.get(ASK_POPUP_KEY, 0) < config.global_popup_cooldown_sec:
+            return
+        runtime_state.bounded_put(
+            state.last_popup, ASK_POPUP_KEY, now, limit=config.max_cache_entries
+        )
+    # Outside the lock, as every other popup site is: `hook_lock` is a plain Lock
+    # and osascript has a 5s timeout.
+    popup_notifier(asking_title(subject.label), ask_popup_detail(subject.question, subject.project))
+
+
+def transcript_mtime(path: Any) -> float:
+    """When a hook payload's transcript was last written, or 0.
+
+    0 rather than an exception for a missing, unreadable or non-string path: the
+    only caller compares it against a dismissal watermark, where 0 reads as "no
+    evidence the session moved" and leaves the mark standing.
+    """
+    if not isinstance(path, str) or not path:
+        return 0.0
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
 
 
 def clear_session(state: RuntimeState, config: RuntimeConfig, prefix: str) -> None:
@@ -334,6 +523,23 @@ def handle_payload(
         found, user_event = claude_data.hook_user_event(config, state, transcript_path, prefix)
         if found:
             hook["user_event"] = user_event
+    # Read before the hook lock, never inside it: this takes the dismissal lock,
+    # and nesting one under the other would make an ordering load-bearing that
+    # nothing else in the file relies on. It gates the popup only — the hook is
+    # still stored below, so restoring the row brings its standing question back
+    # with it rather than a board the ingress had already emptied.
+    cleared = bool(prefix) and dismissals.suppresses(
+        config,
+        state,
+        "claude",
+        prefix,
+        # The transcript's mtime, which is the one activity reading this path has
+        # — the collector's `last_activity` folds in subagent and task mtimes, and
+        # re-deriving those here would be a transcript scan inside a hook. It is
+        # the conservative half of that figure: it can only be older, so this gate
+        # lapses no earlier than the collector's and never later.
+        transcript_mtime(transcript_path),
+    )
 
     with state.hook_lock:
         if prefix and state.hook_generation.get(prefix, 0) != generation:
@@ -356,7 +562,7 @@ def handle_payload(
         # One popup per distinct message per session within the repeat window.
         prev_msg, prev_ts = state.last_popup_message.get(popup_key, ("", 0.0))
         repeat = message == prev_msg and now - prev_ts < config.popup_repeat_suppress_sec
-        fire = popup and session_ready and global_ready and not repeat
+        fire = popup and session_ready and global_ready and not repeat and not cleared
         if fire:
             runtime_state.bounded_put(
                 state.last_popup, popup_key, now, limit=config.max_cache_entries
@@ -369,4 +575,6 @@ def handle_payload(
             )
     if fire:
         popup_notifier(waiting_title(NOTIFY_HARNESS_LABEL), message)
+    if cleared:
+        return {"ok": True, "suppressed": "cleared"}
     return {"ok": True}

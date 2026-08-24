@@ -17,6 +17,16 @@ it was dead. Three independent mechanisms can put a Claude row into Needs input:
 | Event overlay | the plugin-bundled `PermissionRequest` hook | `ExitPlanMode` observed directly (N-4). `AskUserQuestion` seen once in the wild, on the DRC-4097 incident row, which carried `acquisition: event`. Any other tool gate, and a subagent's, is **inferred** from the hook being tool-scoped and has not been seen |
 | Notification | the user-installed `Notification` hook, posted to the loopback API | MCP elicitation dialogs, worker permission and network requests |
 
+Codex has since become the second harness that can report a gate, and it has exactly one path: the
+event overlay, from its own bundled `PermissionRequest` hook. It is not a fourth row in that table
+because the table sorts Claude's three against each other, and a second harness with one source has
+nothing to be sorted against. What the two share is the overlay mechanism, so N-5's ledger and N-9's stop handling apply to a
+Codex row unchanged. N-6 is the exception and says so in its own section: its dispute ring only
+watches a *collector* wait, so it cannot see a Codex gate in either direction. What they do not share is the other two
+paths: Codex has no transcript detection and no Notification hook, which is why a Codex row can say a
+gate is open and cannot say which. See N-7 for why that limit is a security decision rather than an
+omission, and B2 in the tracker for the other eight harnesses.
+
 The first two rows overlap, which is easy to miss and was missed here. `AskUserQuestion` and
 `ExitPlanMode` are gated tools, so `PermissionRequest` fires for them like any other tool call, and
 the event overlay carries them independently of whether the transcript ever shows them. An earlier
@@ -107,6 +117,11 @@ and reading both the transcript and `/api/data` while the question was still on 
 |---|---|---|
 | Transcript (`pending_input_tool`) | 3 of 6 | `ExitPlanMode` 2/4, `AskUserQuestion` 1/2 |
 | Event overlay (`PermissionRequest`) | 4 of 5 | all `ExitPlanMode`; one miss read `working` with `acquisition: event` |
+
+Both rows are Claude's, and there is no Codex equivalent. Its one path had not shipped when these
+were taken, and a hit rate for it would need the same interactive method applied to a Codex session,
+which nobody has run. So the ranking below is a Claude ranking; a Codex row's reliability is
+unmeasured rather than assumed to match.
 
 **These are observations, not a capture, and they are not auditable.** Claude Code 2.1.226 on macOS,
 2026-08-12, driven interactively under `tmux` against a scratch workspace, reading the transcript and
@@ -287,7 +302,7 @@ happened sixty times after the ring has turned over four times.
    of consecutive records for the same session, each a fresh working overlay over the same standing
    wait.
 
-### It is one direction, and it is Claude-only
+### It is one direction, and it only ever watched the collector
 
 Two scope limits, both easy to read past.
 
@@ -297,9 +312,20 @@ hook that never fired leaves the event path empty and the collector's own notifi
 so both halves say Working, they agree, and nothing is recorded. That case is real and is the fourth
 reading in N-5.
 
-Only the Claude collector ever produces a `needs_input` row, so no other harness can raise a dispute.
-That is correct rather than a gap, since no other harness has a needs-input signal at all, but a
-reader should not take a zero on a Codex machine as a measurement.
+Only the Claude *collector* ever produces a `needs_input` row, so no other harness can raise a
+dispute, and a zero on a Codex machine is not a measurement. That sentence used to carry a second
+clause saying this was correct rather than a gap because no other harness had a needs-input signal at
+all. That is no longer true, and the correction matters more than the wording: Codex reports a gate,
+but it reports it as an **overlay**, and this ledger only records a collector wait that an overlay
+overruled. So the ledger is structurally blind to a Codex gate, in both directions at once.
+
+Worse, the direction a Codex row can fail in is the one deliberately not recorded here. "It records,
+it does not decide" below explains why the reverse case, an overlay wait wrongly standing over a
+session that is generating, is left out: on Claude it is the ordinary event-ahead-of-scan path at
+every permission prompt, and counting it would bury the case this ledger exists to find. For a
+harness whose *only* path is the overlay, that ordinary case and the fault are the same shape, so
+nothing separates them. A Codex gate that should have been retired and was not has no detector, and
+adding one means the separate detector that paragraph already says this would need.
 
 ### Only one direction counts
 
@@ -354,10 +380,11 @@ contradicts nothing.
 
 How often that erasure fired is **not measured**, and an earlier draft of this paragraph said it
 happened on every default install, which the repository cannot support. It needs an `input_requested`
-overlay, which only `PermissionRequest` mints, and `captures/` holds no Claude `PermissionRequest`
-record at all: the only capture of that name is Codex's, and it is a negative result. Whether the
-hook fires for `AskUserQuestion` and `ExitPlanMode`, as opposed to only for tool-permission prompts,
-is an adapter claim of exactly the kind this repository requires a capture for. Until there is one,
+overlay, which only `PermissionRequest` mints. `captures/` now holds one Claude `PermissionRequest`
+record, in `claude/notification-2.1.241-macos.jsonl`, and it is a single tool-permission prompt for
+`NotebookEdit`. So the hook is observed firing for a tool gate. Whether it also fires for
+`AskUserQuestion` and `ExitPlanMode` is still unobserved, and is an adapter claim of exactly the kind
+this repository requires a capture for. Until there is one,
 the honest statement is that the erasure is reachable and its frequency is unknown. The fix is
 correct and costs nothing either way.
 
@@ -385,12 +412,26 @@ Sourcing the text from the event path instead would make it reliable and is not 
 the envelope drops the tool name and the tool input at the hook, deliberately, and `SECURITY.md`
 states that as a property. Reopening it is a security decision, not this one.
 
-`notification_type` is present on every Notification payload, and its value list was read from the
-emit sites in an installed 2.1.226 bundle rather than observed on the wire. No capture in
-`captures/` holds a `Notification` record, because a headless run auto-denies and never raises one,
-so getting one needs an interactive session. Two specific values are inferred rather than seen: which
-one a plain main-session permission prompt carries, and that a worker's network request has no
-`PermissionRequest` behind it.
+`notification_type` is present on every Notification payload. Its value list was read from the emit
+sites in an installed 2.1.226 bundle, and three of the values the classification branches on are now
+observed on the wire instead: `captures/claude/notification-2.1.241-macos.jsonl` holds
+`permission_prompt`, `elicitation_dialog` and `idle_prompt`, each classified the way this build
+already assumed. A plain main-session permission prompt carries **`permission_prompt`**, raised twice
+from different tools, which closes the first of the two inferences below.
+
+One inference is still open, and it is the one that matters to `worker_permission_prompt`: that a
+worker's **network** request has no `PermissionRequest` behind it. The capture run could not produce a
+`worker_permission_prompt` at all. A subagent driven to a tool outside the allow list surfaced a plain
+`permission_prompt` on the leader's own session prefix, alongside a `PermissionRequest` carrying the
+tool name, so the tool half demonstrably has both signals. That is consistent with the reasoning (the
+emit site is tool-scoped) without testing the network half, which needs a worker network request that
+is not allow-listed.
+
+Two method notes, because both of them silently produced a run that looked like it worked and measured
+nothing. A headless run auto-denies and never raises a prompt, so this needs an interactive session.
+And a session that loads a user's own settings may be unable to raise a prompt either: a bare `allow`
+list grants the common tools outright, and `--permission-mode default` overrides the *mode* and not
+the *list*. Drive a tool the list does not name.
 
 ## N-8: the queue clears itself out of measurements, and holds no state of its own
 
@@ -405,6 +446,8 @@ is the serious one. A mark that is right is redundant: the session leaves `needs
 poll and the row goes on its own. A mark that is wrong **hides a gate that is still open**, which is
 the exact failure the needs-input band exists to prevent, now caused by the surface built to prevent
 it. The asymmetry decides it: the redundant case costs nothing and the wrong case costs everything.
+One case escapes that argument rather than weakening it, and it is carved out at the end of this
+section.
 
 So the pass is driven entirely by the payload. You answer in the session's own terminal; the
 collector stops calling that session blocked; the row leaves the queue on the next refresh. The
@@ -426,3 +469,65 @@ ledger while the server still separated them.
 It does not tell you how long answering will take, which gate is cheapest to clear, or which is most
 urgent beyond how long it has waited. Waiting time is the only ranking signal the payload actually
 carries; anything richer would be a guess dressed as an ordering.
+
+### The carve-out: a question the session asked is answerable, because it is measured
+
+The rejection above rests on one fact and not on a preference. A native gate is unanswerable here
+because Cargento cannot observe the answer: it never writes to a session, so a mark could only record
+that a person clicked something, which is the page asserting a state no collector measured. Every word
+of that still holds for every gate on the needs-input band, and nothing about it is softened by what
+follows.
+
+The `ask_operator` lane (see [design-ask-lane.md](design-ask-lane.md)) is a different situation on
+exactly the fact the argument turns on. There, the answer *is* measured. The session called the tool
+and is holding the call open until an answer arrives, so the runtime is the thing the session is
+waiting on rather than a bystander guessing at a terminal it cannot see. A click is not an assertion
+about someone else's state; it is the state. The wrong-mark failure mode cannot occur either, because
+there is no gate left open behind the click: the option the reader chose is what the tool returns.
+
+The two therefore stay two surfaces, and the distinction is the load-bearing part. Asks render in
+their own band from `d.asks`, and the needs-input band keeps no handled state of its own. A future
+change that wants to mark a native gate has to overturn the paragraph above on its own merits, and
+cannot borrow this carve-out to do it: an answer the runtime delivered and a click about a terminal
+nobody read are not the same evidence.
+
+## N-9: Idle was two situations, and only an event can separate them
+
+Idle covered a turn that ended and nobody read the result, and a session still waiting on a reply
+that never came. Nothing on a collected row separates them, because both are a transcript that
+stopped changing. Only an observed `turn_stopped` does, so a row now carries `finished_at`, the stamp
+of the last stop seen for it, and both views read the two apart instead of printing the one word.
+
+The stamp is held outside the overlay ledger, and that is the one place this design departs from
+N-5's rule that `session_ended` retires everything a session's events wrote. The coordinator keeps it
+in a map of its own: `session_ended` pops the ledger whole, and for `claude -p` the stop and the exit
+arrive back to back, so a mark kept in the ledger would be destroyed for exactly the sessions the
+mark answers for. It is still reduced through `events.reduce_overlays` rather than written straight
+onto the row, so it passes the same `session_activity` guard the idle overlay does and a session
+resumed by a background task loses it. A working or waiting overlay clears it, and a collection that
+stops producing the row is its only other bound, since no event ends it.
+
+**The display threshold is measured, not inherited.** Across 10,119 returns to a stopped turn in
+1,355 local Claude transcripts, half were answered inside 106 seconds and nine in ten inside 966, so
+past 1,200 the odds are better than ten to one that nobody is coming back to that one soon. That is
+the gate both views apply. `SKILL.md` states it in minutes, and a documentation test reads the
+constant and requires the prose to agree, because otherwise the two can only match by accident.
+
+### Rejected
+
+- **Marking on the stop itself.** It puts the word on nearly every idle row within seconds, which is
+  Idle restated in a second vocabulary: the fault the retired `stale` chip was dropped for. That
+  chip's 7,200 seconds is twice the 97th percentile of these returns and was never re-argued, so it
+  stayed silent through the whole window in which collecting the finished work is still worth
+  something.
+- **Narrowing what `session_ended` retires**, which would have let the mark live in the ledger after
+  all. Claude fires that event on `/clear` as well as on exit (N-5), so a cleared session would read
+  finished forever, which is DRC-4101's failure class by another door.
+- **A third flag.** The two-flag cap is a shipped decision, and finished work is worth collecting
+  rather than worth alarming about, so the word sits in the `idle / wait` cell and in the regular
+  view's idle row. A chip would also pull the count into the flagged total, the `f` filter and the
+  attention ordering, none of which should move because a turn ended tidily.
+- **Letting a collector infer completion** for the six harnesses with no event adapter. A guessed
+  completion renders identically to a measured one, so those rows disclose `scan-only` through
+  `acquisition`, which was defined for this and rendered nowhere until now. A test holds the
+  collectors to it.

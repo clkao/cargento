@@ -9,9 +9,11 @@ import http.server
 import io
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -21,6 +23,7 @@ from typing import Any
 from unittest import mock
 
 from cargento_runtime import aggregate, cli, http_api, lifecycle, notifications
+from cargento_runtime import asks as runtime_asks
 from cargento_runtime import io as runtime_io
 from cargento_runtime import observation as observation_module
 
@@ -458,6 +461,814 @@ class UsageReceiptOptOutTest(RuntimeTestCase):
         self.assertEqual(200, status)
         self.assertEqual(b'{"ok":true,"usage":0}', body)
         self.assertEqual([], state.usage_receipts["antigravity"]["entries"])
+
+
+class DismissEndpointTest(RuntimeTestCase):
+    """POST /api/dismiss and GET /api/cleared over a real socket.
+
+    `test_dismissals` covers the store and the subtraction. This covers the
+    wiring, which is the half that breaks silently: the request has to reach the
+    store this application's config names, and the published bodies have to be
+    dropped or the next GET serves the row for another two and a half seconds.
+    """
+
+    def _runtime(self, **changes: Any) -> Any:
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, True)
+        return make_runtime(state_home=home, state_dir=Path(home), **changes)
+
+    @contextlib.contextmanager
+    def _serving(self, application: Any) -> Any:
+        httpd = make_server(application=application)
+        thread = serve_until_closed(httpd)
+        try:
+            yield httpd.server_port
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+
+    @staticmethod
+    def _post(port: int, body: bytes, *, declared: str | None = None) -> tuple[int, bytes]:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            if declared is None:
+                conn.request(
+                    "POST", "/api/dismiss", body=body, headers={"Content-Type": "text/plain"}
+                )
+            else:
+                conn.putrequest("POST", "/api/dismiss")
+                conn.putheader("Content-Length", declared)
+                conn.endheaders()
+            response = conn.getresponse()
+            return response.status, response.read()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _get(port: int, path: str, headers: dict[str, str] | None = None) -> tuple[int, bytes]:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.request("GET", path, headers=headers or {})
+            response = conn.getresponse()
+            return response.status, response.read()
+        finally:
+            conn.close()
+
+    def test_a_mark_reaches_the_store_and_the_next_read_reflects_it(self) -> None:
+        config, state = self._runtime()
+        application = cli.build_application(config, state, clock=time.time)
+        with self._serving(application) as port:
+            # Warm the published body first: without `snapshot.clear()` in the
+            # handler, this is exactly the response the GET below would reuse.
+            first, _ = self._get(port, "/api/data")
+            status, body = self._post(
+                port, json.dumps({"harness": "claude", "sid": "abcd1234"}).encode()
+            )
+            listed_status, listed = self._get(port, "/api/cleared")
+        self.assertEqual((200, 200, 200), (first, status, listed_status))
+        answer = json.loads(body)
+        self.assertIs(True, answer["persisted"])
+        self.assertEqual(1, answer["cleared"])
+        self.assertEqual(
+            [{"harness": "claude", "sid": "abcd1234"}],
+            [{k: v for k, v in row.items() if k != "at"} for row in json.loads(listed)["cleared"]],
+        )
+        self.assertIsNone(
+            state.snapshot.current((config.window_hours, False)),
+            "the published body survived the dismissal and would be served again",
+        )
+
+    def test_an_oversized_declared_length_is_refused_before_any_read(self) -> None:
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            status, _body = self._post(port, b"", declared="200000")
+        self.assertEqual(413, status)
+
+    def test_a_body_that_names_nothing_is_a_no_op(self) -> None:
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            for body in (b"[]", b"not json", b"{}", b'{"harness": "claude"}'):
+                with self.subTest(body=body):
+                    status, answer = self._post(port, body)
+                    self.assertEqual(200, status)
+                    self.assertEqual(0, json.loads(answer)["cleared"])
+
+    def test_the_rollback_switch_answers_503_on_both_routes(self) -> None:
+        # 503, not 404: under `--no-dismiss` the route exists and the store does
+        # not, and a 404 would read as a build too old to have the feature.
+        config, state = self._runtime(dismissals_enabled=False)
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            post_status, _ = self._post(port, b'{"harness":"claude","sid":"abcd1234"}')
+            get_status, _ = self._get(port, "/api/cleared")
+        self.assertEqual((503, 503), (post_status, get_status))
+
+    def test_the_reveal_refuses_a_cross_site_navigation_unlike_api_data(self) -> None:
+        # Same reasoning as `/api/overlays`: nothing navigates here, so `do_GET`'s
+        # relaxation for document navigations has no reason to reach it.
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            status, _ = self._get(
+                port,
+                "/api/cleared",
+                {
+                    "Sec-Fetch-Site": "cross-site",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Dest": "document",
+                },
+            )
+        self.assertEqual(403, status)
+
+
+class AskEndpointTest(RuntimeTestCase):
+    """The four ask routes over a real socket.
+
+    `test_asks` covers the registry. This covers the ingress, which is the half
+    that breaks silently: the untrusted question and options are bounded here
+    and nowhere else, because `asks` imports nothing and so cannot reach
+    `records.safe_text` itself.
+    """
+
+    # A bidi mark, which `records.safe_text` strips: the same character class
+    # that could make a question read as something it does not say. Spelled as
+    # an escape rather than the literal, which ruff's PLE2502 rejects on sight.
+    BIDI = "\u200f"
+
+    def _runtime(self, **changes: Any) -> Any:
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, True)
+        # A short hold by default: every test that wants a 204 would otherwise
+        # wait out the ten-second production poll.
+        changes.setdefault("ask_poll_timeout_sec", 0.2)
+        return make_runtime(state_home=home, state_dir=Path(home), **changes)
+
+    @contextlib.contextmanager
+    def _serving(self, application: Any, observation: Any = None) -> Any:
+        # None is what `--no-events` builds, and what every test here but the
+        # wake-seam one wants.
+        httpd = make_server(application=application, observation=observation)
+        thread = serve_until_closed(httpd)
+        try:
+            yield httpd.server_port
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+
+    @staticmethod
+    def _post(
+        port: int, path: str, body: bytes, *, declared: str | None = None
+    ) -> tuple[int, bytes]:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        try:
+            if declared is None:
+                conn.request("POST", path, body=body, headers={"Content-Type": "text/plain"})
+            else:
+                conn.putrequest("POST", path)
+                conn.putheader("Content-Length", declared)
+                conn.endheaders()
+            response = conn.getresponse()
+            return response.status, response.read()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _get(port: int, path: str, headers: dict[str, str] | None = None) -> tuple[int, bytes]:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        try:
+            conn.request("GET", path, headers=headers or {})
+            response = conn.getresponse()
+            return response.status, response.read()
+        finally:
+            conn.close()
+
+    def _register(self, port: int, **fields: Any) -> str:
+        body: dict[str, Any] = {
+            "harness": "claude",
+            "session_id": "aaa1bbb2",
+            "project": "repo/proj",
+            "question": "Ship the migration now?",
+            "options": ["Ship it", "Wait for review"],
+        }
+        body.update(fields)
+        status, answer = self._post(port, "/api/ask", json.dumps(body).encode())
+        self.assertEqual(200, status, answer)
+        payload = json.loads(answer)
+        self.assertIs(True, payload["ok"])
+        return str(payload["id"])
+
+    def test_a_question_is_registered_answered_once_and_then_gone(self) -> None:
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            ask_id = self._register(port)
+            self.assertEqual(1, state.asks.count)
+            pending_status, pending_body = self._get(port, f"/api/ask/{ask_id}")
+            answered_status, answered = self._post(
+                port, "/api/answer", json.dumps({"id": ask_id, "index": 1}).encode()
+            )
+            delivered_status, delivered = self._get(port, f"/api/ask/{ask_id}")
+            # Delivered exactly once: the poll releases the ask, so a second
+            # poll finds nothing rather than replaying the answer.
+            gone_status, _ = self._get(port, f"/api/ask/{ask_id}")
+        self.assertEqual((204, b""), (pending_status, pending_body))
+        self.assertEqual(
+            (200, {"ok": True, "answered": True}), (answered_status, json.loads(answered))
+        )
+        self.assertEqual(
+            (200, {"state": "answered", "index": 1}), (delivered_status, json.loads(delivered))
+        )
+        self.assertEqual(404, gone_status)
+        self.assertEqual(0, state.asks.count)
+
+    def test_registering_and_answering_both_drop_the_published_body(self) -> None:
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            first, _ = self._get(port, "/api/data")
+            ask_id = self._register(port)
+            after_register = state.snapshot.current((config.window_hours, False))
+            self._get(port, "/api/data")
+            self._post(port, "/api/answer", json.dumps({"id": ask_id, "index": 0}).encode())
+            after_answer = state.snapshot.current((config.window_hours, False))
+        self.assertEqual(200, first)
+        self.assertIsNone(after_register, "the published body survived the registration")
+        self.assertIsNone(after_answer, "the published body survived the answer")
+
+    def test_the_rollback_flag_reaches_configuration(self) -> None:
+        # The four routes below key off `ask_enabled`, so the flag that sets it
+        # is the half of the rollback switch a 503 test cannot see.
+        parser = cli.build_parser()
+        default, _ = cli.build_runtime(parser.parse_args([]), started=1.0)
+        opted_out, _ = cli.build_runtime(parser.parse_args(["--no-ask"]), started=1.0)
+        self.assertIs(True, default.ask_enabled)
+        self.assertIs(False, opted_out.ask_enabled)
+
+    def test_the_rollback_switch_answers_503_on_all_four_routes(self) -> None:
+        # 503, not 404, for the reason `--no-dismiss` gives: under `--no-ask` the
+        # routes exist and the registry is never filled, and a 404 would read as
+        # a build too old to have the feature.
+        config, state = self._runtime(ask_enabled=False)
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            register, _ = self._post(port, "/api/ask", b'{"question":"q","options":["a","b"]}')
+            answer, _ = self._post(port, "/api/answer", b'{"id":"x","index":0}')
+            withdraw, _ = self._post(port, "/api/ask/withdraw", b'{"id":"x"}')
+            poll, _ = self._get(port, "/api/ask/anything")
+        self.assertEqual((503, 503, 503, 503), (register, answer, withdraw, poll))
+
+    def test_a_refusal_says_whether_the_lane_is_off_or_merely_busy(self) -> None:
+        """A bare 503 read as "no dashboard here", so the peer walked to another.
+
+        Measured: the stdio server treated any non-200 as a port that would not
+        take the question, tried the next candidate, and registered on a second
+        dashboard that had the lane switched on, which is exactly what `--no-ask`
+        exists to prevent. Both cases stay 503 because both are honest "not right
+        now" answers; the reason is what separates a permanent refusal from one
+        that clears on its own.
+        """
+        body = json.dumps({"question": "q", "options": ["a", "b"]}).encode()
+        off_config, off_state = self._runtime(ask_enabled=False)
+        with self._serving(cli.build_application(off_config, off_state, clock=time.time)) as port:
+            disabled_status, disabled_body = self._post(port, "/api/ask", body)
+            withdraw_status, withdraw_body = self._post(port, "/api/ask/withdraw", b'{"id":"x"}')
+        full_config, full_state = self._runtime(ask_max_pending=1)
+        with self._serving(cli.build_application(full_config, full_state, clock=time.time)) as port:
+            self._register(port)
+            busy_status, busy_body = self._post(port, "/api/ask", body)
+        self.assertEqual(503, disabled_status)
+        self.assertEqual({"ok": False, "reason": "disabled"}, json.loads(disabled_body))
+        self.assertEqual(503, withdraw_status)
+        self.assertEqual({"ok": False, "reason": "disabled"}, json.loads(withdraw_body))
+        self.assertEqual(503, busy_status)
+        self.assertEqual({"ok": False, "reason": "busy"}, json.loads(busy_body))
+
+    def test_a_withdrawal_clears_the_card_and_declines_the_peer(self) -> None:
+        """An abandoned question has to leave the board, not sit out its deadline.
+
+        Without this route a card whose asking session has already given up stays
+        clickable for the rest of the deadline, and the click is accepted and
+        thrown away: the reader is told nothing, and answered a question nobody
+        is listening to.
+        """
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            ask_id = self._register(port)
+            ask = state.asks.get(ask_id)
+            # Republished first, so the drop below is this route's doing rather
+            # than the registration's.
+            self._get(port, "/api/data")
+            status, body = self._post(
+                port, "/api/ask/withdraw", json.dumps({"id": ask_id}).encode()
+            )
+            after = state.snapshot.current((config.window_hours, False))
+            poll_status, _ = self._get(port, f"/api/ask/{ask_id}")
+        assert ask is not None
+        self.assertEqual(200, status)
+        self.assertEqual({"ok": True, "withdrawn": True}, json.loads(body))
+        self.assertEqual(("declined", None), ask.outcome)
+        self.assertEqual(0, state.asks.count)
+        self.assertIsNone(after, "the published body survived the withdrawal")
+        self.assertEqual(404, poll_status)
+
+    def test_withdrawing_what_nobody_registered_is_a_200_no_op(self) -> None:
+        # A 404 for an unknown id would make this an oracle for which asks
+        # exist, exactly as it would on `/api/answer`, so the caller reads
+        # `withdrawn` rather than the status line.
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            # A live ask on the board throughout, so the count below can tell a
+            # no-op from a withdrawal that hit the wrong row.
+            self._register(port)
+            bodies: list[dict[str, Any]] = [{"id": "nosuchask"}, {"id": 7}, {}]
+            for payload in bodies:
+                with self.subTest(payload=payload):
+                    status, body = self._post(
+                        port, "/api/ask/withdraw", json.dumps(payload).encode()
+                    )
+                    self.assertEqual(200, status)
+                    self.assertEqual({"ok": True, "withdrawn": False}, json.loads(body))
+            malformed, malformed_body = self._post(port, "/api/ask/withdraw", b"not json")
+            oversized, _ = self._post(port, "/api/ask/withdraw", b"", declared="8192")
+        self.assertEqual(200, malformed)
+        self.assertEqual({"ok": True, "withdrawn": False}, json.loads(malformed_body))
+        self.assertEqual(413, oversized)
+        self.assertEqual(
+            1, state.asks.count, "an unusable withdrawal took a live ask off the board"
+        )
+
+    def test_a_non_string_question_or_option_is_refused_not_stringified(self) -> None:
+        """`safe_text` calls `str(value or "")`, so a non-string publishes a repr.
+
+        Measured on the shipped route: a question of `{"a": 1}` registered and
+        the card read `{'a': 1}`; options `[{"a": 1}, {"b": 2}]` rendered as
+        `{'a': 1}` and `{'b': 2}`; and `[1, 2]` was accepted while `[0, 1]` was
+        refused, because falsiness rather than type decided. The answer is an
+        index into these options, so a stringified one is a choice the asking
+        session never offered.
+        """
+        config, state = self._runtime()
+        bodies: dict[str, dict[str, Any]] = {
+            "an integer question": {"question": 42, "options": ["a", "b"]},
+            "an object question": {"question": {"a": 1}, "options": ["a", "b"]},
+            "a list question": {"question": ["a", "b"], "options": ["a", "b"]},
+            "a boolean question": {"question": True, "options": ["a", "b"]},
+            "object options": {"question": "q", "options": [{"a": 1}, {"b": 2}]},
+            "list options": {"question": "q", "options": [["x", "y"], ["z"]]},
+            "integer options": {"question": "q", "options": [1, 2]},
+            "integer options including zero": {"question": "q", "options": [0, 1]},
+            "boolean options": {"question": "q", "options": [True, False]},
+            "one non-string option": {"question": "q", "options": ["a", 2]},
+            "a null option": {"question": "q", "options": ["a", None]},
+        }
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            for label, fields in bodies.items():
+                with self.subTest(label=label):
+                    body = {"harness": "claude", "session_id": "aaa1", "project": "p", **fields}
+                    status, _ = self._post(port, "/api/ask", json.dumps(body).encode())
+                    self.assertEqual(400, status)
+        self.assertEqual(0, state.asks.count)
+
+    def test_a_registration_wakes_the_coordinator_with_no_registry_lock_held(self) -> None:
+        """The card is drawn by a collection, and a registration has to force one.
+
+        The lock order is the other half of the contract: `Observation._due`
+        takes the registry lock while holding `_lock`, and `note_ask` takes
+        `_lock`, so calling it while still holding a registry lock is the one
+        edge that would close the cycle.
+        """
+        config, state = self._runtime(ask_max_pending=1)
+        application = cli.build_application(config, state, clock=time.time)
+        coordinator = observation_module.Observation(
+            application, diagnostic_sink=lambda _line: None
+        )
+        application.overlays = coordinator
+        free: list[bool] = []
+        original = coordinator.note_ask
+
+        def note_ask() -> None:
+            acquired = state.asks._lock.acquire(blocking=False)
+            free.append(acquired)
+            if acquired:
+                state.asks._lock.release()
+            original()
+
+        with (
+            mock.patch.object(coordinator, "note_ask", note_ask),
+            self._serving(application, observation=coordinator) as port,
+        ):
+            self._register(port)
+            refused, _ = self._post(
+                port, "/api/ask", json.dumps({"question": "q", "options": ["a", "b"]}).encode()
+            )
+        self.assertEqual(503, refused)
+        # Once, for the accepted registration only: a refused one woke a
+        # coordinator that has nothing new to draw.
+        self.assertEqual([True], free)
+        self.assertEqual(1, coordinator._dirty.get(observation_module.ASK_GENERATION))
+
+    def test_a_registration_works_on_a_server_with_no_coordinator(self) -> None:
+        # `--no-events` builds a server with no coordinator at all, so the wake
+        # seam has to be optional rather than assumed.
+        config, state = self._runtime()
+        httpd = make_server(application=cli.build_application(config, state, clock=time.time))
+        thread = serve_until_closed(httpd)
+        try:
+            self.assertIsNone(httpd.observation)
+            ask_id = self._register(httpd.server_port)
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+        self.assertIsNotNone(state.asks.get(ask_id))
+
+    def test_an_oversized_declared_length_is_refused_before_any_read(self) -> None:
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            register, _ = self._post(port, "/api/ask", b"", declared="200000")
+            # The answer body carries an id and an integer, so its cap sits far
+            # below the register cap and a register-sized body is refused here.
+            answer, _ = self._post(port, "/api/answer", b"", declared="8192")
+        self.assertEqual((413, 413), (register, answer))
+
+    def test_a_question_or_option_list_too_thin_to_answer_is_refused(self) -> None:
+        config, state = self._runtime()
+        bodies: dict[str, dict[str, Any]] = {
+            "no question": {"question": "", "options": ["a", "b"]},
+            "control characters only": {"question": " " + self.BIDI, "options": ["a", "b"]},
+            "one option": {"question": "q", "options": ["only"]},
+            "no options": {"question": "q", "options": []},
+            "options not a list": {"question": "q", "options": "ab"},
+            "an option that bounds to empty": {"question": "q", "options": ["a", " "]},
+        }
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            for label, fields in bodies.items():
+                with self.subTest(label=label):
+                    body = {"harness": "claude", "session_id": "aaa1", "project": "p", **fields}
+                    status, _ = self._post(port, "/api/ask", json.dumps(body).encode())
+                    self.assertEqual(400, status)
+        self.assertEqual(0, state.asks.count)
+
+    def test_a_malformed_body_is_refused_rather_than_registered(self) -> None:
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            for body in (b"not json", b"[]", b"null", b""):
+                with self.subTest(body=body):
+                    status, _ = self._post(port, "/api/ask", body)
+                    self.assertEqual(400, status)
+        self.assertEqual(0, state.asks.count)
+
+    def test_agent_written_text_is_bounded_and_stripped_at_the_ingress(self) -> None:
+        config, state = self._runtime(ask_question_cap_chars=10, ask_option_cap_chars=4)
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            ask_id = self._register(
+                port,
+                question="a" * 40 + " tail",
+                options=["b" * 40, f"c{self.BIDI}d", *[f"opt{n}" for n in range(20)]],
+            )
+        ask = state.asks.get(ask_id)
+        self.assertIsNotNone(ask)
+        assert ask is not None
+        self.assertEqual("a" * 10, ask.question)
+        self.assertEqual(config.ask_max_options, len(ask.options))
+        self.assertEqual(("bbbb", "c d"), ask.options[:2])
+
+    def test_an_over_long_project_keeps_its_tail_and_marks_the_cut(self) -> None:
+        """A path's identity is its end, so bounding it from the front is a lie.
+
+        Found end to end rather than by reading: a 122-character cwd against the
+        old 120-character label cap published `.../e2e/adop` for a directory
+        named `adopt2`, so the card attributed the question to somewhere that
+        does not exist.
+        """
+        config, state = self._runtime(ask_project_cap_chars=40)
+        deep = "/private/tmp/" + "nesting/" * 12 + "the-real-dir"
+        self.assertGreater(len(deep), config.ask_project_cap_chars)
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            ask_id = self._register(port, project=deep)
+        ask = state.asks.get(ask_id)
+        assert ask is not None
+        self.assertEqual(config.ask_project_cap_chars, len(ask.project))
+        self.assertTrue(ask.project.endswith("the-real-dir"), ask.project)
+        self.assertTrue(ask.project.startswith("…"), ask.project)
+
+    def test_a_project_inside_the_cap_is_published_whole(self) -> None:
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            ask_id = self._register(port, project="/repo/proj")
+        ask = state.asks.get(ask_id)
+        assert ask is not None
+        self.assertEqual("/repo/proj", ask.project)
+
+    def test_the_budget_refuses_past_the_cap(self) -> None:
+        config, state = self._runtime(ask_max_pending=2)
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            self._register(port)
+            self._register(port)
+            status, _ = self._post(
+                port,
+                "/api/ask",
+                json.dumps({"question": "q", "options": ["a", "b"]}).encode(),
+            )
+        self.assertEqual(503, status)
+        self.assertEqual(2, state.asks.count)
+
+    def test_an_answer_naming_nothing_is_a_200_no_op_not_an_oracle(self) -> None:
+        # A 404 for an unknown id would tell a caller which asks exist, so every
+        # unusable answer body gets the same 200 an unknown id gets.
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            ask_id = self._register(port)
+            bodies: list[dict[str, Any]] = [
+                {"id": "nosuchask", "index": 0},
+                {"id": ask_id, "index": 7},
+                {"id": ask_id, "index": -1},
+                {"id": ask_id, "index": "1"},
+                # True is an int in Python, and would silently answer option 1.
+                {"id": ask_id, "index": True},
+                {"id": ask_id},
+                {},
+            ]
+            for body in bodies:
+                with self.subTest(body=body):
+                    status, answer = self._post(port, "/api/answer", json.dumps(body).encode())
+                    self.assertEqual(200, status)
+                    self.assertEqual({"ok": True, "answered": False}, json.loads(answer))
+            ask = state.asks.get(ask_id)
+        self.assertIsNotNone(ask)
+        assert ask is not None
+        self.assertIsNone(ask.outcome, "an unusable answer body resolved the ask anyway")
+
+    def test_a_poll_refuses_a_cross_site_navigation_unlike_api_data(self) -> None:
+        # Same reasoning as `/api/cleared`: nothing navigates here, so `do_GET`'s
+        # relaxation for document navigations has no reason to reach it.
+        config, state = self._runtime()
+        with self._serving(cli.build_application(config, state, clock=time.time)) as port:
+            ask_id = self._register(port)
+            status, _ = self._get(
+                port,
+                f"/api/ask/{ask_id}",
+                {
+                    "Sec-Fetch-Site": "cross-site",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Dest": "document",
+                },
+            )
+        self.assertEqual(403, status)
+
+    @staticmethod
+    def _settle_popups(notify: Any, expected: int, *, timeout: float = 5.0) -> None:
+        """Wait for the ask popup, which happens after the reply is on the wire.
+
+        `_ask` sends its reply and only then notifies, deliberately: osascript
+        runs on the handler thread with a 5s timeout against the stdio client's
+        3s register POST. So the client returns BEFORE the popup, nothing joins
+        the handler thread, and `_serving` shuts the server down on the way out.
+
+        That makes an immediate assertion a race in both directions, and the
+        second one is the dangerous half. A `== 1` can miss a call that was about
+        to happen, which is a flake. A `== 0` can PASS because the thread has not
+        got there yet, which would hide a real double fire and look like a green
+        test forever. So a zero expectation waits out a grace period rather than
+        returning at once.
+        """
+        deadline = time.monotonic() + timeout
+        while notify.call_count < expected and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if expected == 0:
+            time.sleep(0.5)
+
+    def test_a_registered_question_pops_only_where_the_server_owns_the_popup(self) -> None:
+        # Exactly one layer notifies (design decision D-3), and the split is read
+        # off the same expression `/api/data` publishes as `native_notify`. The
+        # platform comes from config, never from the host, so both halves run on
+        # every runner (D-4).
+        config, state = self._runtime(platform_name="darwin")
+        with (
+            self._serving(cli.build_application(config, state, clock=time.time)) as port,
+            mock.patch.object(notifications, "notify_mac") as notify,
+        ):
+            ask_id = self._register(port)
+            self._settle_popups(notify, 1)
+        self.assertEqual(1, notify.call_count)
+        self.assertEqual("Claude is asking you", notify.call_args[0][1])
+        self.assertEqual("Ship the migration now? · repo/proj", notify.call_args[0][2])
+        self.assertTrue(ask_id)
+
+        config, state = self._runtime()
+        with (
+            self._serving(cli.build_application(config, state, clock=time.time)) as port,
+            mock.patch.object(notifications, "notify_mac") as notify,
+        ):
+            self._register(port)
+            self._settle_popups(notify, 0)
+        self.assertEqual(0, notify.call_count, "the page owns this one")
+
+        # The rollback switch: `_ask` answers 503 before the body is read, so the
+        # notifier cannot be reached however the call site later moves.
+        config, state = self._runtime(ask_enabled=False)
+        with (
+            self._serving(cli.build_application(config, state, clock=time.time)) as port,
+            mock.patch.object(notifications, "notify_mac") as notify,
+        ):
+            status, _ = self._post(
+                port, "/api/ask", json.dumps({"question": "q", "options": ["a", "b"]}).encode()
+            )
+            self._settle_popups(notify, 0)
+        self.assertEqual(503, status)
+        self.assertEqual(0, notify.call_count)
+
+    def test_an_unattributable_question_never_names_a_harness(self) -> None:
+        # `unknown` is the shipped default for every client but Claude Code, so
+        # this is the common case rather than an edge. A raw fallback would title
+        # it "unknown is asking you", and a 120-character value would reach
+        # `safe_text(title, 60)`, which truncates from the FRONT and so deletes
+        # the words " is asking you".
+        for harness in ("unknown", "", "x" * 120):
+            with self.subTest(harness=harness):
+                # Its own runtime per case: the ask floor is shared across a
+                # process, so a second registration inside 15s raises nothing.
+                config, state = self._runtime(platform_name="darwin")
+                with (
+                    self._serving(cli.build_application(config, state, clock=time.time)) as port,
+                    mock.patch.object(notifications, "notify_mac") as notify,
+                ):
+                    self._register(port, harness=harness, session_id="")
+                    self._settle_popups(notify, 1)
+                self.assertEqual(1, notify.call_count)
+                title = notify.call_args[0][1]
+                self.assertEqual("An agent is asking you", title)
+                self.assertNotIn("unknown", title)
+                self.assertNotIn("Claude", title)
+
+    def test_the_popup_fires_after_the_reply_is_on_the_wire(self) -> None:
+        # osascript runs with a 5s timeout on the handler thread, and the stdio
+        # client's register POST times out at 3s. A lost reply is not a retry:
+        # `_register` walks to the next candidate port and registers the question
+        # on a second dashboard, while the first keeps a card that cannot be
+        # withdrawn because its id was in the lost reply.
+        config, state = self._runtime(platform_name="darwin")
+        calls: list[tuple[str, str]] = []
+
+        def boom(title: str, message: str) -> None:
+            calls.append((title, message))
+            raise RuntimeError("osascript exploded after the reply")
+
+        application = aggregate.Application(
+            config,
+            state,
+            aggregate.default_harnesses(lambda _title, _message: None),
+            native_notifier=notifications.native_notifier,
+            popup_notifier=boom,
+            diagnostic_sink=lambda _line: None,
+            clock=lambda: 1000.0,
+        )
+        with (
+            # The traceback is the point of the test, not a surprise: keep it out
+            # of the run's output.
+            mock.patch.object(http_api.CargentoHTTPServer, "handle_error", lambda *_a: None),
+            self._serving(application) as port,
+        ):
+            status, body = self._post(
+                port,
+                "/api/ask",
+                json.dumps(
+                    {
+                        "harness": "claude",
+                        "project": "repo/proj",
+                        "question": "Ship it?",
+                        "options": ["yes", "no"],
+                    }
+                ).encode(),
+            )
+        self.assertEqual(200, status)
+        payload = json.loads(body)
+        self.assertIs(True, payload["ok"])
+        self.assertTrue(payload["id"])
+        self.assertEqual(1, len(calls), "the notifier never ran")
+
+
+class AskShutdownTest(RuntimeTestCase):
+    """A held poll has to be declined, not dropped.
+
+    Handler threads are daemons that nothing joins, so `server.shutdown()` never
+    reaches a poll parked in `wait()`. Measured with the decline removed, the
+    poll returns nothing at all inside these windows and would go on holding
+    until the process exited under it, which the asking session reads as a
+    transport failure rather than as the answer the contract promises it.
+    """
+
+    def _runtime(self, **changes: Any) -> Any:
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, True)
+        # Far longer than the assertion window, so a pass cannot be the poll
+        # timing out on its own rather than the shutdown declining it.
+        changes.setdefault("ask_poll_timeout_sec", 30.0)
+        return make_runtime(state_home=home, state_dir=Path(home), **changes)
+
+    def _register(self, state: Any, config: Any) -> str:
+        ask = runtime_asks.PendingAsk(
+            harness="claude",
+            session_id="aaa1bbb2",
+            project="repo/proj",
+            question="Ship the migration now?",
+            options=("Ship it", "Wait for review"),
+            created=time.time(),
+        )
+        self.assertTrue(
+            state.asks.register(
+                ask,
+                limit=config.ask_max_pending,
+                deadline=config.ask_deadline_sec,
+                retention=config.ask_retention_sec,
+            )
+        )
+        return ask.id
+
+    @staticmethod
+    def _park_poll(port: int, ask_id: str, out: dict[str, Any]) -> threading.Thread:
+        def poll() -> None:
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
+            try:
+                conn.request("GET", f"/api/ask/{ask_id}")
+                response = conn.getresponse()
+                out["status"] = response.status
+                out["body"] = response.read()
+            except (OSError, http.client.HTTPException) as exc:
+                # A dropped connection rather than a decline is the whole bug,
+                # so it is recorded and asserted on rather than raised here.
+                out["error"] = repr(exc)
+            finally:
+                conn.close()
+
+        thread = threading.Thread(target=poll, daemon=True)
+        thread.start()
+        return thread
+
+    @staticmethod
+    def _settle() -> None:
+        """Let the parked poll reach `wait()` before the shutdown lands.
+
+        There is no observable "is parked" signal to poll on. A settle is enough
+        because arriving early does not weaken the assertion: the decline is
+        recorded on the ask either way, and the poll then returns it.
+        """
+        time.sleep(0.3)
+
+    def test_the_shutdown_endpoint_declines_a_parked_poll(self) -> None:
+        config, state = self._runtime()
+        httpd = make_server(application=cli.build_application(config, state, clock=time.time))
+        thread = serve_until_closed(httpd)
+        out: dict[str, Any] = {}
+        try:
+            ask_id = self._register(state, config)
+            poller = self._park_poll(httpd.server_port, ask_id, out)
+            self._settle()
+            stop = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=10)
+            stop.request("POST", "/api/shutdown", body=b"")
+            stop.getresponse().read()
+            stop.close()
+            poller.join(timeout=10)
+        finally:
+            with contextlib.suppress(Exception):
+                httpd.server_close()
+            thread.join(timeout=5)
+        self.assertNotIn("error", out, "the poll lost its connection, not an answer")
+        self.assertEqual(200, out.get("status"))
+        self.assertEqual({"state": "declined"}, json.loads(out["body"]))
+
+    def test_serve_cleanup_declines_every_outstanding_ask(self) -> None:
+        # The endpoint is not the only way out: a signal, an exception and a
+        # `--stop` all leave through `serve`'s finally, so the decline lives
+        # there too rather than only on the route that happens to be polite.
+        config, state = self._runtime()
+        httpd = make_server(application=cli.build_application(config, state, clock=time.time))
+        ask_id = self._register(state, config)
+        ask = state.asks.get(ask_id)
+        self.assertIsNotNone(ask)
+        assert ask is not None
+        thread = threading.Thread(
+            target=lifecycle.serve,
+            args=(config, httpd, httpd.server_port),
+            kwargs={"started": time.time(), "diagnostic_sink": lambda _line: None},
+            daemon=True,
+        )
+        thread.start()
+        try:
+            self._wait_until_serving(httpd)
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=10)
+        self.assertEqual(("declined", None), ask.outcome)
+
+    @staticmethod
+    def _wait_until_serving(httpd: Any) -> None:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=2)
+            try:
+                conn.request("GET", "/api/health")
+                if conn.getresponse().status == 200:
+                    return
+            except OSError:
+                time.sleep(0.05)
+            finally:
+                conn.close()
+        raise AssertionError("the serve loop never came up")
 
 
 class HostAndSocketTest(unittest.TestCase):

@@ -244,6 +244,8 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
             no_spacedock=False,
             no_usage=False,
             no_events=False,
+            no_dismiss=False,
+            no_ask=False,
             daemon=True,
         )
         with tempfile.TemporaryDirectory() as tmp:
@@ -317,7 +319,11 @@ print(json.dumps({{"origins": origins, "assets": assets, "page_size": len(page.l
             discovered = json.loads(origin_probe.stdout)
             for origin in [*discovered["origins"].values(), *discovered["assets"].values()]:
                 self.assertTrue(Path(origin).is_relative_to(copied_skill), origin)
-            self.assertEqual(227_688, discovered["page_size"])
+            # The repository's own page, not a pinned figure. This subject is whether the
+            # copy assembles from its own files; the exact byte count is test_page.py's
+            # oracle. A second pin here reds this module on any frontend edit, which
+            # reads as a lifecycle break and sends the reader to the wrong file.
+            self.assertEqual(len(frontend_page.load_page()), discovered["page_size"])
             state_path = cargento_home / f"cargento-{port}.json"
             proc = subprocess.Popen(
                 [sys.executable, str(launcher), "--port", str(port)],
@@ -378,6 +384,8 @@ print(json.dumps({{"origins": origins, "assets": assets, "page_size": len(page.l
             no_spacedock=False,
             no_usage=False,
             no_events=False,
+            no_dismiss=False,
+            no_ask=False,
             daemon=True,
         )
         with (
@@ -1162,6 +1170,8 @@ class CargentoServerTest(PageJsHarness):
             no_spacedock=True,
             no_usage=False,
             no_events=False,
+            no_dismiss=False,
+            no_ask=False,
             daemon=True,
         )
         argv = lifecycle.spawn_argv(config, args)
@@ -1189,6 +1199,8 @@ class CargentoServerTest(PageJsHarness):
                 no_spacedock=False,
                 no_usage=False,
                 no_events=False,
+                no_dismiss=False,
+                no_ask=False,
                 daemon=True,
             ),
         )
@@ -1214,10 +1226,12 @@ class CargentoServerTest(PageJsHarness):
                 no_spacedock=True,
                 no_usage=True,
                 no_events=True,
+                no_dismiss=True,
+                no_ask=False,
                 daemon=True,
             ),
         )
-        for flag in ("--no-spacedock", "--no-usage", "--no-events"):
+        for flag in ("--no-spacedock", "--no-usage", "--no-events", "--no-dismiss"):
             self.assertIn(flag, argv)
 
     def test_spawn_detached_uses_a_fixed_argv_and_detaching_flags(self) -> None:
@@ -1227,6 +1241,8 @@ class CargentoServerTest(PageJsHarness):
             no_spacedock=False,
             no_usage=False,
             no_events=False,
+            no_dismiss=False,
+            no_ask=False,
             daemon=True,
         )
         with tempfile.TemporaryDirectory() as tmp:
@@ -1429,6 +1445,8 @@ class SpawnArgvOptOutTest(unittest.TestCase):
             "no_spacedock": False,
             "no_usage": False,
             "no_events": False,
+            "no_dismiss": False,
+            "no_ask": False,
         }
         base.update(overrides)
         return argparse.Namespace(**base)
@@ -1442,6 +1460,16 @@ class SpawnArgvOptOutTest(unittest.TestCase):
         config = cfg()
         argv = lifecycle.spawn_argv(config, self._args(no_usage=False))
         self.assertNotIn("--no-usage", argv)
+
+    def test_no_ask_is_forwarded(self) -> None:
+        config = cfg()
+        argv = lifecycle.spawn_argv(config, self._args(no_ask=True))
+        self.assertIn("--no-ask", argv)
+
+    def test_no_ask_is_absent_when_not_requested(self) -> None:
+        config = cfg()
+        argv = lifecycle.spawn_argv(config, self._args(no_ask=False))
+        self.assertNotIn("--no-ask", argv)
 
     def test_daemon_is_never_forwarded(self) -> None:
         """Forwarding --daemon would respawn forever."""

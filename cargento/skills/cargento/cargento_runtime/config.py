@@ -45,6 +45,16 @@ class RuntimeConfig:
     window_hours: float
     spacedock_enabled: bool
     usage_fetch_enabled: bool
+    # Whether the dismissal store is read and written at all. `--no-dismiss` is
+    # the rollback switch, and off means off in both directions: the file is
+    # neither consulted during a collection nor created by a request, so a run
+    # that misbehaves leaves no state a later run would honour.
+    dismissals_enabled: bool
+    # Whether a session may ask the reader a question and wait for the answer.
+    # `--no-ask` is the rollback switch, and off means off in both directions:
+    # the routes refuse, and the payload carries no `ask` flag, so the page
+    # offers no control rather than one that answers 503.
+    ask_enabled: bool
     # The trailing window every published token rate is averaged over. What a
     # row carries is therefore a MEAN and not an instantaneous reading, and at
     # ten minutes it lags a burst by minutes. `sessions.rate_from` divides by it,
@@ -61,6 +71,7 @@ class RuntimeConfig:
     global_popup_cooldown_sec: float
     popup_repeat_suppress_sec: float
     long_turn_warn_sec: float
+    loop_error_run_threshold: int
     future_skew_tolerance_sec: float
     sql_message_limit: int
     max_cache_entries: int
@@ -119,6 +130,18 @@ class RuntimeConfig:
     daemon_ready_timeout_sec: float
     stop_release_timeout_sec: float
     state_read_cap_bytes: int
+    # The dismissal store. The read cap is the state file's, because the shape of
+    # the risk is the same: a file this process wrote, which any local process
+    # could have replaced with something enormous or deeply nested. The entry
+    # bound is a count and not a time-to-live — see `dismissals._bounded` for why
+    # a TTL is the wrong shape — and 256 is set against what a reader can
+    # plausibly have marked handled inside one 24-hour window, an order of
+    # magnitude above the busiest board measured (31 sessions).
+    dismissal_read_cap_bytes: int
+    dismissal_max_entries: int
+    # What a dismissal request may declare. Three short fields, so this is far
+    # below even the event cap: nothing else is read from the body.
+    dismissal_body_cap_bytes: int
     prompt_path_collapse_min_length: int
     first_line_json_cap_bytes: int
     notification_body_cap_bytes: int
@@ -180,6 +203,44 @@ class RuntimeConfig:
     event_body_cap_bytes: int
     event_rate_per_sec: float
     event_burst_max: int
+    # The ask lane. The deadline is what retires a question nobody answered, and
+    # five minutes is set against the thing on the other end: the asking session
+    # is parked in a tool call for the whole wait, so a longer deadline buys a
+    # reader nothing and costs an agent a stalled turn. There is no timer thread
+    # to enforce it: the sweep rides on `AskRegistry.register` and on the
+    # collection the coordinator now runs while any ask is outstanding, which is
+    # what makes it independent of anybody watching the page.
+    ask_deadline_sec: float
+    # How long a resolved ask stays retrievable after the sweep first sees its
+    # outcome, so its poller can still collect it. One minute is six poll holds
+    # at `ask_poll_timeout_sec`, which is generous against a peer that is either
+    # parked in `wait` and gets the answer instantly or is gone for good. Past
+    # this the row is dropped; the budget never counted it, because a resolved
+    # ask needs no slot.
+    ask_retention_sec: float
+    # One long-poll hold. Bounded rather than held open for the whole wait, which
+    # is what keeps the thread budget, the shutdown decline and a dead peer all
+    # ordinary: see docs/design-ask-lane.md.
+    ask_poll_timeout_sec: float
+    # A hard cap, not a queue: every outstanding ask costs a card on the page and
+    # a polling peer, so past this the register route refuses with a 503.
+    ask_max_pending: int
+    # The register body carries a question and up to `ask_max_options` options,
+    # so it is sized like the event envelope rather than like a notification.
+    ask_body_cap_bytes: int
+    # The answer body carries an id and an integer, and nothing else is read
+    # from it.
+    ask_answer_body_cap_bytes: int
+    # What agent-written text may occupy. Characters, not bytes, because these
+    # are bounded through `records.safe_text` at the HTTP ingress -- `asks`
+    # imports nothing and cannot reach it -- and that helper counts characters.
+    ask_question_cap_chars: int
+    ask_option_cap_chars: int
+    # A project path is not a label and routinely runs past any label cap: the
+    # e2e run that found this had a 122-character cwd, so a 120 cap published a
+    # directory that does not exist. Its own knob, and generous.
+    ask_project_cap_chars: int
+    ask_max_options: int
 
 
 def resolve_store_roots(
@@ -286,6 +347,8 @@ def build_runtime_config(
     window_hours: float = 24.0,
     spacedock_enabled: bool = True,
     usage_fetch_enabled: bool = True,
+    dismissals_enabled: bool = True,
+    ask_enabled: bool = True,
 ) -> RuntimeConfig:
     """Construct runtime configuration solely from explicit inputs."""
     windows = platform_name == "win32"
@@ -324,6 +387,8 @@ def build_runtime_config(
         window_hours=window_hours,
         spacedock_enabled=spacedock_enabled,
         usage_fetch_enabled=usage_fetch_enabled,
+        dismissals_enabled=dismissals_enabled,
+        ask_enabled=ask_enabled,
         # Ten minutes stays. The burn ordering (DRC-4011) wants the fastest
         # session "right now", and this window is the reason it cannot have it:
         # narrowing it would re-scale the summary tile, both sparklines and every
@@ -341,6 +406,16 @@ def build_runtime_config(
         global_popup_cooldown_sec=15,
         popup_repeat_suppress_sec=600,
         long_turn_warn_sec=900,
+        # Consecutive failed tool calls before a turn is called a loop.
+        # Measured, twice, over the 25 most recent local Claude transcripts:
+        # run lengths came out {1: 56, 2: 4, 4: 1}, so 3 and 4 both fire in
+        # 1 session of 25 and 5 fires in none. 4 buys the same yield as 3 with
+        # strictly less exposure to the benign runs the sample was full of — an
+        # `ls` that found nothing, a `git` in a deleted worktree. Lower is the
+        # expensive direction: the pattern this keys on is also what iterating
+        # on a failing test looks like, and a flag a reader learns to ignore
+        # costs more than no flag.
+        loop_error_run_threshold=4,
         future_skew_tolerance_sec=120,
         sql_message_limit=400,
         max_cache_entries=8192,
@@ -376,6 +451,9 @@ def build_runtime_config(
         daemon_ready_timeout_sec=10.0,
         stop_release_timeout_sec=5.0,
         state_read_cap_bytes=65_536,
+        dismissal_read_cap_bytes=65_536,
+        dismissal_max_entries=256,
+        dismissal_body_cap_bytes=1_024,
         prompt_path_collapse_min_length=25,
         first_line_json_cap_bytes=200_000,
         notification_body_cap_bytes=65_536,
@@ -397,6 +475,16 @@ def build_runtime_config(
         event_body_cap_bytes=8_192,
         event_rate_per_sec=20.0,
         event_burst_max=40,
+        ask_deadline_sec=300.0,
+        ask_retention_sec=60.0,
+        ask_poll_timeout_sec=10.0,
+        ask_max_pending=16,
+        ask_body_cap_bytes=8_192,
+        ask_answer_body_cap_bytes=1_024,
+        ask_question_cap_chars=500,
+        ask_option_cap_chars=120,
+        ask_project_cap_chars=512,
+        ask_max_options=8,
     )
 
 

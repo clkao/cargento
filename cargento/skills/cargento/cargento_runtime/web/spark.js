@@ -4,6 +4,16 @@ let idleExpanded = false;
 let lastData = null;
 let refreshSequence = 0;
 let latestSettledRefresh = 0;
+/* The handled panel: whether it is open, and the last answer /api/cleared gave.
+   Session-only, like every other reveal on this page — the persistence that
+   matters lives in the server's store, and a panel that reopened itself on a new
+   tab would be a second thing to close. `null` is "not asked yet", which the
+   panel draws as loading rather than as an empty store. */
+let clearedOpen = false;
+let clearedRows = null;
+/* What went wrong, or what only half worked, said where the control was. Held
+   here rather than passed around because #app is rebuilt every poll. */
+let clearedNote = "";
 
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -19,11 +29,180 @@ const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
 function gateQueue(d){
   return d.sessions.filter(x => x.active && x.state === "needs_input");
 }
+/* Everything waiting on the reader, which is a longer list than `gateQueue`. A
+   pending ask waits on you without being a session in `needs_input`, so the
+   `Needs you` tile and the title count read this instead. A browser run of the
+   ask lane found the tile saying "Needs you 0 · Nothing is waiting on you."
+   while a question sat in the band directly below it, which is the same false
+   reassurance cargento#116 was filed for. The band and the keyboard cursor
+   deliberately still read `gateQueue`: ordering asks into that pass is its own
+   decision and belongs to DRC-4178. An ask entry carries `harness`, which is the
+   only field `countTile` reads off a member of this list. */
+function waitingOnYou(d, gates){
+  const asks = (d && d.ask && Array.isArray(d.asks)) ? d.asks : [];
+  return gates.concat(asks);
+}
 /* The regular view's cursor through that queue, held as a session key rather
    than an index so a gate answered above it does not slide the cursor onto a
    different row. */
 let gateCursorKey = null;
 let gateRevealCursor = false;   /* scroll the cursor into view after this render */
+
+/* The attention ordering — what needs you above what is merely running — stated
+   once for both views. Calm applies it as the order of one whole ledger; the
+   card view applies it inside the three sections it already draws. Two rules for
+   one ladder is the fault burnRacers() exists to prevent, on the more visible of
+   the two rules: this one decides which working card a reader reaches first, and
+   which idle rows the clip lets them see at all.
+
+   Takes a RAW payload session and returns only the fields the comparators rank
+   on, so neither view has to hand its row shape over — the same boundary
+   burnRacers() draws with its rate accessor. */
+function attentionKey(d, x){
+  const st = x.state === "needs_input" ? "needs" : (x.state === "working" ? "work" : "idle");
+  /* The rungs: blocked on you 0, working a turn that is running long 1, working
+     2, idle 4. Two things live here rather than beside the tone that renders the
+     flag, because a table holding both let a flag be added to one and ranked by
+     neither.
+
+     Hoisting the long-turn rung is a card moving under the reader, which the
+     `fastest` marker refuses to do — the refusal does not carry across. `long`
+     latches within a turn (turns.py picks a median of the candidates that could
+     still be running, which cannot fall as elapsed grows), so a card moves at
+     most once per turn, where a rate ordering would move it every poll. */
+  const rank = st === "needs" ? 0
+    : (st === "work" ? (x.turn && x.turn.long ? 1 : 2) : 4);
+  return {
+    st, rank, sid: x.sid,
+    /* What byWait ranks on, unclamped, beside the elapsed wait that renders. */
+    blockedAt: x.blocked_since || x.last_activity || 0,
+    sortAge: st === "work" ? 0 : Math.max(0, d.generated - (x.last_activity || 0))
+  };
+}
+
+/* Ordering has to be STABLE across the 5s poll — a row that swaps places under
+   the reader's cursor is worse than a row in the wrong place. Age is stable by
+   construction everywhere it means something: it is a fixed per-session
+   timestamp subtracted from one clock shared by the whole payload, so two idle
+   rows keep their relative order forever. The exception is a WORKING row,
+   whose last activity is always within WORKING_THRESHOLD_SEC of now — ordering
+   those by age sorts on nothing but which one wrote most recently, which flips
+   every poll. `sortAge` pins them level (see attentionKey) and the session id,
+   which never changes, breaks every remaining tie. This is the same call
+   collect() makes server-side for the same reason. */
+const bySid = (a, b) => (a.sid < b.sid ? -1 : (a.sid > b.sid ? 1 : 0));
+const byAge = (a, b) => a.sortAge - b.sortAge || bySid(a, b);
+/* Longest-blocked first: the queue order, ranked on the same raw field
+   aggregate.py sorts the payload by. Not on the rendered elapsed wait, which
+   floors at 0 — two rows carrying implausibly future stamps would both clamp to
+   zero here and fall to the id, while the server still ordered them by the
+   stamps, and the two views would name a different gate at the head. A fixed
+   timestamp is also what keeps the order stable across a poll, which an elapsed
+   time is not. */
+const byWait = (a, b) => a.blockedAt - b.blockedAt || bySid(a, b);
+/* Newest-first is right for a row you are watching and wrong for one that is
+   waiting on you: it puts the gate you just saw open above the one that has held
+   you up for an hour. `recent` keeps genuine newest-first for every state,
+   because it takes byAge directly. */
+const byRank = (a, b) => a.rank - b.rank ||
+  (a.st === "needs" && b.st === "needs" ? byWait(a, b) : byAge(a, b));
+
+/* The same ladder over raw payload sessions, for the view that builds no row
+   model to rank: decorate, sort, undecorate. Twice per render over the whole
+   session list, and deliberately uncached — burnLeaders() caches because it is
+   asked once per card, and this is asked once per render. */
+function attentionSort(d, rows){
+  return rows.map(x => ({x, k: attentionKey(d, x)}))
+    .sort((a, b) => byRank(a.k, b.k)).map(e => e.x);
+}
+
+/* Two live sessions carrying one project label — the collision the board could
+   always see and never said out loud. The `repo` ordering put the rows next to
+   each other, which is passive: the heading over two agents about to write over
+   one another is byte-identical to the heading over one working session and a
+   fortnight-old idle one, and a reader who never picks that ordering never sees
+   the grouping at all. So this is a marker rather than a view, and it rides the
+   project label, which both views print in every ordering.
+
+   Live is `working` or `needs_input`. A blocked session is half of the commonest
+   real collision: it holds a dirty tree and resumes the instant you answer the
+   gate, straight over the other agent's edits — so leaving it out would miss
+   both the case and the keystroke that causes it. Idle is out, because a stopped
+   session writes nothing and an `?all=1` board is mostly pairs of them.
+
+   What it compares is the LABEL. `project` is "/".join(parts[-2:]) (sessions.py),
+   two segments chosen precisely because sibling worktrees share them, so
+   `cargento/main` twice may be two checkouts with nothing in common but a name.
+   Every rendering's wording says so, the same hedge `fastest known` makes rather
+   than claim a maximum over rows it cannot see. Comparing real directories would
+   need a cwd in the payload, and SECURITY.md keeps cwd a matching hint that is
+   never echoed to /api/data.
+
+   Bare harness names are excluded, and that exclusion is the whole difference
+   between a marker and one that fires on any machine with two Cursor windows
+   open: nine collectors fall back to their own harness key when no cwd resolves,
+   so two unreadable Cursor workspaces both label `cursor` and share nothing at
+   all. A label with no separator in it that is also a harness key is that
+   fallback, and groups nobody. It never had to cover Cursor's subagents: that
+   collector published them as peer top-level rows carrying a real two-segment
+   label, so a parent and its own child would have read as a collision, and
+   DRC-4118 folded them under their parent in the same release as this.
+
+   Cached on payload object identity, exactly as burnLeaders() is and for the
+   same reason: the answer is a property of the payload, every row asks it of the
+   same object, and both views ask once per row every five seconds. */
+let collisionsFor = null;   // {d, found} for the last payload asked about
+function projectCollisions(d){
+  if(collisionsFor && collisionsFor.d === d) return collisionsFor.found;
+  const live = new Map();
+  for(const x of (d && d.sessions) || []){
+    if(x.state !== "working" && x.state !== "needs_input") continue;
+    const label = String(x.project == null ? "" : x.project);
+    if(!label) continue;
+    if(label.indexOf("/") < 0 && own(HARNESS, label, null)) continue;
+    if(!live.has(label)) live.set(label, []);
+    live.get(label).push(x);
+  }
+  const found = {groups: new Map(), keys: new Set()};
+  for(const [label, group] of live){
+    if(group.length < 2) continue;
+    found.groups.set(label, group);
+    for(const x of group) found.keys.add(sessKey(x));
+  }
+  collisionsFor = {d, found};
+  return found;
+}
+
+/* The words for it, once, for all four surfaces that carry them — calm's project
+   cell and its `repo` divider, the working card's metadata line, the gate row's.
+   A collision described four ways is four claims, and the three that drift are
+   the ones that would overstate what a shared label proves. */
+const DUP_LIMIT = " Same label is not proof of the same directory: the label is the" +
+  " last two segments of each session's path, so sibling worktrees read alike.";
+function dupNote(d, label, self){
+  const group = projectCollisions(d).groups.get(label);
+  if(!group) return null;
+  const named = group.filter(x => !self || sessKey(x) !== sessKey(self))
+    .map(x => (own(HARNESS, x.harness, {}).name || x.harness) + " " + x.session);
+  return {
+    text: group.length + " live",
+    tip: group.length + " sessions on the project label " + label +
+      " are working or waiting on you" + (self ? " — this one and " : ": ") +
+      named.join(", ") + "." + DUP_LIMIT
+  };
+}
+
+/* The marker, for a row that is one of the colliding sessions itself. An idle
+   row on a colliding label gets nothing: the claim is about the sessions that
+   are about to write, and that one has stopped. The markup is emitted here
+   rather than per view for the reason the sentence is — one chip, or four. */
+function dupMark(d, x){
+  if(!projectCollisions(d).keys.has(sessKey(x))) return "";
+  const note = dupNote(d, x.project, x);
+  return note
+    ? ` <span class="dupmark" title="${esc(note.tip)}">${esc(note.text)}</span>`
+    : "";
+}
 
 function fmtDur(sec){
   if(sec == null || sec < 0) return "–";
@@ -38,6 +217,76 @@ function fmtDur(sec){
 // calm ledger's flag explanation must not drift apart.
 const LONG_TURN_NOTE = "This request is running long (or estimated to). " +
   "Double-check what the agent is doing matches your expectations.";
+
+// One wording for the loop signal, for the reason LONG_TURN_NOTE is one
+// sentence: the calm ledger's flag explanation, calm's detail panel and the
+// working card all say it, and three copies are three chances to word it three
+// ways. The count is the server's, and the tool is named because "it is looping"
+// and "it is slow" are different answers to the only question this line is
+// asked — whether to walk over to the machine.
+function loopNote(loop){
+  const runs = (loop && loop.errors) || 0;
+  // Through humanTool() because an MCP call reaches the payload under its wire
+  // name, and this sentence is one of the places a reader meets a tool name.
+  const tool = (loop && loop.tool) ? " (most recently " + humanTool(loop.tool) + ")" : "";
+  return runs + " tool calls in a row came back as errors" + tool +
+    ". Check the agent is working the problem rather than repeating the failure.";
+}
+
+/* How long a stopped turn has to sit before either view calls it finished and
+   unread. Measured, not inherited: across 10,119 returns to a stopped turn in
+   1,355 local Claude transcripts, half were answered inside 106s and 90% inside
+   966s, so past 1,200s the odds are better than ten to one that nobody is coming
+   back to this one soon. Marking on the stop itself would put the word on nearly
+   every idle row within seconds — Idle restated in a second vocabulary, which is
+   the fault the `stale` chip was retired for. The retired chip's 7,200s is twice
+   the 97th percentile of those returns and was never re-argued: it would stay
+   silent through the whole window in which collecting the finished work is still
+   worth something. */
+const FINISHED_UNREAD_SEC = 1200;
+
+/* The three readings of an idle row, in one place because both views draw them:
+   a turn that ended and nobody read, a session that may still be waiting on a
+   reply nobody gave, and a harness whose store cannot tell us which. Only a
+   `turn_stopped` separates the first two, and just four of the ten harnesses can
+   send one — so the answer is a measurement, an absence, or an admission, and a
+   surface that words any of the three differently is inventing a fourth. */
+function finishedMark(d, x){
+  if(x.state !== "idle") return null;
+  const at = x.finished_at;
+  // A number, not just truthy: this arrives from the payload, and a string here
+  // would subtract into NaN and render as a mark that is always past the gate.
+  if(typeof at !== "number" || !isFinite(at) || at <= 0) return null;
+  const quiet = Math.max(0, d.generated - at);
+  if(quiet < FINISHED_UNREAD_SEC) return null;
+  return {word: "done",
+          tip: "this turn ended " + fmtDur(quiet) +
+            " ago and nothing has come back to read it"};
+}
+
+/* The markup for it, emitted here rather than per view for the reason dupMark is:
+   one marker, or two that drift. */
+function finishedBit(d, x){
+  const mark = finishedMark(d, x);
+  return mark
+    ? `<span class="fin-mark" title="${esc(mark.tip)}">${esc(mark.word)}</span>`
+    : "";
+}
+
+/* What the idle age means, which is not the same sentence on every row. */
+function idleQuietNote(d, x, age){
+  const mark = finishedMark(d, x);
+  if(mark) return mark.tip;
+  // The `acquisition` provenance marker, finally rendered: a row reached only by
+  // scanning is one whose harness has no event adapter at all, so its silence is
+  // the store's limit and not a fact about the session. Left unsaid, an unmarked
+  // idle row would mean either "did not finish" or "cannot be seen from here" —
+  // the same collapse the retired `stale` gloss was admitting to.
+  return x.acquisition === "scan-only"
+    ? "no activity for " + age + " — this harness sends no turn events, so whether" +
+      " it finished or is still waiting on a reply cannot be known here"
+    : "no activity for " + age;
+}
 
 // MCP tools reach the payload under their wire name — a mangled
 // `mcp` + server + tool triple joined by double underscores. Rendering that raw
@@ -67,6 +316,22 @@ const nowSec = () => Date.now() / 1000;
 const rateHistory = [];               // overall: [{t, v}]
 const sessRateHistory = new Map();    // "harness:sid" -> [{t, v}]
 const sessKey = x => x.harness + ":" + (x.sid || x.session);
+
+/* The key a dismissal control carries, and the pair the server keys its store
+   on. Deliberately NOT sessKey: that one falls back to the display id when `sid`
+   is blank, which is right for a per-row buffer the page owns and wrong here —
+   the server matches on `sid` alone, so a fallback would write a mark that never
+   matches a row again. A control with no sid to name is not rendered at all. */
+const dismissKey = x => (x.sid ? x.harness + ":" + x.sid : "");
+
+/* Back the other way. Split on the FIRST colon: no harness key contains one and
+   a session id may. */
+function splitDismissKey(key){
+  const at = String(key == null ? "" : key).indexOf(":");
+  if(at < 1) return null;
+  const sid = String(key).slice(at + 1);
+  return sid ? {harness: String(key).slice(0, at), sid} : null;
+}
 let lastGenerated = 0;
 
 function pushPoint(arr, t, v){

@@ -557,6 +557,10 @@ def spawn_argv(config: RuntimeConfig, args: argparse.Namespace) -> list[str]:
         argv.append("--no-usage")
     if args.no_events:
         argv.append("--no-events")
+    if args.no_dismiss:
+        argv.append("--no-dismiss")
+    if args.no_ask:
+        argv.append("--no-ask")
     # Forward the bind host only when the operator chose a non-default address,
     # so a Windows --daemon re-spawn keeps a --host 0.0.0.0 bind instead of
     # silently reverting to loopback.
@@ -795,6 +799,12 @@ def serve(
         if application is not None:
             with contextlib.suppress(Exception):
                 application.state.streams.close_all()
+            # And every parked ask poll. `POST /api/shutdown` declines them
+            # too, but it is only one way out: a signal, an exception and a
+            # `--stop` from another process all leave through here, and a poll
+            # nobody declined holds silently until the process exits under it.
+            with contextlib.suppress(Exception):
+                application.state.asks.decline_all()
         remove_state(config, port)
         with contextlib.suppress(OSError):
             server.server_close()
