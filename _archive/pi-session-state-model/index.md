@@ -1,6 +1,6 @@
 ---
 title: Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
-status: validation
+status: done
 source: captain seed
 id: c8ex5x308ssq305b62n3szxm
 gates:
@@ -65,13 +65,14 @@ gates:
                 reason: 'conn: fresh independent validator returned PASSED (report b45db03): classification matches ideation code-wise, spike ACs resolved, 1191 tests + ruff + mypy green, adversarial misclassification caught by the stopReason pin. AC-4 note (thinking precedence pinned in test_pi.py not test_sessions.py) is real coverage; optional direct-test follow-up logged, non-blocking.'
               application:
                 target-stage: done
-                state: pending
+                state: consumed
 started: 2026-08-22T05:54:23Z
 worktree: .worktrees/spacedock-ensign-pi-session-state-model
-mod-block: merge:pr-merge
+mod-block:
 verdict: PASSED
-completed: 2026-08-24T21:00:52Z
+completed: 2026-08-24T21:02:58Z
 pr: pr-merge:145
+archived: 2026-08-24T21:02:58Z
 ---
 # Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
 
