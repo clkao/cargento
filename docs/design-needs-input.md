@@ -35,8 +35,32 @@ document is that a Copilot row behaves like the transcript row of N-1's table ra
 Codex row: the overlay sections do not apply to it at all, because no event adapter maps Copilot and
 `events.parse` refuses its envelopes outright, and the wait ends when the collector next reads the
 file rather than when an overlay is superseded. The measurement is
-`docs/captures/copilot/permission-events-1.0.78-macos.jsonl`, and B2 in the tracker carries the other
-seven harnesses.
+`docs/captures/copilot/permission-events-1.0.78-macos.jsonl`.
+
+Cursor is the fourth, by Copilot's route on a different store, and it brings one thing neither of the
+others needed. A standing tool-call gate leaves `pendingToolExecutionContracts` non-empty on the
+newest blob of the chat's SQLite store, and answering it (approving or refusing alike) appends a
+blob carrying the same key with the map emptied. Three properties of that store shaped the reader,
+and each was measured rather than reasoned:
+
+- The carrier is a length-prefixed binary frame, not a JSON object, so the collector's existing
+  brace-first parse finds nothing in it. The match is on bytes.
+- The store is append-only and its ids are content-addressed, so the blob that stood at the gate is
+  still in the table long after the answer. The reading has to be newest-by-`rowid`, which is the
+  only order handle the schema leaves; "any blob carries a non-empty map" is a wait that never ends.
+- The carrier is not reachable from `meta.latestRootBlobId` in the general case. One readable store
+  had a root id that was not in the table at all, so widening the existing meta-root-children walk
+  would have missed it. It is a separate read on the connection the metadata pass already opens,
+  memoised on the same mtime.
+
+The thing neither of the others needed is [N-10](#n-10-a-cursor-gate-needs-a-liveness-gate-and-a-time-limit-cannot-be-it),
+below. The measurement is `docs/captures/cursor/pending-tool-call-2026.08.11-macos.jsonl`, and B2 in
+the tracker carries the other six harnesses.
+
+The hook route for Cursor is a decided negative and is not revisited: `beforeShellExecution` runs
+before the permission decision and feeds into it, so returning `permission: "ask"` **creates** the
+prompt rather than observing one, and a wait posted from there would paint every Cursor row on its
+first command.
 
 The first two rows overlap, which is easy to miss and was missed here. `AskUserQuestion` and
 `ExitPlanMode` are gated tools, so `PermissionRequest` fires for them like any other tool call, and
@@ -350,8 +374,9 @@ it was true when it was written; it is not now, and it failed in the two opposit
 Codex reports a gate as an **overlay** and has no collector detection, so there is no collector wait
 for an overlay to contradict. Copilot is the mirror image: its collector raises the wait off the
 permission pair in its own store, and no overlay can ever reach the row, because Copilot has no entry
-in the event vocabulary and `events.parse` refuses its envelopes. So the ledger is structurally blind
-to a gate on either of them, and a zero on a Codex or Copilot machine is not a measurement.
+in the event vocabulary and `events.parse` refuses its envelopes. Cursor sits exactly where Copilot
+does, for the same two reasons. So the ledger is structurally blind to a gate on any of the three,
+and a zero on a Codex, Copilot or Cursor machine is not a measurement.
 
 A Copilot row is not left unwatched by that, only unwatched *here*. This ledger exists because an
 overlay can pin a live wait behind a stale Working row and nothing else would notice. A collector
@@ -590,3 +615,97 @@ constant and requires the prose to agree, because otherwise the two can only mat
   completion renders identically to a measured one, so those rows disclose `scan-only` through
   `acquisition`, which was defined for this and rendered nowhere until now. A test holds the
   collectors to it.
+
+## N-10: a Cursor gate needs a liveness gate, and a time limit cannot be it
+
+The other three harnesses close a wait with a record. Claude's overlay is superseded, Codex's
+expires, Copilot's is answered or written past. Cursor's store closes nothing on its own: it is
+append-only, and a session that was abandoned at a gate leaves its non-empty contract map in the
+newest blob it will ever write. There is no lock file, no pid, nothing beside the store that records
+the process going away.
+
+That is not a hypothetical. The capture ran a control arm over ten readable stores no arm of the
+probe had driven, and **2 of them read as waiting 29.4 hours after their process exited**. Neither
+had a tool result matching its pending call id, so both were genuinely still at a gate and both were
+genuinely dead. Publishing them means permanent red rows for sessions nobody is in, and since
+DRC-4192 pointed the desktop notifier at every harness, a popup with each.
+
+So the wait is gated on `active`, the freshness test the row already runs on. Three things recommend
+it over the alternatives:
+
+- It is the same reading the title is already gated on, so a row cannot be current enough to name and
+  too stale to trust in the same refresh.
+- It holds under `--all`. That mode shows a row whose `active` is False, which is the door the
+  measured 29.4-hour case would otherwise have walked through.
+- It costs nothing: it is a comparison against a number the collector has already computed.
+
+Liveness alone still trusts whatever the bytes said. A second rule bounds the reading itself: the
+stamp has to be plausibly this store's own newest write. The write that raises the gate is what puts
+`pendingToolCallStartedAtMs` on disk, so on a real gate the stamp and the file's mtime are the same
+moment, give or take the hook that ran first (20 seconds in the probe's slowest arm). A stamp from
+long before that write is not the conversation's current state, and there are two ways to get one: a
+neighbouring object inside the 8 KB window the reader pulls, and bytes that merely spell the field,
+which a message quoting a store record is enough to produce. Either publishes a red row and a popup
+carrying a wait nobody believes, and nothing retires it, because the blob that produced it stays the
+newest carrier for as long as the store exists. So a stamp outside the activity window of the
+store's own mtime drops the whole reading rather than the wait's start time. The window is the
+activity window and not something tighter: nothing measured how far a genuine gate's stamp may trail
+a later write to the same store, and a missed gate is a row that reads Working where an invented one
+is a desktop notification.
+
+Two smaller rules follow the same grain. Inside the chosen blob the last carrier wins, for the reason
+the blob itself is chosen by highest `rowid`: a blob is bytes appended in order, and first-match
+disagrees in both directions, reading an answered-then-reopened gate as no wait and a gate-then-answer
+as a wait that never ends. And a gate read that raised is never memoised. The memo is keyed on the
+store's mtime, and a standing gate freezes that mtime by construction, so caching the `None` an
+exception leaves behind hides that gate for the whole life of the wait. The one failure that is a
+reading rather than an accident, a schema with no `blobs` table, is told apart by asking
+`sqlite_master` rather than by matching SQLite's error text, which is text SQLite is free to change.
+
+### Rejected
+
+- **`working_threshold_sec` as the liveness test.** It is 90 seconds, and a gate the probe
+  deliberately left standing ran 243.7 seconds without expiring. A real permission wait can last
+  hours; a 90-second liveness would drop it after the first minute and a half.
+- **Capping the age a wait may reach.** `config.py` already rules that a needs-input overlay has no
+  deadline, for that same reason, and nothing in the capture found an upper bound to lean on.
+- **A minimum stand before a gate counts**, which is what Copilot's collector does. Copilot needed
+  it for a measured race: `copilot -p` without `--allow-all-tools` auto-denies every gated call, and
+  the capture times that request/answer pair 1 ms apart, so a tick landing inside it could catch a
+  half-written pair and raise a popup for a run nobody is watching. Cursor has no such pair to catch.
+  The two states are two different blobs rather than one record being amended, and a read-only
+  connection sees only committed ones, so there is no half-written state to sample. The shortest gate
+  the probe recorded stood 15.3 seconds. A floor here would be guarding against something nothing has
+  observed.
+- **Retiring the gate when the session writes past it**, Copilot's other fix. Cursor needs no rule
+  for it, because the reading is already newest-by-`rowid`: answering the prompt appends a blob with
+  the map emptied, and that blob is the one the reader takes. The retirement is structural rather
+  than a heuristic about which record counts as proof.
+
+### What it still cannot do
+
+A session abandoned at a gate an hour ago is inside the window and reads as a standing wait, exactly
+as a Copilot one does. The liveness gate moves the boundary to the edge of the activity window; it
+does not find the process. Nothing in the store can, and the capture says so rather than implying it.
+
+A subagent's gate is invisible. A Cursor child keeps its own store and folds onto its parent's card
+as a pill, so its rows are never published and its pending contract is never read. The capture's
+`other-prompt-kinds` arm records `subagent_store_tested` as false, so this is an untested shape as
+well as an unhandled one, and widening the read to children without a measurement would be inventing
+the parent's state from a file nobody has looked at at a gate.
+
+How many times one blob can carry the key is unmeasured. The capture counted contract entries and
+never occurrences, so the last-carrier rule above is reasoning from the store's append-only shape
+rather than from a count. The reader sees 4096 bytes either side of the first occurrence; a second
+carrier further out than that is not reachable without materialising the whole blob, which is the
+read the window exists to avoid. One read-only query over real stores would settle it, and it has
+not been run.
+
+Only a shell gate was driven. MCP prompts, plan decisions, question tools and sudo requests are all
+recorded unmeasured in the same arm; whether they write the same key is not known here.
+
+A store whose blobs are encrypted reports no wait. Every store measured was plaintext, but every
+`meta` payload carries a `blobEncryptionKey`, so some build almost certainly encrypts them. There the
+bytes simply do not match and the session reads as nobody waiting, which is the honest reading of
+bytes we cannot read. The key is never used, for the reason the model read gives: opening a user's
+conversation to label a card is not a trade this dashboard makes.

@@ -255,6 +255,137 @@ def _model(config: RuntimeConfig, con: sqlite3_types.Connection, root_id: str) -
     return None
 
 
+# The gate. `pendingToolExecutionContracts` is a map keyed by tool call id, and
+# a non-empty one is a person being asked to approve something; the answer --
+# approval or refusal alike -- appends a blob carrying the same key with the map
+# emptied. `pendingToolCallStartedAtMs` rides the same object and is the stamp,
+# not the discriminator: it survives the answer (`a1-approve` recorded
+# `pending_started_ms_present_after_answer` beside zero contract entries), so a
+# reader keyed on it reports every session that ever stood at a gate as waiting
+# forever. Measured in docs/captures/cursor/pending-tool-call-2026.08.11-macos.jsonl.
+#
+# Matched on bytes because the carrier is a length-prefixed binary frame rather
+# than a JSON object, so `_meta_fields`' parse finds nothing in it. The optional
+# quote absorbs both spellings of the key's own terminator, and the `\s*` are the
+# liberty `_MODEL_RE` already takes with a compact serializer. `(\S)` is the first
+# non-space byte inside the map: `}` is empty and anything else is a contract.
+#
+# A frame that does not match at all publishes no wait. That is the safe
+# direction on this field -- a missed gate is a row that reads Working, and an
+# invented one is a red row and a desktop popup for nobody.
+_PENDING_KEY = b"pendingToolExecutionContracts"
+_PENDING_MAP_RE = re.compile(rb'pendingToolExecutionContracts"?\s*:\s*\{\s*(\S)')
+_PENDING_STARTED_RE = re.compile(rb'pendingToolCallStartedAtMs"?\s*:\s*(\d{1,20})')
+
+# How much of the carrier blob to read around the key. The enclosing object holds
+# three keys and one contract entry ran to about 200 bytes with an 85-character
+# id, so this is two orders above what the two readings need, and it is what keeps
+# a per-session-per-refresh read from materialising a whole blob: the largest of
+# the 145 blobs measured across three live stores is 48,842 bytes.
+_PENDING_WINDOW_BYTES = 4096
+
+
+def _pending_since(con: sqlite3_types.Connection) -> float | None:
+    """When the newest standing tool-call gate opened, or None if none stands.
+
+    ``0.0`` is a gate whose stamp would not read, which the caller falls back to
+    the store's mtime for rather than publishing a wait that began at the epoch.
+
+    Newest **by rowid**, and that is the constraint rather than a preference. The
+    store is append-only and its ids are content-addressed sha256, so the blob
+    that stood at the gate is still in the table long after the answer and the id
+    carries no chronology at all; `rowid` is the only order handle the schema
+    (`id TEXT PRIMARY KEY, data BLOB`) leaves. "Any blob carries a non-empty map"
+    is a wait that never ends.
+
+    Its own read rather than a widening of `_model`'s meta-root-children walk:
+    the carrier is not reachable from `latestRootBlobId` in the general case --
+    the capture found one readable store whose root id was not in the table at
+    all -- so a walk that started there would miss it. It rides the connection
+    `_meta` already opened and is memoized on the same mtime, so an idle session
+    costs nothing and a busy one cannot be pinned to a stale answer.
+
+    The scan happens inside SQLite: `instr` filters and the rowid index orders,
+    so at most one bounded window crosses into Python however many blobs the
+    store holds.
+
+    The `CAST` is load-bearing and not tidiness. SQLite types values rather than
+    columns, so a build that wrote the frame as text keeps it as text in a column
+    declared BLOB — and `instr` compares a text value against a blob needle by
+    finding nothing at all. Without the cast such a store reports no gate ever,
+    silently and identically to a store with no gate in it. Casting also keeps
+    the offsets `substr` counts in bytes on both, which is what the byte match
+    downstream assumes.
+    """
+    row = con.execute(
+        "SELECT substr(CAST(data AS BLOB), max(1, instr(CAST(data AS BLOB), :key) - :window), "
+        ":window * 2) FROM blobs WHERE instr(CAST(data AS BLOB), :key) > 0 "
+        "ORDER BY rowid DESC LIMIT 1",
+        {"key": _PENDING_KEY, "window": _PENDING_WINDOW_BYTES},
+    ).fetchone()
+    if row is None:
+        return None
+    if not isinstance(row[0], (bytes, bytearray, memoryview)):
+        return None
+    frame = bytes(row[0])
+    # Last carrier in the window rather than first, for the reason the blob is
+    # chosen by highest rowid: a blob is bytes appended in order, so where two
+    # objects in one carry the key the later one is the later state. First-match
+    # disagrees with that in both directions -- an answered call followed by a
+    # new gate reads as no wait, and a gate followed by its answer reads as a
+    # wait that never ends. A second carrier further from the key than the
+    # window is not reachable without materialising the whole blob, and whether
+    # a real blob ever holds two is unmeasured: the capture counted contract
+    # entries, never occurrences of the key.
+    found = None
+    for match in _PENDING_MAP_RE.finditer(frame):
+        found = match
+    if found is None or found.group(1) == b"}":
+        return None
+    stamp = _nearest_stamp(frame, found.start())
+    return 0.0 if stamp is None else stamp
+
+
+def _nearest_stamp(frame: bytes, key_pos: int) -> float | None:
+    """The gate stamp beside the carrier at ``key_pos``, or None if there is none.
+
+    Nearest rather than first, and that is the whole point of the function. The
+    stamp sits in the same object as the contracts map but *before* it in the
+    orders measured, so it has to be looked for behind the key — and the window
+    opens 4096 bytes behind, which is room for other objects that spell the same
+    field. Searching that window forwards takes the candidate furthest from the
+    carrier: a 40-second-old gate rendered as eleven hours that way, and the
+    attention queue ranks on this stamp, so it sorted eleven hours wrong too.
+    Nearest is direction-agnostic, so it also survives a serializer that puts
+    the stamp after the map.
+    """
+    best: re.Match[bytes] | None = None
+    for match in _PENDING_STARTED_RE.finditer(frame):
+        if best is None or abs(match.start() - key_pos) < abs(best.start() - key_pos):
+            best = match
+    return None if best is None else int(best.group(1)) / 1000
+
+
+def _blobs_table_missing(con: sqlite3_types.Connection) -> bool:
+    """Whether this store has no `blobs` table, asked after a failed gate read.
+
+    Separates the one gate failure that is a reading from every failure that is
+    not. Read from `sqlite_master` rather than by matching the exception's
+    message, because that text is SQLite's to change and a reader that got it
+    wrong would silently memoize a transient error again.
+
+    False when the question itself cannot be answered, since that is the same
+    "no value returned" the caller is already deciding not to trust.
+    """
+    try:
+        row = con.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'blobs'"
+        ).fetchone()
+    except runtime_io.sqlite_module.Error:
+        return False
+    return bool(row) and not row[0]
+
+
 def _meta_fields(rows: list[Any], sibling_cwd: str) -> tuple[str | None, str, str, str, str]:
     """(session name, workspace, root blob id, parent agent id, subagent type).
 
@@ -396,13 +527,61 @@ def _subagent_key(db: str) -> str:
     return db + "\x00subagent"
 
 
+def _pending_key(db: str) -> str:
+    """The cache key the standing gate rides under.
+
+    A fourth entry, for the reason the model and the subagent edge got the
+    second and third: they are all memoized on one mtime under one lock, and
+    folding them together means widening `state.cursor_metadata_cache`'s value
+    type, which is a change to a module this collector does not own.
+
+    The slot holds `None` for "nobody is waiting" and the stamp as `repr` text
+    otherwise, `"0.0"` being a gate whose stamp would not read. Those are two
+    different readings and the encoding keeps them apart: collapsing them would
+    turn an unreadable stamp into no gate at all.
+    """
+    return db + "\x00pending"
+
+
+def _cached(
+    state: RuntimeState, db: str, mtime: float, *, locked: bool = False
+) -> tuple[str | None, str, str | None, str, str, float | None] | None:
+    """One store's memoized readings, or None when any of the four is stale.
+
+    All or nothing on purpose. The four entries are one memo split across four
+    keys only because the cache's value type is two strings wide, so accepting a
+    subset would publish readings from two different states of the same store.
+
+    ``locked`` is for the second, double-checked call inside `_meta`'s write
+    section, which already holds `cache_lock`; `cache_lock` is not reentrant.
+    """
+    keys = (db, _model_key(db), _subagent_key(db), _pending_key(db))
+    if locked:
+        hits = [state.cursor_metadata_cache.get(key) for key in keys]
+    else:
+        with state.cache_lock:
+            hits = [state.cursor_metadata_cache.get(key) for key in keys]
+    fresh = [hit for hit in hits if hit is not None and hit[0] == mtime]
+    if len(fresh) != len(keys):
+        return None
+    base, model_hit, sub_hit, pend_hit = fresh
+    return (
+        base[1],
+        base[2],
+        model_hit[1],
+        sub_hit[1] or "",
+        sub_hit[2],
+        None if pend_hit[1] is None else float(pend_hit[1]),
+    )
+
+
 def _meta(
     config: RuntimeConfig,
     state: RuntimeState,
     db: str,
     mtime: float,
-) -> tuple[str | None, str, str | None, str, str]:
-    """(name, workspace, model, parent agent id, subagent type) for one store.
+) -> tuple[str | None, str, str | None, str, str, float | None]:
+    """(name, workspace, model, parent agent id, subagent type, gate stamp) for one store.
 
     The first two come from the meta table: hex-encoded UTF-8 JSON (some
     versions store plain JSON; value may be NULL or non-text). mode=ro (not
@@ -418,25 +597,19 @@ def _meta(
     different facts about different things, and routing the first through the
     second withdraws two readings that were fine. The sibling meta.json is read
     on the same terms and for the same reason.
+    The gate rides the same connection and the same mtime, for the same reason
+    and with one more of its own: it is a scan rather than an indexed lookup, so
+    it is the read that most needs an idle session to cost nothing.
     """
-    with state.cache_lock:
-        hit = state.cursor_metadata_cache.get(db)
-        model_hit = state.cursor_metadata_cache.get(_model_key(db))
-        sub_hit = state.cursor_metadata_cache.get(_subagent_key(db))
-    if (
-        hit
-        and model_hit
-        and sub_hit
-        and hit[0] == mtime
-        and model_hit[0] == mtime
-        and sub_hit[0] == mtime
-    ):
-        return hit[1], hit[2], model_hit[1], sub_hit[1] or "", sub_hit[2]
+    cached = _cached(state, db, mtime)
+    if cached is not None:
+        return cached
     model: str | None = None
+    pending: float | None = None
     try:
         con = runtime_io.open_sqlite_read_only(db, state)
     except runtime_io.sqlite_module.Error:
-        return None, "", None, "", ""
+        return None, "", None, "", "", None
     failed = False
     try:
         try:
@@ -452,24 +625,41 @@ def _meta(
                 model = _model(config, con, root_id)
             except runtime_io.sqlite_module.Error:
                 model = None
+        # Fails on its own like the model read, and for the sharper version of
+        # the same reason: a store on a schema with no `blobs` table has no gate
+        # to report, and routing that through the store-error boundary would
+        # withdraw a title and a workspace that were fine.
+        gate_settled = True
+        try:
+            pending = _pending_since(con)
+        except runtime_io.sqlite_module.Error:
+            pending = None
+            # Which failure it was decides whether `None` may be memoized, and
+            # the two are not close. A schema with no `blobs` table has no gate
+            # and cannot grow one while the mtime holds, so that answer is a
+            # reading. Anything else — a busy writer expiring
+            # `open_sqlite_read_only`'s busy timeout, most of all — returned no
+            # value at all, and the mtime it would be cached against is one a
+            # standing gate freezes by construction: the gate-opening write is
+            # the last write the store gets, which is why the capture's
+            # false-positive control found abandoned stores still at a gate
+            # 29.4 hours on. Cached, that `None` hides the gate for the whole
+            # life of the wait and heals only when the human answers.
+            gate_settled = _blobs_table_missing(con)
     finally:
         con.close()
     if failed:
         # Transient: do not cache values the query never returned.
-        return None, "", None, "", ""
+        return None, "", None, "", "", None
+    if not gate_settled:
+        # The readings that did return are still published; only the memo is
+        # withheld, so the next refresh re-reads the store rather than serving
+        # a gate reading that was never taken.
+        return title, cwd, model, parent_id, type_name, pending
     with state.cache_lock:
-        hit = state.cursor_metadata_cache.get(db)
-        model_hit = state.cursor_metadata_cache.get(_model_key(db))
-        sub_hit = state.cursor_metadata_cache.get(_subagent_key(db))
-        if (
-            hit
-            and model_hit
-            and sub_hit
-            and hit[0] == mtime
-            and model_hit[0] == mtime
-            and sub_hit[0] == mtime
-        ):
-            return hit[1], hit[2], model_hit[1], sub_hit[1] or "", sub_hit[2]
+        cached = _cached(state, db, mtime, locked=True)
+        if cached is not None:
+            return cached
         runtime_state.bounded_put(
             state.cursor_metadata_cache,
             db,
@@ -488,7 +678,13 @@ def _meta(
             (mtime, parent_id, type_name),
             limit=config.max_cache_entries,
         )
-        return title, cwd, model, parent_id, type_name
+        runtime_state.bounded_put(
+            state.cursor_metadata_cache,
+            _pending_key(db),
+            (mtime, None if pending is None else repr(pending), ""),
+            limit=config.max_cache_entries,
+        )
+        return title, cwd, model, parent_id, type_name, pending
 
 
 class _Chat(NamedTuple):
@@ -506,6 +702,7 @@ class _Chat(NamedTuple):
     model: str | None
     parent_id: str
     type_name: str
+    pending_since: float | None
 
 
 def collect(
@@ -538,7 +735,7 @@ def collect(
             continue
         if not (sessions.is_fresh(config, now, mtime, window_hours * 3600) or show_all):
             continue
-        title, cwd, model, parent_id, type_name = _meta(config, state, db, mtime)
+        title, cwd, model, parent_id, type_name, pending_since = _meta(config, state, db, mtime)
         chats.append(
             _Chat(
                 sid,
@@ -548,6 +745,7 @@ def collect(
                 model,
                 parent_id,
                 type_name,
+                pending_since,
             )
         )
 
@@ -580,7 +778,61 @@ def collect(
         if not (active or show_all):
             continue
         session_state, state_detail = "idle", "awaiting your message"
-        if sessions.is_fresh(config, now, last_activity, config.working_threshold_sec):
+        blocked_since = None
+        # THE LIVENESS GATE. A Cursor store is append-only, so a session
+        # abandoned at a gate carries its pending contract for as long as the
+        # file exists: of ten readable stores no arm of the probe had touched, 2
+        # still read as waiting 29.4 hours after their process exited, and
+        # nothing beside the store records the process going away — no lock file,
+        # no pid. Publishing those is a permanent red row for a session nobody is
+        # in, and since DRC-4192 a desktop notification with each.
+        #
+        # `active` is the liveness the row already runs on: the same test that
+        # decides whether this store is a session at all, and the one the title
+        # is already gated on. It holds under `--all` too, where the row is shown
+        # and `active` is still False, which is the mode the measured case would
+        # otherwise reach the board through.
+        #
+        # Not `working_threshold_sec`. A gate the probe deliberately left standing
+        # ran 243.7 s without expiring and nothing found an upper bound, so a
+        # 90-second liveness would drop real prompts — and `config.py` already
+        # rules that a needs-input overlay has no deadline for that reason.
+        gate = chat.pending_since if active else None
+        # AND THE STAMP HAS TO BE THIS STORE'S OWN. The gate-opening write is
+        # what puts the stamp on disk, so on a real gate the two are the same
+        # moment give or take the hook that ran before it — 20 seconds in the
+        # measured worst case, where the probe's hook slept that long. A stamp
+        # from long before the store's last write is therefore not this
+        # conversation's current state: it is one donated by a neighbouring
+        # object in the window, or bytes that merely spell the field, which a
+        # message quoting a store record is enough to produce. Published, that
+        # is a permanent red row and a desktop popup carrying a wait nobody
+        # believes, and nothing retires it — the blob stays the newest carrier
+        # for as long as the store exists.
+        #
+        # The store's own mtime is the reference rather than `now`, because it
+        # is what the stamp is a claim about; `is_fresh` is the same test the
+        # row's liveness runs on, and it rejects a stamp implausibly *ahead* of
+        # that write for free. The window is the activity window rather than a
+        # tight bound of its own: nothing measured how far a gate's stamp can
+        # legitimately trail a later write to the same store, and a missed gate
+        # is a row that reads Working where an invented one is a popup.
+        if gate and not sessions.is_fresh(config, chat.mtime, gate, window_hours * 3600):
+            gate = None
+        if gate is not None:
+            # Ahead of the working test, like Copilot's (design-needs-input N-2):
+            # the store moves when the gate opens, so every standing gate is
+            # inside the working window and a Working row here would be the whole
+            # defect.
+            session_state = "needs_input"
+            blocked_since = gate or chat.mtime
+            waited = sessions.fmt_duration(sessions.age(config, now, blocked_since))
+            # Says a permission request is open and stops there. The contract
+            # entry names the tool (`outerToolName`, `toolIdentifier`,
+            # `allowedToolNames`), and this string is the popup body, so reading
+            # any of them would put a command on a desktop notification.
+            state_detail = f"permission request, waiting {waited}"
+        elif sessions.is_fresh(config, now, last_activity, config.working_threshold_sec):
             session_state = "working"
             # Only the children that are moving now, which is a shorter list
             # than the pills: every folded child is published so that none
@@ -599,6 +851,10 @@ def collect(
                 "title": chat.title if active else None,
                 "state": session_state,
                 "state_detail": state_detail,
+                # The queue ranks on this, so it is the stamp the store recorded
+                # rather than the collection time: a gate that has cost somebody
+                # ten minutes must not sort behind one that opened just now.
+                "blocked_since": blocked_since,
                 "active": active,
                 "last_activity": last_activity,
                 "own_activity": chat.mtime,
