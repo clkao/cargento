@@ -25,7 +25,7 @@ gates:
                 reason: 'Conn: captain granted ''you have the conn to push to the forked repo and open PR; when you have the conn, you should still do gate attempt and record your autonomous approval as resolution'' (session 01a02216, reaffirmed ''just do some'' this session). Evidence: seed verified against live 4553 screenshot showing modal walling the product; ACs screenshot-falsifiable; presentation-only scope (usage.js + styles.css). Ideation owes banner placement + calm-palette design consistent with the 3-piece IA.'
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
         - id: gate:rj95tbw2vde46v8xjgcvgm9q:ideation
           stage: ideation
           attempts:
@@ -45,7 +45,7 @@ gates:
                 reason: 'Conn: ''you have the conn ... record your autonomous approval as resolution'' (session 01a02216, reaffirmed ''just do some'' this session). Evidence: checklist 3/3 DONE; mock.html FO-rendered via headless chromium — banner under control bar with product visible on first paint (AC-1/AC-2 shape); rejected alternative named with reason; AC-3/AC-4 wire tokens + unchanged disclosure text carried explicitly in design. Ready for implementation: replace u-overlay with in-flow u-banner, keep consent wiring.'
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
         - id: gate:rj95tbw2vde46v8xjgcvgm9q:validation
           stage: validation
           attempts:
