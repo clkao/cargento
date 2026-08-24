@@ -11,7 +11,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any, ClassVar
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import ParseResult, parse_qs, urlparse
 
 from cargento_runtime import asks as runtime_asks
 from cargento_runtime import dismissals, notifications, quota, records
@@ -342,34 +342,27 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.send_error(403)
             return
         url = urlparse(self.path)
+        if url.path == "/":
+            self._send(self.server.page_bytes, "text/html; charset=utf-8")
+        elif not self._get_api(url):
+            self.send_error(404)
+
+    def _get_api(self, url: ParseResult) -> bool:
+        """Route one GET API path, or return False so `do_GET` can 404 it.
+
+        Split off the page arm rather than kept as one chain: adding the
+        observer route took the single method to mccabe 11 against ruff's cap
+        of 10, and this file has never needed a complexity exemption. The
+        split keeps the next route free rather than buying it one.
+        """
         if url.path == "/api/data":
-            query = parse_qs(url.query)
-            show_all = query.get("all", ["0"])[0] == "1"
-            # `usage=1` is the page's consent to the quota fetch riding along
-            # on its poll: the page sends it only with the feature switched on
-            # and the first-run disclosure already shown. The fetch is a
-            # background side effect behind its own floor and in-flight gates;
-            # this request is answered from whatever is already cached. A bare
-            # request without the parameter never triggers network traffic.
-            if query.get("usage", ["0"])[0] == "1":
-                self.server.application.request_usage_fetch()
-            revision, body = self.server.application.collect_json(show_all=show_all)
-            # The cursor rides in a header rather than the body, so the
-            # documented JSON contract and every curl caller stay untouched.
-            self._send(
-                body,
-                "application/json",
-                headers={"X-Cargento-Revision": runtime_snapshot.format_revision(revision)},
-            )
+            self._data(url)
         elif url.path == "/api/overlays":
             self._overlays()
         elif url.path == "/api/cleared":
             self._cleared()
         elif url.path.startswith("/api/ask/"):
-            # Prefix-matched, so it cannot join the exact-match arms above. One
-            # arm and not two, deliberately: `do_GET` measures mccabe 9 against
-            # ruff's cap of 10, and this file has never needed a complexity
-            # exemption. A second arm would buy it its first.
+            # Prefix-matched, so it cannot join the exact-match arms above.
             self._ask_poll(url.path[len("/api/ask/") :])
         elif url.path == "/api/stream":
             self._stream()
@@ -377,12 +370,31 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._health()
         elif url.path == "/api/observe":
             self._observe(url)
-        elif url.path == "/":
-            self._send(self.server.page_bytes, "text/html; charset=utf-8")
         else:
-            self.send_error(404)
+            return False
+        return True
 
-    def _observe(self, url: Any) -> None:
+    def _data(self, url: ParseResult) -> None:
+        query = parse_qs(url.query)
+        show_all = query.get("all", ["0"])[0] == "1"
+        # `usage=1` is the page's consent to the quota fetch riding along
+        # on its poll: the page sends it only with the feature switched on
+        # and the first-run disclosure already shown. The fetch is a
+        # background side effect behind its own floor and in-flight gates;
+        # this request is answered from whatever is already cached. A bare
+        # request without the parameter never triggers network traffic.
+        if query.get("usage", ["0"])[0] == "1":
+            self.server.application.request_usage_fetch()
+        revision, body = self.server.application.collect_json(show_all=show_all)
+        # The cursor rides in a header rather than the body, so the
+        # documented JSON contract and every curl caller stay untouched.
+        self._send(
+            body,
+            "application/json",
+            headers={"X-Cargento-Revision": runtime_snapshot.format_revision(revision)},
+        )
+
+    def _observe(self, url: ParseResult) -> None:
         """Trigger the observer analyzer on demand and return the sidecar JSON.
 
         A thin trigger, not a polling endpoint: read the transcript + entity
