@@ -425,12 +425,13 @@ any count next to a harness list here is part of the list.
 
 Claude, Codex, Antigravity, Gemini, OpenCode and Goose rows are backed by captures under
 `docs/captures/`. The OpenCode capture covers the plugin path only; its ACP and shared-server cells
-are still documentation reads. Factory Droid has no capture behind it at all, so every cell in that
-row is a vendor-documentation read and unmeasured. Pi, Copilot CLI and Cursor CLI now have captures
-under `docs/captures/`, but none of them measures the passive-feed cell as this table states it, and
-none has been reconciled into these rows: read those files before trusting a Pi, Copilot or Cursor
-cell here. The ACP column is unmeasured on every row either way: its per-harness qualifiers come from
-the ACP agent directory listing rather than from any observed
+are still documentation reads. Factory Droid's hook cell is now backed in part: registration, the
+event vocabulary and two payload shapes were measured on 0.202.0, while everything a turn would
+exercise was not, because a turn needs a Factory account. Pi, Copilot CLI and Cursor CLI now have
+captures under `docs/captures/`, but none of them measures the passive-feed cell as this table
+states it, and none has been reconciled into these rows: read those files before trusting a Pi,
+Copilot or Cursor cell here. The ACP column is unmeasured on every row either way: its per-harness
+qualifiers come from the ACP agent directory listing rather than from any observed
 connection.
 
 ### Claude Code
@@ -1079,8 +1080,8 @@ adapter maps them to `store_changed` and nothing more.
 
 ### Gemini CLI, Copilot, and Factory Droid
 
-All three document command-based lifecycle hooks. Gemini's is measured below; Copilot's and
-Factory's are documentation reads with no capture and no adapter:
+All three document command-based lifecycle hooks. Gemini's is measured below, Factory's is measured
+in part, and Copilot's is a documentation read with no capture and no adapter:
 
 - [Gemini CLI hooks](https://geminicli.com/docs/hooks/reference/) include before/after agent and
   model events, tool events, session lifecycle, notifications, and compression.
@@ -1090,7 +1091,18 @@ Factory's are documentation reads with no capture and no adapter:
   `config.json`. Event names, cardinality and payloads are unmeasured.
 - [Factory hooks](https://docs.factory.ai/reference/hooks-reference) include session lifecycle,
   prompts, notifications, stops, subagent stops, and tool events. Factory documents notification
-  cases for permission waits and idle input waits.
+  cases for permission waits and idle input waits. Partly measured on droid 0.202.0 in
+  [`../captures/droid/notification-0.202.0-macos.jsonl`](../captures/droid/notification-0.202.0-macos.jsonl):
+  hooks register from a project-scope `.factory/hooks.json` and fire before the account gate, so
+  `SessionStart` and `SessionEnd` payload shapes and the session identity are settled, and both of
+  `collectors/droid.py`'s candidate keys agree on a 36-character id. The notification vocabulary is
+  not: every one of the three types this binary can produce is raised from agent-turn code, which
+  needs a Factory account, so it is unreachable rather than absent. Two things in that file bear on
+  what may ship. Droid loads a `.claude-plugin` root, unwraps the same `hooks` key Claude's format
+  uses, and expands `${CLAUDE_PLUGIN_ROOT}`, so a Droid that finds a cargento root would run
+  Claude's hooks file and post to `/api/events/claude`, where the id is truncated to eight
+  characters and matches no row. And `auth_success`, the fourth documented notification type, does
+  not appear in the 0.202.0 binary at all.
 
 The [Gemini extension format](https://geminicli.com/docs/extensions/reference/) can bundle
 `hooks/hooks.json`, and this repository already ships an extension manifest. Gemini CLI's
