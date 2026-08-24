@@ -69,7 +69,7 @@ gates:
 started: 2026-08-21T08:07:11Z
 worktree: .worktrees/spacedock-ensign-rich-session-metadata
 mod-block: merge:pr-merge
-pr: spacedock-dev/cargento#155
+pr: pr-merge:155
 ---
 
 The session view should show, for the session being viewed, the entities it
