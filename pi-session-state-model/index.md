@@ -68,7 +68,7 @@ gates:
                 state: consumed
 started: 2026-08-22T05:54:23Z
 worktree: .worktrees/spacedock-ensign-pi-session-state-model
-mod-block:
+mod-block: merge:pr-merge
 verdict: PASSED
 completed: 2026-08-24T20:57:52Z
 pr: pr-merge:145
