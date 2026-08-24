@@ -49,6 +49,7 @@ gates:
 started: 2026-08-21T14:15:39Z
 worktree: .worktrees/spacedock-ensign-session-centric-view
 mod-block: merge:pr-merge
+pr: spacedock-dev/cargento#142
 ---
 
 The session view (the third `session` display mode, reached via `#session=...`) renders the workflow's entity roster without the session card. The regular board view already has a rich per-session card — title, project, sid, model, provider, rate (tok/min), state, state_detail, elapsed/eta. The session view should at least show that card, then improve toward session-centric.
