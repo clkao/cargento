@@ -1,6 +1,6 @@
 ---
 title: Pi live-worker attribution — feed live ensign names to session_workflows
-status: validation
+status: done
 source: captain directive — source of truth is the live ensigns
 id: rj497exc44z5es90d7a2bg49
 gates:
@@ -65,11 +65,14 @@ gates:
                 reason: 'conn granted: ''you have the conn''. Per captain: when you have the conn, no presentation — just record the gate and resolution. Implementation verified: dispatch_workers + attributed_workers, 6 tests, suite green. Delivery proceeds to done.'
               application:
                 target-stage: done
-                state: pending
+                state: consumed
 started: 2026-08-21T08:42:31Z
 worktree: .worktrees/spacedock-ensign-pi-live-worker-attribution
-mod-block: merge:pr-merge
+mod-block:
 pr: pr-merge:148
+verdict: PASSED
+completed: 2026-08-24T21:21:15Z
+archived: 2026-08-24T21:21:15Z
 ---
 
 The Pi collector passes an empty `worker_names` list to `session_workflows`, so the session view's "live workers first" source is always empty for Pi FO sessions — even when ensigns are actively running. The source of truth for "what is this session doing right now" is the live ensigns; the dashboard should reflect that.
