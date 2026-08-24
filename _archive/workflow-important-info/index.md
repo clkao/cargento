@@ -1,6 +1,6 @@
 ---
 title: Per-workflow important-info definition — let each workflow declare what to display
-status: validation
+status: done
 source: captain dogfood feedback
 id: et7hb2x9k6kts3cr56mnf2k8
 gates:
@@ -65,11 +65,14 @@ gates:
                 reason: 'conn granted: ''you have the conn to push to the forked repo and open PR'' (re-granted post-compaction). Per captain: when you have the conn, you do not need to present — just record the gate and resolution.. Implementation verified: all checklist items DONE, suite green (independently confirmed for z4), commit landed. Delivery proceeds to done.'
               application:
                 target-stage: done
-                state: pending
+                state: consumed
 started: 2026-08-21T08:07:17Z
 worktree: .worktrees/spacedock-ensign-workflow-important-info
-mod-block: merge:pr-merge
+mod-block:
 pr: pr-merge:156
+verdict: PASSED
+completed: 2026-08-24T21:21:55Z
+archived: 2026-08-24T21:21:55Z
 ---
 
 Each project/workflow can define what important information is to be displayed
