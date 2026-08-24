@@ -69,7 +69,7 @@ gates:
 started: 2026-08-21T08:07:14Z
 worktree: .worktrees/spacedock-ensign-group-sessions-by-project
 mod-block: merge:pr-merge
-pr: spacedock-dev/cargento#134
+pr: pr-merge:134
 ---
 
 With 18 sessions across cargento, subspace-ssh, subspace-v0, tycho, spacedock,
