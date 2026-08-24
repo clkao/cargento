@@ -416,7 +416,7 @@ any count next to a harness list here is part of the list.
 | Codex | Plugin-bundled command hooks | Native app-server first; ACP adapter second | Second target, after Claude proves the ingress |
 | Pi | User extension lifecycle events (documentation read; no event name or payload observed) | Community ACP adapter | Deferred; probe baseline |
 | Gemini CLI | Extension-bundled command hooks and OTel; consumer-account access transitioned, while enterprise and API-key use remain | Native ACP mode | Shipped-extension candidate after the first adapters |
-| Antigravity | Plugin-bundled model/tool/loop hints, plus opt-in `statusLine` snapshots for agent state and quota (no confirmation or task-count field observed) | No listed ACP implementation | Phase 2 target alongside Claude |
+| Antigravity | Plugin-bundled model/tool/loop hints, plus opt-in `statusLine` snapshots for agent state and quota (no confirmation or task-count field in the 37 print-mode pushes; both arrive interactively) | No listed ACP implementation | Phase 2 target alongside Claude |
 | Copilot CLI | Plugin-bundled, repo (`.github/hooks/*.json`) or user command hooks | ACP server via `--acp`, transport unverified | Deferred; probe baseline |
 | OpenCode | Shared server SSE where safely discoverable and authenticated; user plugin otherwise | Native ACP mode | Prefer an existing-server topology once proven |
 | Cursor CLI | Plugin-installed hooks, with ordinary local-CLI coverage requiring fixtures | Listed in the ACP agent directory; the installed cursor-agent 2026.07.23 help advertises no ACP entry point, so the mode is unverified. Opt-in `--output-format stream-json` in print mode | Deferred; probe baseline |
@@ -689,13 +689,14 @@ bucket identifiers, which the capture records as `quota_keys` (`3p-5h`, `3p-week
 names appears in it. `remaining_fraction` and `reset_time` are what the shipped reader consumes
 (`quota.py:513,519`), which is evidence they arrive; `reset_in_seconds` is a documentation read and
 appears nowhere in the runtime. Google's documentation additionally
-describes `tool_confirmation_pending`, `pending_input_count` and `task_count`; none appeared, and see
+describes `tool_confirmation_pending`, `pending_input_count` and `task_count`; none appeared in this
+capture, and all three were later found in an interactive one. See
 [Antigravity status-line semantics](#antigravity-status-line-semantics-measured-and-the-documented-field-list-was-wrong)
-for why the capture could not settle whether they exist.
+for both halves.
 
 `agent_state` supplies Working and Idle. Antigravity's status line is a genuine live-state source
-rather than a dirty signal, but narrower than a documentation read suggests: no confirmation field
-was observed, and the id is blank on 14 of 37 pushes, so the adapter often cannot report the return
+rather than a dirty signal, but narrower than a documentation read suggests: the id is blank on 14
+of 37 pushes, so the adapter often cannot report the return
 to Idle. The `/api/usage` receipt path should still feed the general event coordinator before or
 alongside quota shaping.
 
@@ -715,7 +716,8 @@ applies here and makes Antigravity a Phase 2 target on the same footing as Claud
 
 Neither path replaces the other. Antigravity's hooks include no session start or end and no
 notification event. The status line supplies live state and quota snapshots while the TUI runs, with
-no confirmation or background-task field observed in any captured push, and does not document a
+no confirmation or background-task field observed in the 37 print-mode pushes (both arrive
+interactively), and does not document a
 guaranteed start, end or final callback;
 collectors and reconciliation remain authoritative for definitive session lifecycle. The hooks are
 what can be installed without separate user configuration.
@@ -753,6 +755,30 @@ row mid-turn, which is the rule this document already sets for this harness.
 
 So the two Antigravity paths divide cleanly: **hooks give freshness and install
 with the plugin; the status line gives state and is opt-in.**
+
+#### `PreToolUse` is not a Needs-input source, and here is why nobody should retry it
+
+The paragraph above is superseded on the firing question by
+[`../captures/antigravity/hooks-schema-1.1.19-macos.jsonl`](../captures/antigravity/hooks-schema-1.1.19-macos.jsonl):
+the hooks do fire once `hooks.json` carries its name wrapper, nine invocations in one interactive
+turn. What has not changed is the conclusion for a permission wait, and the reasons are worth
+writing down so the route is not walked twice.
+
+`PreToolUse` fires before **every** tool call, not before a gated one, and its payload carries no
+permission state at all: `artifactDirectoryPath`, `conversationId`, `modelName`, `stepIdx`,
+`toolCall`, `transcriptPath`, `workspacePaths`. A wait posted from it would paint the row for
+the length of every tool call, nine times in the turn measured. Nor is the decision channel a way
+out: an empty object **denies**, which is the measured finding that inverted this adapter's safety
+comment, so the pass-through a reporting hook needs is not `{}`. The binary's own jsonschema tag
+reads `enum=allow,enum=deny,enum=ask,enum=force_ask,enum=deny_unless_prior_grant`, a fifth verb the
+published guide does not list, with a matching telemetry token `hook_deny_unless_prior_grant`. That
+is the defer-to-existing-policy shape and the only candidate for a pass-through here. It is **read
+in the binary and never run**, as are `deny`, `ask` and `force_ask`.
+
+Matching on `ask_question` does not help either. The binary carries
+`Auto-answering ask_question at step %d with skipped=true` alongside `user cancelled ask_question`,
+so agy answers some of its own questions and a hook cannot tell one a human sees from one it does
+not. `matcher` is a regex, so an unanchored `ask_question` is not an exact match on the tool name.
 
 #### Codex's permission hook exists and cannot fire in `exec`, and its subagent hooks are mapped
 
@@ -991,13 +1017,33 @@ push.
    37 pushes rather than all of them. Both sessions were `agy --print`, a mode in which no tool
    confirmation can be pending, no input can queue and no background task runs, so the capture never
    asked the question. What this measurement establishes is the always-present field set, not the
-   schema. Whether the status line can report Needs input is **unmeasured**; the collector remains
-   Cargento's only source for it by choice, not by proven necessity. Settling it needs one
-   interactive `agy` session driven to a tool confirmation, recording whether
-   `tool_confirmation_pending` appears in `keys` while the prompt is open.
+   schema.
+
+   **Settled since, positively**, in
+   [`../captures/antigravity/statusline-confirmation-1.1.19-macos.jsonl`](../captures/antigravity/statusline-confirmation-1.1.19-macos.jsonl):
+   all three fields arrive. `tool_confirmation_pending` carries `true` for as long as a tool
+   confirmation stands, beside a fourth `agent_state`, `tool_use`. Whether a flagged push is keyable
+   was recorded in one of the five gate arms only, the one whose recorder wrote id verdicts: all
+   seven of its flagged pushes carried a 36-character id in both `conversation_id` and `session_id`,
+   each naming a real `conversations/<id>.db`, while the other 14 flagged pushes have no id verdict
+   either way. What that file also settles is why a mapping is not the answer. The push is
+   live state on a repeating render, not a transition edge: a gate that stood 65 s produced two
+   pushes, both at the moment it opened, then nothing, while forcing a redraw produced a fresh pair
+   each time. So an `input_requested` posted from the status line would be **clobbered by the next
+   render** rather than left stuck, which is the inverse of the hazard the overlay reducer is built
+   for, and any wait built on it needs both a precedence rule and a deadline.
+
+   Two claims this document made alongside that one were wrong and are withdrawn here. The status
+   line is not "Cargento's only source" of Needs input for this harness by choice:
+   `collectors/antigravity.py` carries no `needs_input` path at all and assigns only `idle` or
+   `working`, so nothing reports it and the gap is unqualified. And an `ask_question` is not covered
+   either: one stood 144 s with `agent_state` at `working` and then `idle`, adding no key, in a
+   session whose sibling arms saw the confirmation flag on the same recorder.
 2. `agent_state` values observed were `authenticating`, `idle` and `working`, not the five the
    documentation lists. `authenticating` is startup rather than activity and is deliberately
-   unmapped, because calling it either Working or Idle invents a claim about the session.
+   unmapped, because calling it either Working or Idle invents a claim about the session. The
+   interactive probe added three more the print-mode sessions never reached: `initializing`,
+   `tool_use` and `error`, the last of which is a settings failure rather than a session state.
 
 **The identity mapping resolves cleanly.** `conversation_id` and `session_id` carried the same
 36-character value whenever they carried one, and that value was the stem of a real
@@ -1983,9 +2029,13 @@ produce.
   a single end-to-end deadline.
 - Route Antigravity's existing status-line receipt into dirty invalidation, and read `agent_state`
   from its minimal lifecycle envelope. No confirmation, task-count or pending-input field appeared
-  in the 37 captured pushes; all three are `omitempty` in the binary and the capture was print-mode
-  and shape-only, so their presence in an interactive session is unmeasured. Until that capture
-  exists, Needs input is not available from this path and the collector remains its only source.
+  in the 37 print-mode pushes, because all three are `omitempty` and that mode can raise none of the
+  states they report. The interactive capture
+  [`../captures/antigravity/statusline-confirmation-1.1.19-macos.jsonl`](../captures/antigravity/statusline-confirmation-1.1.19-macos.jsonl)
+  reached all three. Needs input still is not available from this path, for a different reason: the
+  status line is a repeating render whose ordinary `working` and `idle` pushes would retire the wait,
+  which needs a precedence rule in the reducer that does not exist yet. It is not available from the
+  collector either: `collectors/antigravity.py` has no `needs_input` path at all.
   Keep status-line quota separately; collectors own definitive session lifecycle.
 - Add deadline-driven Working-to-Idle transitions with dwell. Needs-input retirement requires
   positive evidence, not a generic dead-man timeout.
@@ -2092,7 +2142,7 @@ The implementation plan should include tests for:
 | Materialized snapshot with SSE delivery | Medium to high | Fits the runtime, but needs a real coordinator, demand producer, restart cursor, server-wide resource limits and shutdown lifecycle |
 | Event-triggered selective collection | Value depends on the session mix | Below the 25% gate on a Claude-dominated machine and well clear of it once other harnesses supply about a third of active sessions, measured with `bench_collect.py --simulate`. The coordinator runs one full aggregate per floor until real multi-harness mixes are known |
 | Near-real-time Claude and Codex | Medium to high | Both plugin formats can bundle hooks; Cargento still needs authenticated routing, fixtures and its own lifecycle wiring |
-| Near-real-time Antigravity | Medium to high | Hooks are bundleable and the status line adds agent state, but no confirmation field appeared in any captured push, hooks are not clean turn boundaries, and the status line is opt-in |
+| Near-real-time Antigravity | Medium to high | Hooks are bundleable and the status line adds agent state; the confirmation field does arrive interactively, but it is a repeating render rather than a transition edge, hooks are not clean turn boundaries, and the status line is opt-in |
 | Near-real-time Gemini | Medium | The shipped extension can bundle hooks, but supported auth populations and event semantics need fixtures |
 | Near-real-time coverage across all ten harnesses | Low to medium | Several adapters and passive topologies remain unproven; Cargento lacks artifacts for six even where upstream lifecycle support exists |
 | Zero polling for every arbitrary external session | Not presently feasible | No universal observer protocol; events can be missed and time-derived state still needs deadlines |
