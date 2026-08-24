@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import http.client
 import http.server
+import inspect
 import io
 import json
 import os
@@ -38,6 +40,39 @@ SKILL_DIR = Path(__file__).resolve().parents[1]
 
 if TYPE_CHECKING:
     import email.message
+    from collections.abc import Callable
+
+
+def _writes_a_wait(collect_fn: Callable[..., Any]) -> bool:
+    """Whether a collector's own module writes the `needs_input` state itself.
+
+    The derived half of the gate-capability check. Reading the source is the
+    point: any set of harnesses written down by hand has to be written by whoever
+    set the flag, from the same belief, so it can only ever agree with them. This
+    cannot — it asks the module what state it actually publishes.
+
+    Over the parsed tree rather than the text, and docstring constants are
+    excluded, so a module that merely *discusses* needs-input in a comment or a
+    docstring is not read as detecting one. That direction matters more than the
+    other: a false positive here would demand `reports_needs_input=True` on a
+    harness that cannot detect a gate, which is the promise-the-board-cannot-keep
+    error this whole disclosure exists to prevent.
+    """
+    module = inspect.getmodule(collect_fn)
+    assert module is not None
+    tree = ast.parse(inspect.getsource(module))
+    docstrings = {
+        node.body[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+    }
+    return any(
+        isinstance(node, ast.Constant) and node.value == "needs_input" and node not in docstrings
+        for node in ast.walk(tree)
+    )
 
 
 class FrontendAssetContractTest(unittest.TestCase):
@@ -69,8 +104,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "e44eb8e73af3f6fe9c98f5dd65d763f6508b7bf029c98dcc308bf6688541a71e",
             ),
             "regular.js": (
-                49_297,
-                "81df3a571d3fbb17ad11c1584977f45cab3722bde6f7a027a02c911d0f962f43",
+                49_394,
+                "de12571765fe60312097a7c67cf9a1644404d8bca2a0508dac1dc3d70b4696ed",
             ),
             "mode.js": (
                 4_619,
@@ -128,9 +163,9 @@ class FrontendAssetContractTest(unittest.TestCase):
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(320_199, len(assembled))
+        self.assertEqual(320_296, len(assembled))
         self.assertEqual(
-            "9b1f9ea435cba66402e02835b57a50c8b77e498aa0e43c6018b12cf24bf0b4ff",
+            "5cbe7ccf0095d5341d4bbacac0405a1dfbc7c088c0e7c0a11e883a84d1132643",
             hashlib.sha256(assembled).hexdigest(),
         )
 
@@ -604,7 +639,7 @@ class CargentoServerTest(PageJsHarness):
             {spec.key for spec in REGISTRY if spec.reports_rate},
         )
 
-    def test_only_the_two_harnesses_with_a_gate_path_declare_one(self) -> None:
+    def test_only_the_three_harnesses_with_a_gate_path_declare_one(self) -> None:
         # The same shape as `reports_rate` above and for the same reason, on the
         # field where getting it wrong is worse. A harness with no gate detection
         # publishes no needs-input row, which is the identical payload a harness
@@ -618,7 +653,7 @@ class CargentoServerTest(PageJsHarness):
         # without teaching its collector to emit `needs_input` would publish a
         # promise the board cannot keep, which is strictly worse than the gap.
         self.assertEqual(
-            {"claude", "codex"},
+            {"claude", "codex", "copilot"},
             {spec.key for spec in REGISTRY if spec.reports_needs_input},
         )
 
@@ -631,22 +666,69 @@ class CargentoServerTest(PageJsHarness):
         # sibling test asserting a literal set.
         #
         # So derive the truth instead of restating it. A gate reaches the board by
-        # exactly two routes: a collector that sets the state itself, which is
-        # Claude alone, or an adapter that maps `input_requested`, which is
-        # whatever `EVENTS_BY_HARNESS` says today. Anyone adding the second kind
-        # gets a failure here rather than a lying chip.
+        # exactly two routes: a collector that sets the state itself, or an adapter
+        # that maps `input_requested`, which is whatever `EVENTS_BY_HARNESS` says
+        # today. Anyone adding either kind gets a failure here rather than a lying
+        # chip.
+        #
+        # The collector half used to be the literal `{"claude"}`, because Claude's
+        # was the only collector that produced a wait. Copilot's now does too, from
+        # the `permission.requested`/`permission.completed` pair, and a literal
+        # widened by hand is exactly the hand-written set this test exists to
+        # replace -- it would have to be edited by the same person who set the flag,
+        # from the same belief, so it could never contradict them. Reading the
+        # collector modules for the state they actually write can.
+        by_collector = {spec.key for spec in REGISTRY if _writes_a_wait(spec.collect)}
         by_adapter = {
             harness
             for harness, table in event_hook.EVENTS_BY_HARNESS.items()
             if "input_requested" in table.values()
         }
         self.assertEqual(
-            {"claude"} | by_adapter,
+            by_collector | by_adapter,
             {spec.key for spec in REGISTRY if spec.reports_needs_input},
         )
 
+    def test_the_prose_that_counts_gate_blind_harnesses_stays_true(self) -> None:
+        # The count in `HarnessSpec`'s docstring is the only place a reader is told
+        # how much of the board is silent by construction, and it has been wrong
+        # twice: `reports_needs_input` went from one harness to two to three, and
+        # the sentence stayed at "Eight of the ten" through both. Nothing in ruff,
+        # mypy, the validator or the suite reads a comment, so it survived until
+        # someone read it and believed it.
+        #
+        # The frontend half is held to a different rule. `gateBlind()` reads the
+        # payload's per-harness flag rather than any literal, so a count there
+        # buys nothing and rots at the same rate: the comment carried "Nine of the
+        # ten" through two consecutive features that changed it. So the test bans
+        # the count instead of pinning it.
+        words = (
+            "no",
+            "one",
+            "two",
+            "three",
+            "four",
+            "five",
+            "six",
+            "seven",
+            "eight",
+            "nine",
+            "ten",
+        )
+        blind = sum(1 for spec in REGISTRY if not spec.reports_needs_input)
+        docstring = type(REGISTRY[0]).__doc__ or ""
+        self.assertIn(
+            f"{words[blind].capitalize()} of the {words[len(REGISTRY)]} cannot observe a gate",
+            docstring,
+        )
+
+        source = frontend_page.asset_path("regular.js").read_text(encoding="utf-8")
+        comment = source.partition("function gateBlind")[0].rpartition("/*")[2]
+        self.assertIn("reports_needs_input", comment, "the gateBlind comment moved")
+        self.assertNotRegex(comment, rf"(?i)\b({'|'.join(words[1:])})\b of the ")
+
     def test_the_payload_publishes_the_gate_coverage_per_harness(self) -> None:
-        # Nine of the ten rows are silent about gates by construction, and the page
+        # Seven of the ten rows are silent about gates by construction, and the page
         # cannot derive that from anything else it is sent. Without this the server
         # could stop publishing the flag and every page-side test would stay green,
         # because they all feed synthetic payloads.
