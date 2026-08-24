@@ -16,6 +16,7 @@ APP_PARTS: tuple[str, ...] = (
     "calm.js",  # the calm ledger: tables, actions, listeners, renderers
     "session.js",  # the session view: one session's dispatch tree and goal line
     "notify.js",  # desktop notifications
+    "observer.js",  # the observer panel: the observe fetch and the card it renders
     "main.js",  # render() and refresh()
     "live.js",  # leader election, the SSE stream, and the fallback poll
 )
