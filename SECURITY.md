@@ -25,9 +25,10 @@ stdin and stdout, and it reaches the dashboard on loopback under the same three 
 
 The posture rests on two invariants:
 
-1. Localhost only. The server binds `127.0.0.1` exclusively, and every forwarder and the MCP server
-   refuse to reach anywhere but loopback, ignore proxy environment variables, and do not follow
-   redirects.
+1. Localhost unless the operator says otherwise. The server binds `127.0.0.1`, and every forwarder
+   and the MCP server refuse to reach anywhere but loopback, ignore proxy environment variables, and
+   do not follow redirects. `--host` is the one way that first clause moves, it is an explicit
+   argument nothing sets for you, and what it costs is under Known and accepted.
    Session data never leaves the machine. The quota poll is the single outbound exception, and it
    carries a vendor token out and quota numbers back, nothing else.
 2. Read-only against harness stores. They are opened read-only and never written. Seven endpoints
@@ -45,7 +46,8 @@ The posture rests on two invariants:
    `statusline_hook.py`'s deduplication memo under the same directory, which holds a normalized state
    name and a timestamp and nothing about the session's content.
 
-Anything that weakens either invariant is a security bug: a bind-address escape, file reads outside
+Anything that weakens either invariant is a security bug: a bind reaching an address the operator did
+not ask for, a request admitted that the bind's own Host gate should have refused, file reads outside
 the documented store paths and the project-read contract below (however the path was derived),
 writes to harness stores, or the hook client reaching a non-loopback destination.
 
@@ -295,6 +297,22 @@ is recorded under Known and accepted rather than solved here, because loopback i
 boundary.
 
 ## Known and accepted
+
+`--host` hands that same access to a network. `--host 0.0.0.0` or `--host <address>` is the operator
+saying the machine's network may read the board, and there is no second gate behind it: everything
+the paragraph below grants another account on the machine, a non-default bind grants anything that
+can reach the port. Reading `/api/data` is the whole board — every session's titles, prompts and
+project paths. Writing is the seven POST routes, `/api/shutdown` and `/api/answer` among them, so a
+reachable dashboard can be killed, and a question a session is waiting on can be answered by
+somebody other than you. There is nothing to authenticate with, for the reason the ask-lane
+paragraph below gives: the page is served as fixed bytes with no per-run secret in it.
+
+What the non-default bind does *not* spend is the rebinding defense. The Host and Origin gate widens
+to addresses and never to names — exactly the address given, or under `0.0.0.0` any address a client
+could arrive on — so a page on `http://evil.example:4553` whose DNS points at the machine is refused
+in both modes, and the `Sec-Fetch-Site` cross-site check runs unchanged. The gate tells a name from
+an address; it cannot tell one remote client from another. So the honest scope is: use `--host` on a
+network you would hand the transcripts to, and reach a dashboard over `ssh -L` otherwise.
 
 Loopback is not a per-user boundary. Any other account on the same machine can `GET /api/data` and
 read every session's titles and prompts, or forge a `POST /api/notify`. The Host, `Sec-Fetch` and

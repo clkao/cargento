@@ -29,6 +29,7 @@ from cargento_runtime import observation as observation_module
 
 from .support import (
     PAGE_BYTES,
+    STORE_KEYS,
     RuntimeTestCase,
     collect,
     collect_json,
@@ -36,6 +37,7 @@ from .support import (
     make_server,
     serve_until_closed,
     state_of,
+    store_patch,
 )
 
 
@@ -1418,6 +1420,55 @@ class HostAndSocketTest(unittest.TestCase):
         handler.server = mock.Mock(bound_host="0.0.0.0", server_port=4553)
         self.assertTrue(handler._local_ok())
 
+    def test_wildcard_bind_refuses_a_dns_name_host(self) -> None:
+        # The rebinding defense, which the bind relaxation must not spend. A
+        # page on http://evil.example:4553 whose DNS points at this machine
+        # sends that name as its Host, and `Sec-Fetch-Site` is `none` on the
+        # navigation and `same-origin` on its own fetches, so neither of the
+        # cross-site checks fires. Only the address gate stops it. Restoring the
+        # `bool(host) and host != "0.0.0.0"` form makes this pass a name and
+        # hands that page /api/data plus every POST route.
+        handler = http_api._RequestHandler.__new__(http_api._RequestHandler)
+        handler.headers = email.message.Message()
+        handler.server = mock.Mock(bound_host="0.0.0.0", server_port=4553)
+        handler.headers["Host"] = "evil.example:4553"
+
+        for name in ("evil.example:4553", "cargento.attacker.io", "dashboard.local:4553"):
+            with self.subTest(host=name):
+                handler.headers.replace_header("Host", name)
+                self.assertFalse(handler._local_ok())
+
+    def test_explicit_bind_refuses_a_dns_name_host(self) -> None:
+        # Same gate on an explicit --host: the operator named an address, so a
+        # name resolving to it is still refused.
+        handler = http_api._RequestHandler.__new__(http_api._RequestHandler)
+        handler.headers = email.message.Message()
+        handler.headers["Host"] = "evil.example:4553"
+        handler.server = mock.Mock(bound_host="10.0.0.2", server_port=4553)
+        self.assertFalse(handler._local_ok())
+
+    def test_wildcard_bind_refuses_a_dns_name_origin(self) -> None:
+        # The Origin arm of the same gate. A Host the operator could have typed
+        # with an attacker's Origin is the shape a rebinding fetch takes once
+        # the page has the address, and `_is_local_origin` shares the check.
+        handler = http_api._RequestHandler.__new__(http_api._RequestHandler)
+        handler.headers = email.message.Message()
+        handler.headers["Host"] = "192.168.0.2:4553"
+        handler.headers["Origin"] = "http://evil.example:4553"
+        handler.server = mock.Mock(bound_host="0.0.0.0", server_port=4553)
+        self.assertFalse(handler._local_ok())
+
+    def test_wildcard_bind_refuses_multicast_and_unspecified(self) -> None:
+        # Neither is an address a client can arrive on, so neither is the
+        # operator's opt-in.
+        handler = http_api._RequestHandler.__new__(http_api._RequestHandler)
+        handler.headers = email.message.Message()
+        handler.server = mock.Mock(bound_host="0.0.0.0", server_port=4553)
+        handler.headers["Host"] = "224.0.0.1:4553"
+        self.assertFalse(handler._local_ok())
+        handler.headers.replace_header("Host", "0.0.0.0:4553")
+        self.assertFalse(handler._local_ok())
+
     def test_wildcard_bind_origin_check_rejects_cross_site(self) -> None:
         # A drive-by web page still cannot POST to a remotely-bound dashboard:
         # the Sec-Fetch-Site check stays in both modes.
@@ -1443,31 +1494,74 @@ class HostAndSocketTest(unittest.TestCase):
             pass
         return None
 
+    def test_wildcard_bind_admits_a_remote_host_header_over_a_socket(self) -> None:
+        # The Host gate end to end over a real socket, reached on loopback. A
+        # 0.0.0.0 bind is listening on loopback too, so this needs no route back
+        # to the machine and runs identically on all three CI platforms — the
+        # sibling below covers the half only a real remote address can.
+        # Reverting _host_admitted makes this 403.
+        with tempfile.TemporaryDirectory() as tmp:
+            with store_patch(**dict.fromkeys(STORE_KEYS, tmp)):
+                httpd = make_server(host="0.0.0.0")
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                port = httpd.server_port
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                conn.putrequest("GET", "/", skip_host=True)
+                conn.putheader("Host", f"192.168.0.2:{port}")
+                conn.endheaders()
+                response = conn.getresponse()
+                self.assertEqual(200, response.status)
+                response.read()
+                conn.close()
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=2)
+
     def test_wildcard_bind_serves_a_remote_host_header(self) -> None:
         # AC-1/AC-2: a server bound 0.0.0.0 accepts a connection to the
         # machine's non-loopback address and serves the page (200, not 403).
         # Reverting the bind tuple to ("127.0.0.1", args.port) makes the
-        # connection refused; reverting _host_admitted makes it 403.
+        # connection refused.
+        #
+        # The stores are redirected at an empty directory first, and not for
+        # hygiene: without it this binds the developer's own dashboard, over
+        # their real session stores, to every interface for the length of the
+        # test.
+        #
+        # Two environment gates, both skips rather than failures, because each
+        # is a property of the machine and not of the code: an address may not
+        # exist at all, and the one that does may not be reachable back from
+        # here — a host firewall, or a VPN whose address does not accept a
+        # loopback-side connection. The hermetic sibling above still runs, so a
+        # skip here does not leave the Host gate unexercised.
         ip = self._non_loopback_ip()
         if ip is None:
             self.skipTest("no non-loopback IPv4 address available")
-        httpd = make_server(host="0.0.0.0")
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-        thread.start()
-        try:
-            port = httpd.server_port
-            conn = http.client.HTTPConnection(ip, port, timeout=5)
-            conn.putrequest("GET", "/")
-            conn.putheader("Host", f"{ip}:{port}")
-            conn.endheaders()
-            response = conn.getresponse()
-            self.assertEqual(200, response.status)
-            response.read()
-            conn.close()
-        finally:
-            httpd.shutdown()
-            httpd.server_close()
-            thread.join(timeout=2)
+        with tempfile.TemporaryDirectory() as tmp:
+            with store_patch(**dict.fromkeys(STORE_KEYS, tmp)):
+                httpd = make_server(host="0.0.0.0")
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                port = httpd.server_port
+                try:
+                    conn = http.client.HTTPConnection(ip, port, timeout=5)
+                    conn.putrequest("GET", "/", skip_host=True)
+                    conn.putheader("Host", f"{ip}:{port}")
+                    conn.endheaders()
+                    response = conn.getresponse()
+                except OSError as exc:
+                    self.skipTest(f"{ip}:{port} is not reachable from this host: {exc}")
+                self.assertEqual(200, response.status)
+                response.read()
+                conn.close()
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join(timeout=2)
 
     def test_loopback_bind_refuses_a_non_loopback_connection(self) -> None:
         # AC-1: the default (no --host) refuses a connection to the machine's

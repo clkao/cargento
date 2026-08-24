@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ipaddress
 import json
 import os
 import sys
@@ -56,19 +57,19 @@ def bind_host(value: str) -> str:
     The server is IPv4-only, so an IPv6 literal like ``::`` or ``::1`` is out
     of scope and must be rejected at parse time rather than producing a
     confusing bind failure.
+
+    ``ipaddress`` rather than a hand-rolled dotted-quad split, which is where
+    this started: ``int()`` accepts a sign, surrounding whitespace and
+    non-ASCII digits, so ``"+1.2.3.4"`` and ``"1.2.3.4\n"`` parsed and then
+    reached ``socket.bind`` — the confusing bind failure the check exists to
+    turn into a usage error.
     """
-    parts = value.split(".")
-    if len(parts) != 4:
-        raise argparse.ArgumentTypeError("must be an IPv4 address (e.g. 127.0.0.1 or 0.0.0.0)")
-    for part in parts:
-        try:
-            octet = int(part)
-        except ValueError as exc:
-            raise argparse.ArgumentTypeError(
-                "must be an IPv4 address (e.g. 127.0.0.1 or 0.0.0.0)"
-            ) from exc
-        if not 0 <= octet <= 255:
-            raise argparse.ArgumentTypeError("must be an IPv4 address (e.g. 127.0.0.1 or 0.0.0.0)")
+    try:
+        ipaddress.IPv4Address(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "must be an IPv4 address (e.g. 127.0.0.1 or 0.0.0.0)"
+        ) from exc
     return value
 
 

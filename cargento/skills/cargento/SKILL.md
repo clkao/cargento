@@ -256,6 +256,7 @@ Paths 2 and 3 are complementary and can both be installed. Keep `Notification` o
 | Flag / URL | Effect |
 |---|---|
 | `--port N` | Change port (default 4553; valid range 1–65535). If the port is busy, check `--status` first — a running dashboard may already be there; don't kill it blindly. |
+| `--host A` | Bind address (default `127.0.0.1`; IPv4 only). `0.0.0.0` serves every interface, one address serves that one. **Nothing authenticates a remote reader**: anything that reaches the port reads every session's titles, prompts and paths, and can answer a question a session is waiting on. Prefer `ssh -L 4553:127.0.0.1:4553`; use `--host` only on a network the user would hand the transcripts to. |
 | `--daemon` | Detach and keep running after the starting session exits. Prints the URL, pid and log path. |
 | `--stop` | Stop the instance on `--port`, over `/api/shutdown` — the same path the UI's `stop` button uses. Returns once the port is free, so a restart on the same port works. |
 | `--status` | Report whether Cargento is on `--port`: running, not running, or the port belongs to another process. Exits 0 only when running. |

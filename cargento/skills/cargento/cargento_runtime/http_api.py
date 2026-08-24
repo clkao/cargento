@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import ipaddress
 import json
 import os
 import socket
@@ -217,22 +218,35 @@ class _RequestHandler(BaseHTTPRequestHandler):
     def _host_admitted(self, host: str) -> bool:
         """Whether a host string is local enough for this server's bind.
 
-        The default loopback bind keeps the exact LOCAL_HOSTS gate, preserving
-        the DNS-rebinding defense. A non-loopback bind (--host 0.0.0.0 or an
-        explicit address) is the operator's opt-in to remote access, so the
-        Host gate admits the configured address — and for 0.0.0.0, any non-
-        loopback Host, since the operator asked for all interfaces. The
-        Origin/Sec-Fetch-Site cross-site checks still apply in both modes.
+        The default loopback bind keeps the exact LOCAL_HOSTS gate. A
+        non-loopback bind (--host 0.0.0.0 or an explicit address) is the
+        operator's opt-in to remote access, so the gate widens to the address
+        they asked for: exactly that address, or under 0.0.0.0 any address a
+        client could reach the machine on.
+
+        It widens to *addresses*, never to names, and that is the whole
+        rebinding defense rather than a tidiness rule. `Host` and `Origin` are
+        attacker-chosen strings, so admitting any non-empty one hands a page on
+        `http://evil.example:4553` both `/api/data` and every POST route the
+        moment its DNS points at this machine — measured before this narrowing,
+        against a 0.0.0.0 bind. Rebinding needs a name to rebind; an operator
+        typing a remote dashboard's URL has a literal address to type, so
+        refusing every name costs them nothing and closes it.
         """
         if host in self.LOCAL_HOSTS:
             return True
         bound = getattr(self.server, "bound_host", "127.0.0.1")
         if bound == "127.0.0.1":
             return False
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            return False  # a DNS name, or garbage
         if bound == "0.0.0.0":  # noqa: S104
-            # Any real client address; the operator asked for all interfaces.
-            # 0.0.0.0 itself is not a connectable address, and "" is garbage.
-            return bool(host) and host != "0.0.0.0"  # noqa: S104
+            # The operator asked for every interface, so any address a client
+            # could have arrived on is theirs. The wildcard itself is not a
+            # connectable destination, and neither is a multicast group.
+            return not (literal.is_unspecified or literal.is_multicast)
         return host == bound
 
     def _local_ok(self, *, allow_cross_site_navigation: bool = False) -> bool:

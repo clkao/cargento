@@ -290,6 +290,38 @@ The per-harness store variables `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GEMINI_CLI_H
 than its default. Set one and confirm with `--diagnose` that the store line moved, rather than
 assuming it did.
 
+`--host` moves the bind address, and it is the one flag here that changes who can read the board
+rather than where you read it from. The default is `127.0.0.1`. `--host 0.0.0.0` listens on every
+interface; `--host 10.0.0.2` listens on that one. IPv4 only — the server has never spoken IPv6, so
+`--host ::1` is a usage error rather than a bind failure.
+
+Nothing authenticates the reader that arrives. Whatever can reach the port reads the whole board —
+every session's titles, prompts and project paths — and can POST to it, which includes stopping the
+dashboard and answering a question a session is waiting on. The Host and Origin checks still refuse a
+hostname, so a web page cannot rebind its way in, but they cannot tell one remote address from
+another. [SECURITY.md](SECURITY.md#known-and-accepted) states the scope.
+
+So the first thing to try is not this flag:
+
+```bash
+# On the machine you are reading from. Nothing on the dashboard host changes.
+ssh -L 4553:127.0.0.1:4553 you@the-agent-machine
+python3 -m webbrowser -t http://127.0.0.1:4553/
+```
+
+That gets a remote board over a channel that already authenticates you, with the dashboard still
+bound to loopback. Reach for `--host` when there is no ssh to be had — a container publishing a port,
+or a VM whose host browser cannot see its loopback:
+
+```bash
+python3 "<skill-dir>/server.py" --port 4553 --host 0.0.0.0 --daemon
+```
+
+Then open `http://<the machine's address>:4553/`. Not its hostname: a name is refused whichever
+address it resolves to, and that is the rebinding defense rather than a bug. `--daemon` re-spawns
+itself on Windows and carries the address across, so a detached remote-bound dashboard stays remote
+bound.
+
 Both `--status` and `--stop` find a live instance by probing the port, so neither needs the home the
 dashboard was started with. Tested: a dashboard started under a scratch `CARGENTO_HOME` was stopped
 by a `--stop` issued with no `CARGENTO_HOME` at all, and its state file was cleaned up anyway, because
