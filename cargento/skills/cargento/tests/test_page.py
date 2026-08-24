@@ -77,8 +77,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "526b9cae4ee29f756e2e00fca6c88213a1a7423cb5daa111dfbde59c0d121561",
             ),
             "usage.js": (
-                51_066,
-                "3eb8d87fb2f809058678218cf57bc6b381bb7750d7523efea0eeb56628db70fe",
+                51_910,
+                "8fe192960d45c33ae10c19ac2b31171f4df3264e826c899f59131b0d354e5548",
             ),
             "controls.js": (
                 7_271,
@@ -89,8 +89,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "b3427d36b59995b468c6cb8d31bef21b20167d41dd302b56c4781ff9d37b038a",
             ),
             "calm.js": (
-                53_610,
-                "25b664ca6c59363df4586f65b926f8b9dee92a09f533be829ae1097807ea3357",
+                53_631,
+                "7c7e34838f51d45a7d6c8641dea8f58c00cac7e598549ea73a82fceeb1bdc62f",
             ),
             "session.js": (
                 6_988,
@@ -105,8 +105,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "aeef4f2ad3d702d434bfdafbc5123dec0f216a858b197b6ae00bc61fcf1873d9",
             ),
             "main.js": (
-                12_172,
-                "4a5ce3873b8eab1fe273e6d08f198ecba4dd52ba1b875af2676c24a8fec1f737",
+                12_171,
+                "9f7ba1c986be14e640c6340d18cf2b5978b36bae6edcee5d7e636c1ffbe37004",
             ),
             "live.js": (
                 6_176,
@@ -121,16 +121,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(58_132, len(styles))
+        self.assertEqual(58_485, len(styles))
         self.assertEqual(
-            "566247b325e810f452495c7af22b1a21b949f44ed1c844791baad040e19074bc",
+            "4af59e4713bea71754595f8911ee6563cc71a0d22a59e52d913f01f60967e668",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(304_691, len(assembled))
+        self.assertEqual(305_908, len(assembled))
         self.assertEqual(
-            "599d3ae3e443cbd30a5d1153994074cd11ebb1d851dc8f31233bfa495c07ed1c",
+            "83f979a89a9b347ef618d8b88e1b07d0fd6a2b9d61b7f24a71172783995d6fc0",
             hashlib.sha256(assembled).hexdigest(),
         )
 
@@ -1621,6 +1621,92 @@ const claude = models => ({harness: 'claude', state: 'ok', asOf: 1700000000,
         self.assertTrue(rendered["locked"], "the last shown stat was offered as switchable")
         self.assertTrue(rendered["stillOn"], "the last shown stat was switched off")
         self.assertEqual(["Fable"], [c["lab"] for c in rendered["cells"]])
+
+    def test_the_disclosure_banner_renders_in_flow_on_both_surfaces(self) -> None:
+        # Two surfaces assemble the banner separately — calm from `calmLedger`,
+        # regular from `render`'s innerHTML — and only the byte pins would
+        # notice a lost call site, with a digest mismatch that invites
+        # re-pinning rather than investigating. `usageBandCalm`'s sibling test
+        # above exists because a row rendered in neither surface once shipped.
+        rendered = self._run_page_js(
+            "const d = {usage: [{harness: 'claude', state: 'ok'}], usage_fetch: true};"
+            "const before = {calm: usageBanner(d), regular: usageBanner(d, true)};"
+            "usageAction('umodal', 'on');"
+            "const after = {calm: usageBanner(d), regular: usageBanner(d, true)};"
+            "console.log(JSON.stringify({before, after, on: usageEnabled,"
+            " seen: usageModalSeen}));"
+        )
+        for view in ("calm", "regular"):
+            with self.subTest(view=view):
+                html = rendered["before"][view]
+                # The outer element exactly once. Counted on `role="region"`,
+                # not on the `u-banner` class prefix, which the four inner
+                # element classes share.
+                self.assertEqual(1, html.count('role="region"'))
+                self.assertIn("Keep usage on", html)
+                self.assertIn("Turn it off", html)
+                # In flow, not a gate. `aria-modal` would announce it as one.
+                self.assertNotIn("aria-modal", html)
+                self.assertNotIn("u-overlay", html)
+                # Answered once, gone from both — the consent is the state, not
+                # the markup.
+                self.assertEqual("", rendered["after"][view])
+        self.assertTrue(rendered["seen"])
+        # "Keep usage on" asserts the master switch rather than assuming it:
+        # `configure` is reachable while the banner is up, so a reader can turn
+        # usage off there first and then answer the banner.
+        self.assertTrue(rendered["on"])
+        # Only the regular placement carries its own border: `.wrap` owns gaps
+        # rather than separators, and calm's row sits inside the frame's rules.
+        self.assertIn("standalone", rendered["before"]["regular"])
+        self.assertNotIn("standalone", rendered["before"]["calm"])
+
+    def test_the_banner_reaches_the_session_view_too(self) -> None:
+        # The third surface, and the one that caught a real collision: #131's
+        # session branch called `usageModal`, which this branch renames, and the
+        # two merged without a textual conflict. Driven through `render()`
+        # rather than by calling the function, because "the call site still
+        # exists and still resolves" is the whole assertion.
+        rendered = self._run_page_js(
+            "__els.app = {innerHTML: '', className: '', querySelectorAll: () => []};"
+            "const d = {generated: 1000, window_hours: 24, show_all: false,"
+            " rate_window_sec: 600, harnesses: [], sessions: [],"
+            " summary: {needs_input: 0, working: 0, rate_per_min: 0, active_sessions: 0,"
+            "  open_tasks: 0, progress_pct: 0, total_tasks: 0, total_done: 0},"
+            " usage: [{harness: 'claude', state: 'ok'}], usage_fetch: true};"
+            "setDisplayMode('session');"
+            "render(d);"
+            "console.log(JSON.stringify({html: __els.app.innerHTML,"
+            " cls: __els.app.className}));",
+            prelude="const __store = {};\nconst localStorage = {"
+            "getItem: k => (k in __store ? __store[k] : null),"
+            "setItem: (k, v) => { __store[k] = String(v); }};\nconst navigator = {};",
+        )
+        self.assertEqual("wrap session", rendered["cls"])
+        self.assertEqual(1, rendered["html"].count('role="region"'))
+        self.assertIn("standalone", rendered["html"])
+
+    def test_answering_the_banner_after_turning_usage_off_leaves_it_on(self) -> None:
+        # The regression the in-flow placement introduced. Under the modal the
+        # board was covered, so `configure` was unreachable until the
+        # disclosure was answered and the two controls could not disagree.
+        # Falsifying edit: drop `usageEnabled = true` from the `umodal` else
+        # branch — this reads False, and the reader who clicked "Keep usage on"
+        # gets no usage.
+        rendered = self._run_page_js(
+            "usageAction('uon');"  # the master switch, off
+            "const off = usageEnabled;"
+            "usageAction('umodal', 'on');"  # then "Keep usage on"
+            "console.log(JSON.stringify({off, on: usageEnabled,"
+            " stored: __store['cargento.usageEnabled']}));",
+            prelude="const __store = {};\nconst localStorage = {"
+            "getItem: k => (k in __store ? __store[k] : null),"
+            "setItem: (k, v) => { __store[k] = String(v); },"
+            "removeItem: k => { delete __store[k]; }};\nconst navigator = {};",
+        )
+        self.assertFalse(rendered["off"])
+        self.assertTrue(rendered["on"])
+        self.assertEqual("1", rendered["stored"])
 
     def test_both_bands_render_the_per_model_rows(self) -> None:
         # Two surfaces consume this list — the regular view's card and the calm

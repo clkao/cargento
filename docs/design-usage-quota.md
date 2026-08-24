@@ -450,12 +450,14 @@ them, and that is where a reader gets a rate.
 
 The fetch trigger lives in `/api/data` handling, not in collection, and fires only for requests
 carrying `usage=1`. The page sends that parameter exactly when the usage switch is on and the
-first-run disclosure modal has been answered. Three contract clauses fall out of this placement
+first-run disclosure banner has been answered. Three contract clauses fall out of this placement
 rather than being scheduled or checked:
 
 1. "No polling while no dashboard page is connected": no request, no fetch.
-2. "Disclosed before it acts": on first run the modal is up, no poll carries consent yet, and the
-   first fetch follows the user's answer.
+2. "Disclosed before it acts": on first run the banner is up, no poll carries consent yet, and
+   the first fetch follows the user's answer. The disclosure renders as an in-flow banner rather
+   than a modal overlay, so the dashboard surface is fully visible on first load and the
+   disclosure is read alongside it rather than in front of it.
 3. "`--diagnose` never triggers a fetch": diagnostics run `collect()`, and `collect()` only reads
    the cache.
 
@@ -463,7 +465,7 @@ The switch itself is browser state (`localStorage`), which the server cannot see
 the request. That is why the parameter exists: a bare `curl /api/data` gets whatever is cached and
 triggers nothing. `--no-usage` is the server-side override and acts in two places. At assembly, every
 registry row that depends on the fetch simply gets no usage provider, so nothing reads the cache and
-the `usage_fetch` capability flag (which wakes the modal) can never appear. At ingest,
+the `usage_fetch` capability flag (which wakes the banner) can never appear. At ingest,
 `quota.receive_statusline` drops the quota fields of a pushed receipt before storing it. The second
 gate is needed because assembly only stops publication: a pushed receipt arrives unsolicited, so
 without it the flag would suppress display while the figures still sat in process memory. A contract test asserts
@@ -555,7 +557,7 @@ The payload also carries an account email and a transcript path. Entries are the
 by field rather than derived from the payload, and a test asserts no other field survives shaping.
 
 `usage_is_fetch` stays `False` for this row. There is no outbound request to disclose, so the
-first-run modal must not fire; the user installed the forwarder deliberately, which is the consent.
+first-run banner must not appear; the user installed the forwarder deliberately, which is the consent.
 `--no-usage` still drops the provider, because a user turning usage off means the section, not just
 its network half, and it also drops the quota fields at ingest so a receipt pushed while the flag is
 set is not retained. The endpoint still answers 200: a status-line command must never see an error
@@ -707,7 +709,7 @@ below.
 ### On a fresh install the surface is a roster of reasons, and no comparison
 
 Both fetch authorities sit behind the first-run disclosure. The page sends `usage=1` only once the
-switch is on and the modal has been answered (Q-3), so until then nothing is fetched and Anthropic
+switch is on and the banner has been answered (Q-3), so until then nothing is fetched and Anthropic
 and Cursor have no reading. The three local authorities need something to have arrived inside
 `window_hours`. On a machine where nothing has run yet, that is every authority empty, and A4's
 worked example has no side to it at all.
@@ -716,7 +718,7 @@ The decision is that this renders as the roster with a reason on each row and no
 published. An authority with no reading is never drawn as 0%, never as headroom, and never left out.
 Nothing is ranked until two authorities in one horizon class each carry a measured percentage, and
 below that the surface says what it is waiting for: the disclosure, for the two fetched rows, and a
-turn in the harness for the local ones. The reader who answers the modal has Anthropic and Cursor a
+turn in the harness for the local ones. The reader who answers the banner has Anthropic and Cursor a
 poll later; Codex arrives the next time Codex runs.
 
 That is a deliberately unimpressive first load, and it is the point. The alternative on identical

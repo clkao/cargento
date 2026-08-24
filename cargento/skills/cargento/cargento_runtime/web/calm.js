@@ -930,6 +930,7 @@ function calmLedger(d){
         ` aria-pressed="${usageOpen}">usage</button>`
       : "") +
     `<span class="cm-sp"></span><span class="cm-note">${esc(note)}</span></div>` +
+    usageBanner(d) +
     usageBandCalm(d) +
     /* Above the ledger, not inside it: an ask is not a session row, and the one
        thing calm must not do is leave a reader unable to release a session that
