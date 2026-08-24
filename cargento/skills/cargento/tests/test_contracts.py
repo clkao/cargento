@@ -490,8 +490,8 @@ class ApplicationIsolationTest(unittest.TestCase):
             harnesses=(self._spec("disk", usage_entries=[entry]),),
         )
 
-        # The flag is what wakes the page's first-run disclosure modal, so a
-        # disk-read provider must never raise it — the modal would then be
+        # The flag is what wakes the page's first-run disclosure banner, so a
+        # disk-read provider must never raise it — the banner would then be
         # disclosing a fetch that does not exist.
         self.assertTrue(fetcher.collect(show_all=True).get("usage_fetch"))
         self.assertNotIn("usage_fetch", disk_only.collect(show_all=True))

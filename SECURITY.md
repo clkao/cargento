@@ -163,7 +163,7 @@ Token handling is read-only, one way, and never expands:
 - Reading the token adds no write access anywhere. Harness stores stay read-only.
 
 Consent and the off switch: the feature is on by default and disclosed before it acts. The first
-time the dashboard opens with the feature available, a modal explains the token read and the
+time the dashboard opens with the feature available, a banner explains the token read and the
 request above, and carries the switch that turns the feature off. The setting can be changed later
 from the dashboard's configure panel, and `--no-usage` disables the feature for a run regardless
 of the stored setting. With the feature off, Cargento's network surface is exactly the three
