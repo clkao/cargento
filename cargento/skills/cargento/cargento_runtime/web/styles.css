@@ -192,6 +192,15 @@
 
   /* working card */
   .card{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:22px 24px;display:flex;flex-direction:column;gap:15px}
+  /* A card and an idle row became click targets (they open the session view),
+     and a div that does something with no cursor change and no hover is a
+     control the reader has to discover by accident. Attribute-scoped so the
+     affordance cannot outlive the handler, and the same cursor+hover pairing
+     `.sv-pick` already uses. No role or tabindex: no clickable div on this page
+     carries one, and `role="button"` would announce a whole card as one button.
+     The keyboard route is `c` to calm and the drawer's `view`. */
+  .card[data-calm]{cursor:pointer}
+  .card[data-calm]:hover{border-color:var(--line2)}
   .card-top{display:flex;align-items:flex-start;gap:16px}
   .card-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:11px}
   .card-headrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -269,6 +278,8 @@
   .idle-wrap{position:relative}
   .idle-clip{position:relative;overflow:hidden;transition:max-height .5s cubic-bezier(.4,0,.2,1)}
   .idle-row{display:flex;align-items:center;gap:14px;padding:14px 4px;border-bottom:1px solid var(--line)}
+  .idle-row[data-calm]{cursor:pointer}
+  .idle-row[data-calm]:hover{background:var(--sunk)}
   .idle-dot{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex:none;opacity:.7}
   .idle-title{font-weight:500;font-size:var(--fs-lg);color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .idle-proj{font-family:var(--mono);font-size:var(--fs-sm);color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:270px}
@@ -586,3 +597,40 @@
   .u-act{font-family:var(--mono);font-size:var(--fs-sm);color:var(--ink2);background:transparent;border:1px solid var(--line2);border-radius:9px;padding:9px 16px;cursor:pointer;transition:background .12s,color .12s}
   .u-act:hover{background:var(--bg);color:var(--ink)}
   .u-act:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
+
+  /* ── session view ───────────────────────────────────────────────────────
+     One session's dispatch tree: a vertical spine of stage-colored entity
+     nodes with a goal header above. The tree reuses the existing `sd-live`
+     class from the Spacedock strip for live workers. */
+  .session .sv-header{padding:0 16px 10px}
+  .session .sv-title{font-size:var(--fs-lg);font-weight:700;letter-spacing:-.01em}
+  .session .sv-meta{display:flex;align-items:center;gap:8px;margin-top:4px;font-family:var(--mono);font-size:var(--fs-xs);color:var(--ink3)}
+  .session .sv-meta-text{color:var(--ink2)}
+  .session .sv-empty{padding:24px 16px;font-size:var(--fs-sm);color:var(--ink3)}
+  .session .sv-picker{padding:8px 16px}
+  .session .sv-picker-h{font-size:var(--fs-sm);color:var(--ink3);margin-bottom:10px}
+  .session .sv-pick{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line2);border-radius:8px;cursor:pointer;margin-bottom:6px;transition:background .12s}
+  .session .sv-pick:hover{background:var(--sunk)}
+  .session .sv-pick-title{font-size:var(--fs-sm);font-weight:600;color:var(--ink)}
+  .session .sv-pick-meta{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);margin-left:auto}
+  .session .sv-wf{padding:0 16px 18px}
+  .session .sv-wf-name{font-family:var(--mono);font-size:var(--fs-xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:6px}
+  .session .sv-goal{font-size:var(--fs-sm);font-weight:600;color:var(--accent-ink);padding:6px 10px;border:1px solid color-mix(in oklab,var(--accent) 28%,transparent);border-radius:8px;margin-bottom:10px;background:color-mix(in oklab,var(--accent) 6%,transparent)}
+  .session .sv-tree{display:flex;flex-direction:column;gap:0;border:1px solid var(--line2);border-radius:10px;overflow:hidden}
+  .session .sv-stage{display:flex;align-items:flex-start;gap:0;border-bottom:1px solid var(--line2)}
+  .session .sv-stage:last-child{border-bottom:0}
+  .session .sv-stage-name{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);padding:8px 10px;min-width:130px;flex:none;border-right:1px solid var(--line2);background:var(--sunk)}
+  .session .sv-ents{padding:6px 10px;flex:1;display:flex;flex-direction:column;gap:3px}
+  .session .sv-ent{font-family:var(--mono);font-size:var(--fs-xs);color:var(--ink2);padding:3px 7px;border-radius:5px;border:1px solid transparent}
+  .session .sv-ent.sd-live{color:var(--accent-ink);border-color:color-mix(in oklab,var(--accent) 40%,transparent);background:color-mix(in oklab,var(--accent) 10%,transparent);font-weight:700}
+  .session .sv-cyc{color:var(--ink3);font-weight:400}
+  .session .sv-ent-empty{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);padding:3px 7px}
+  .session .sv-back-bar{padding:8px 16px}
+  .session .sv-back{font-size:var(--fs-sm);color:var(--ink3);background:none;border:none;cursor:pointer;padding:4px 0;text-decoration:none}
+  .session .sv-back:hover{color:var(--ink)}
+  .session .sv-loading{padding:24px 16px}
+  .session .sv-loading-text{font-size:var(--fs-sm);color:var(--ink2);margin-bottom:6px}
+  .session .sv-loading-p{font-size:var(--fs-xs);color:var(--ink3)}
+  .session .sv-loading-p a{color:var(--accent-ink)}
+  .session .sv-empty-h{font-size:var(--fs-sm);font-weight:600;color:var(--ink2);margin-bottom:4px}
+  .session .sv-empty-p{font-size:var(--fs-xs);color:var(--ink3);line-height:1.5}

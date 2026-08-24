@@ -119,6 +119,14 @@ class RuntimeConfig:
     spacedock_max_entity_files: int
     spacedock_max_boot_records: int
     spacedock_max_boot_candidates: int
+    # The workflow README's frontmatter `title`, published as a strip's goal
+    # line. The only project-authored *text* that reaches `/api/data` — every
+    # other published value is a grammar-checked slug or a stage name — so it is
+    # the one that needs a width of its own. 120 matches the ask lane's option
+    # cap, which is the other place a line of somebody else's prose lands on the
+    # page, and the README byte cap alone would have allowed a 64 KiB one on
+    # every snapshot and every SSE push.
+    spacedock_goal_cap_chars: int
     collect_memo_sec: float
     # The SSE stream. The client cap is above the browsers' six-per-origin
     # limit, so the server is not the thing that refuses first: it bounds
@@ -455,6 +463,7 @@ def build_runtime_config(
         spacedock_max_entity_files=96,
         spacedock_max_boot_records=16,
         spacedock_max_boot_candidates=64,
+        spacedock_goal_cap_chars=120,
         collect_memo_sec=2.5,
         stream_max_clients=8,
         stream_heartbeat_sec=15.0,
