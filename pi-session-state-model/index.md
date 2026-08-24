@@ -25,7 +25,7 @@ gates:
                 reason: 'Conn: captain granted ''you have the conn to push to the forked repo and open PR; when you have the conn, you should still do gate attempt and record your autonomous approval as resolution'' (session 01a02216, reaffirmed ''just do some'' this session). Evidence: seed reviewed in full — 4 falsifiable ACs against live /api/data (AC-1 in-flight tool reads working/running regardless of age; AC-2 thinking block reads working/thinking; AC-3 genuine-awaiting preserved; AC-4 suite green), root-cause collector scope (pi.py+sessions.py), not UI. Ideation owes the detection design.'
               application:
                 target-stage: ideation
-                state: pending
+                state: consumed
         - id: gate:c8ex5x308ssq305b62n3szxm:ideation
           stage: ideation
           attempts:
@@ -45,7 +45,7 @@ gates:
                 reason: 'Conn: ''you have the conn ... record your autonomous approval as resolution'' (01a02216, reaffirmed ''just do some'' this session). Evidence: checklist 3/3 DONE; 5290-record census corrected the seed assumption and AC-2 was recast on the real transcript shape (stopReason census + spike cited in body); AC-3 is the required moving-baseline AC (today''s fresh-stop lie documented with its own falsifying edit); AC-1..4 all carry Verified-by clauses with named falsifying edits. Design confined to pi.py + sessions.py. Ready for implementation.'
               application:
                 target-stage: implementation
-                state: pending
+                state: consumed
         - id: gate:c8ex5x308ssq305b62n3szxm:validation
           stage: validation
           attempts:
