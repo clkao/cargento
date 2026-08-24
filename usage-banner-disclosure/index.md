@@ -68,7 +68,7 @@ gates:
                 state: consumed
 started: 2026-08-22T05:54:44Z
 worktree: .worktrees/spacedock-ensign-usage-banner-disclosure
-mod-block:
+mod-block: merge:pr-merge
 verdict: PASSED
 completed: 2026-08-24T20:57:54Z
 pr: pr-merge:146
