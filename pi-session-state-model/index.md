@@ -68,6 +68,7 @@ gates:
                 state: pending
 started: 2026-08-22T05:54:23Z
 worktree: .worktrees/spacedock-ensign-pi-session-state-model
+mod-block: merge:pr-merge
 ---
 # Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
 
