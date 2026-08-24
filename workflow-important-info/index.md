@@ -69,6 +69,7 @@ gates:
 started: 2026-08-21T08:07:17Z
 worktree: .worktrees/spacedock-ensign-workflow-important-info
 mod-block: merge:pr-merge
+pr: spacedock-dev/cargento#156
 ---
 
 Each project/workflow can define what important information is to be displayed
