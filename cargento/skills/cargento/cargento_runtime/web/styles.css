@@ -563,11 +563,13 @@
   /* usage disclosure banner — opens once, when a payload first carries the
      fetcher's capability flag. In-flow, never position:fixed — the disclosure
      is consent, not a gate.
-     Calm: a row inside .cm-frame whose border-bottom matches the frame's other
-     separators. Regular: .standalone carries its own border because .wrap
-     owns gaps rather than separators. */
+     Calm: a row inside .cm-frame, ruled like the frame's chrome (.cm-head,
+     .cm-foot, and the frame's own border) rather than like its ledger rows,
+     which are a tone lighter. The frame is genuinely mixed, so "matches the
+     other separators" would name the wrong half. Regular: .standalone carries
+     its own border because .wrap owns gaps rather than separators. */
   .u-banner{flex:none;display:flex;flex-direction:column;gap:8px;background:var(--sunk);border-bottom:1px solid var(--line2);padding:13px 24px 15px}
-  .u-banner.standalone{border:1px solid var(--line2);border-radius:12px;background:var(--sunk)}
+  .u-banner.standalone{border:1px solid var(--line2);border-radius:12px}
   .u-banner-top{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
   .u-banner-h{font-size:var(--fs-md);font-weight:700;letter-spacing:-.01em}
   .u-banner-acts{margin-left:auto;display:flex;gap:10px;flex:none}

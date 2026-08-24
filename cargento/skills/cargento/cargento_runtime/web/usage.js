@@ -847,8 +847,15 @@ function usageAction(act, arg){
       usageEnabled = false;
       usageStore(USAGE_ENABLED_KEY, "0");
     } else {
-      /* "Keep usage on" is the first moment consent exists: poll right away
-         so the first fetch starts now rather than on the next 5s tick. */
+      /* Asserted, not assumed. The banner is in flow rather than an overlay, so
+         `configure` is reachable while it is still unanswered — a reader who
+         unchecked the master switch there and then clicked "Keep usage on"
+         ended with usage off. Harmless under the modal, which covered the
+         board; not harmless now.
+         Then poll right away: this is the first moment consent exists, so the
+         first fetch starts now rather than on the next 5s tick. */
+      usageEnabled = true;
+      usageStore(USAGE_ENABLED_KEY, "1");
       refresh();
     }
   } else return false;

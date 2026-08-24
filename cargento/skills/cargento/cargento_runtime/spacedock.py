@@ -267,7 +267,7 @@ def boot_records(config: RuntimeConfig, data: bytes) -> list[dict[str, Any]]:
             continue
         try:
             record = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         if not isinstance(record, dict):
             continue
@@ -279,9 +279,17 @@ def boot_records(config: RuntimeConfig, data: bytes) -> list[dict[str, Any]]:
                     break
                 try:
                     envelope, position = decoder.raw_decode(text, begin)
-                except ValueError:
+                except (ValueError, RecursionError):
                     # raw_decode fails at the first bad byte, so stepping past a
                     # bad candidate cannot degrade into a whole-blob rescan.
+                    #
+                    # `RecursionError` beside it because this text is already
+                    # unescaped, so nesting a tool happened to print is real
+                    # nesting to the decoder. It is a `RuntimeError`, not a
+                    # `ValueError`, so it would sail past every handler between
+                    # here and `aggregate`'s per-harness boundary — and that
+                    # boundary blanks the whole harness's rows, which is a
+                    # steep price for one deep line in one transcript.
                     position = begin + 1
                     continue
                 if isinstance(envelope, dict) and envelope.get("command") == "boot":

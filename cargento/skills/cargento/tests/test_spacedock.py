@@ -292,9 +292,10 @@ class SpacedockParserTest(unittest.TestCase):
         """The invariant that holds on every platform.
 
         A lone surrogate survives JSON decoding, so an envelope can carry one.
-        Everything below here is wrapped in ``except OSError``, and the failure
-        boundary above is per harness, so anything that escapes blanks every row
-        for that harness rather than costing one session its strip.
+        Everything below here is wrapped in ``except (OSError, ValueError)``, and
+        the failure boundary above is per harness, so anything that escapes
+        blanks every row for that harness rather than costing one session its
+        strip.
         """
         config, runtime_state = runtime()
         boot = [
@@ -309,6 +310,43 @@ class SpacedockParserTest(unittest.TestCase):
         self.assertEqual([], spacedock.session_workflows(config, runtime_state, boot, [], 0.0, 1.0))
         for workflow_dir in spacedock.workflow_dirs(config, boot):
             self.assertIsNone(spacedock.read_workflow(config, runtime_state, workflow_dir))
+
+        # Called directly, because the two assertions above cannot reach the
+        # handlers this is about: `_usable_dir` refuses the path first, so
+        # `workflow_dirs` returns nothing and the loop never runs. Narrowing
+        # `read_workflow` or `entity_files` back to `except OSError` left the
+        # suite green on all three platforms. Neither reader consults
+        # `_usable_dir`, so a direct call meets the `UnicodeEncodeError` that
+        # `os.path.realpath` raises on POSIX — a `ValueError`, which is the whole
+        # reason the handlers were widened. On Windows the same calls raise an
+        # ordinary `OSError`, still caught, same answer.
+        self.assertIsNone(spacedock.read_workflow(config, runtime_state, "/\ud800"))
+        self.assertEqual([], spacedock.entity_files(config, "/\udfff"))
+
+    def test_a_deeply_nested_envelope_candidate_is_absorbed_not_raised(self) -> None:
+        """`RecursionError` is a `RuntimeError`, so it needs naming separately.
+
+        The scanned text is already unescaped, so nesting a tool happened to
+        print is real nesting to the decoder. Nothing between here and
+        `aggregate`'s per-harness boundary catches a `RuntimeError`, and that
+        boundary blanks every row for the harness. Falsifying edit: drop
+        `RecursionError` from either handler in `boot_records` — this raises.
+        """
+        config, _state = runtime()
+        # 20k openers, not a thousand: CPython's limit is well above the default
+        # recursion depth for this decoder, and a shallower nest simply parses.
+        line = json.dumps(
+            {
+                "message": {
+                    "role": "toolResult",
+                    "content": [
+                        {"type": "text", "text": 'definition_dir {"command": ' + "[" * 20_000}
+                    ],
+                }
+            }
+        ).encode()
+
+        self.assertEqual([], spacedock.boot_records(config, line))
 
     @unittest.skipIf(
         os.name == "nt", "Windows encodes lone surrogates (PEP 529 surrogatepass); POSIX cannot"

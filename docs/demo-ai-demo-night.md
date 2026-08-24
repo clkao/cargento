@@ -470,8 +470,10 @@ tab-election lease and carry no user state.
 - [ ] Rehearse in calm mode and the page **opens in calm mode** on the take, wrecking B2. Land in
       regular mode at the end of every rehearsal. (Calm's sort order is a plain module variable and
       resets to `attention` on reload; the display mode does not.)
-- [ ] A fresh browser profile pops the **usage-disclosure modal** on first load, over the board.
-      Dismiss it before the take, or use a profile that has already seen it.
+- [ ] A fresh browser profile shows the **usage-disclosure banner** on first load — in flow, at the
+      top of the board in regular mode and as the first row inside the calm frame, never over it
+      (`web/usage.js:803`). There is nothing to dismiss: answer it with **Keep usage on** before the
+      take, or use a profile that has already seen it. The other button, "Turn it off", empties B6.
 - [ ] If B6 comes up empty, the flag to check is **`cargento.usageEnabled`** — the feature switch,
       which blanks usage in both modes (`web/usage.js:83`, `web/usage.js:763`). Once it is off in a
       browser it stays off. Confirm the strip populates before recording.

@@ -77,8 +77,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "fa9920e65db45c4341688db87566d92767f6890136bf7a3355166bffe9f51c9b",
             ),
             "usage.js": (
-                51_500,
-                "9e8e530f60e679357662394d61146338220c5ca19fe8eaed4cf367e754641758",
+                51_910,
+                "8fe192960d45c33ae10c19ac2b31171f4df3264e826c899f59131b0d354e5548",
             ),
             "controls.js": (
                 7_254,
@@ -113,16 +113,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(52_667, len(styles))
+        self.assertEqual(52_827, len(styles))
         self.assertEqual(
-            "10c4f1aaeaae72c041159f1f1f4c8a1c9fe24ddaad42e874c3f4f7535d3ee8d1",
+            "e4e17a5cc77c59f17dd4569341bb5ca452cd484711095d0f39b74ed4494d01e7",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(283_408, len(assembled))
+        self.assertEqual(283_978, len(assembled))
         self.assertEqual(
-            "a5b8e73a65e3a66180fb5c60f27ab98c08f0c1a678347e32b8dd181c0c72ccd7",
+            "3b9b4822446dee741f724f3cb5c83e31c4009f32ce1806e3221d6ad391ba3739",
             hashlib.sha256(assembled).hexdigest(),
         )
 
@@ -1613,6 +1613,67 @@ const claude = models => ({harness: 'claude', state: 'ok', asOf: 1700000000,
         self.assertTrue(rendered["locked"], "the last shown stat was offered as switchable")
         self.assertTrue(rendered["stillOn"], "the last shown stat was switched off")
         self.assertEqual(["Fable"], [c["lab"] for c in rendered["cells"]])
+
+    def test_the_disclosure_banner_renders_in_flow_on_both_surfaces(self) -> None:
+        # Two surfaces assemble the banner separately — calm from `calmLedger`,
+        # regular from `render`'s innerHTML — and only the byte pins would
+        # notice a lost call site, with a digest mismatch that invites
+        # re-pinning rather than investigating. `usageBandCalm`'s sibling test
+        # above exists because a row rendered in neither surface once shipped.
+        rendered = self._run_page_js(
+            "const d = {usage: [{harness: 'claude', state: 'ok'}], usage_fetch: true};"
+            "const before = {calm: usageBanner(d), regular: usageBanner(d, true)};"
+            "usageAction('umodal', 'on');"
+            "const after = {calm: usageBanner(d), regular: usageBanner(d, true)};"
+            "console.log(JSON.stringify({before, after, on: usageEnabled,"
+            " seen: usageModalSeen}));"
+        )
+        for view in ("calm", "regular"):
+            with self.subTest(view=view):
+                html = rendered["before"][view]
+                # The outer element exactly once. Counted on `role="region"`,
+                # not on the `u-banner` class prefix, which the four inner
+                # element classes share.
+                self.assertEqual(1, html.count('role="region"'))
+                self.assertIn("Keep usage on", html)
+                self.assertIn("Turn it off", html)
+                # In flow, not a gate. `aria-modal` would announce it as one.
+                self.assertNotIn("aria-modal", html)
+                self.assertNotIn("u-overlay", html)
+                # Answered once, gone from both — the consent is the state, not
+                # the markup.
+                self.assertEqual("", rendered["after"][view])
+        self.assertTrue(rendered["seen"])
+        # "Keep usage on" asserts the master switch rather than assuming it:
+        # `configure` is reachable while the banner is up, so a reader can turn
+        # usage off there first and then answer the banner.
+        self.assertTrue(rendered["on"])
+        # Only the regular placement carries its own border: `.wrap` owns gaps
+        # rather than separators, and calm's row sits inside the frame's rules.
+        self.assertIn("standalone", rendered["before"]["regular"])
+        self.assertNotIn("standalone", rendered["before"]["calm"])
+
+    def test_answering_the_banner_after_turning_usage_off_leaves_it_on(self) -> None:
+        # The regression the in-flow placement introduced. Under the modal the
+        # board was covered, so `configure` was unreachable until the
+        # disclosure was answered and the two controls could not disagree.
+        # Falsifying edit: drop `usageEnabled = true` from the `umodal` else
+        # branch — this reads False, and the reader who clicked "Keep usage on"
+        # gets no usage.
+        rendered = self._run_page_js(
+            "usageAction('uon');"  # the master switch, off
+            "const off = usageEnabled;"
+            "usageAction('umodal', 'on');"  # then "Keep usage on"
+            "console.log(JSON.stringify({off, on: usageEnabled,"
+            " stored: __store['cargento.usageEnabled']}));",
+            prelude="const __store = {};\nconst localStorage = {"
+            "getItem: k => (k in __store ? __store[k] : null),"
+            "setItem: (k, v) => { __store[k] = String(v); },"
+            "removeItem: k => { delete __store[k]; }};\nconst navigator = {};",
+        )
+        self.assertFalse(rendered["off"])
+        self.assertTrue(rendered["on"])
+        self.assertEqual("1", rendered["stored"])
 
     def test_both_bands_render_the_per_model_rows(self) -> None:
         # Two surfaces consume this list — the regular view's card and the calm
