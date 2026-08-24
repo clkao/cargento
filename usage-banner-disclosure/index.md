@@ -65,7 +65,7 @@ gates:
                 reason: 'conn: fresh validator PASSED on code/contract evidence; supervisor mechanical re-run green (12/12 probe checks after fixing the probe''s calm-mode entry assumption; tests/ruff/mypy/lint_embedded green). Report 2ded013. Non-blocking notes: byte-oracle re-pin blind spot, ''blocks until dismissed'' phrasing.'
               application:
                 target-stage: done
-                state: consumed
+                state: pending
 started: 2026-08-22T05:54:44Z
 worktree: .worktrees/spacedock-ensign-usage-banner-disclosure
 mod-block: merge:pr-merge
