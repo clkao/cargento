@@ -1,6 +1,6 @@
 ---
 title: Session view should carry the session card, then improve session-centric from there
-status: validation
+status: done
 source: captain dogfood — "we could at least have the card in the session view, and improve from there"
 id: 0c3re8kepj1984gnaenr5a7f
 gates:
@@ -45,11 +45,14 @@ gates:
                 reason: 'conn granted: ''you have the conn''. Per captain: no presentation — just record the gate and resolution. USER IMPACT VERIFIED (server-check, not just suite): session card renders in the session view (sessionCardCore in page, sessionCard calls it), ''other workflow entities'' label replaces ''NOT TOUCHED'', entities carry decision/timestamp. dispatch_history computed but not published to API — filed as separate follow-up task. Core impact delivered; advancing to done.'
               application:
                 target-stage: done
-                state: pending
+                state: consumed
 started: 2026-08-21T14:15:39Z
 worktree: .worktrees/spacedock-ensign-session-centric-view
-mod-block: merge:pr-merge
+mod-block:
 pr: pr-merge:142
+verdict: PASSED
+completed: 2026-08-24T21:21:19Z
+archived: 2026-08-24T21:21:19Z
 ---
 
 The session view (the third `session` display mode, reached via `#session=...`) renders the workflow's entity roster without the session card. The regular board view already has a rich per-session card — title, project, sid, model, provider, rate (tok/min), state, state_detail, elapsed/eta. The session view should at least show that card, then improve toward session-centric.
