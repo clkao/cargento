@@ -66,19 +66,24 @@ Two standing constraints:
 
 ## D-3: Exactly one owner per notification path
 
-- The browser Notification API owns transcript-detected transitions. That path already requires an
-  open dashboard tab, so nothing is lost by putting delivery there.
-- Native OS backends own hook POSTs to `/api/notify`, which must work with no tab open.
+- The split is by platform, not by path. Wherever the server has a native backend it delivers every
+  needs-input alert, for every harness and whichever of the three sources found the gate; wherever it
+  has none the page delivers them, and only while a tab is open.
+- That is the rule the page implements, and until DRC-4192 it was not the rule the server did: the
+  server fired for Claude's collector alone, so on macOS a gate on any other harness reached neither
+  layer. The popup decision now lives in `Application`, over the finished row (see R-5 in
+  [design-runtime-architecture.md](design-runtime-architecture.md)).
 - A question registered on `/api/ask` follows the same split, and is keyed on the ask id rather than
   on a transition: it has no prior state, and it leaves the payload for good once answered, withdrawn
   or expired. Two differences from the session path are deliberate. No dismissal is consulted, because
   the card is published regardless, and suppressing the alert would leave the reader an alert and a board
   that disagree. And the ask lane reads and writes its own cooldown key, never the gate lane's shared
-  `_global` floor, so neither alert can swallow the other. That asymmetry is load-bearing in both
-  directions: a gate re-emits for as long as it stands, while nothing ever re-registers a question and
-  the sweep deletes it unanswered at `ask_deadline_sec`; and `maybe_popup` records the transition
-  *above* its cooldown gates, so a gate suppressed by a shared floor is not delayed by 15s, it is gone
-  for the whole block.
+  `_global` floor, so neither alert can swallow the other. The two lanes answer different questions on
+  different timetables: a gate re-emits for as long as it stands, while nothing ever re-registers a
+  question and the sweep deletes it unanswered at `ask_deadline_sec`. A shared floor was once worse
+  than a delay: `maybe_popup` recorded the transition *above* its cooldown gates, so a floored gate
+  was gone for the whole block rather than late by 15s. DRC-4192 had to fix that when every harness
+  started reaching the floor. The keys stay apart regardless.
 
 `/api/data` publishes `native_notify`, which is the name of the server's OS backend, or empty. The
 page raises its own notification only when that field is empty. Double-firing is impossible by

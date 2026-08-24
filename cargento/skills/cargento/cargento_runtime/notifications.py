@@ -165,6 +165,26 @@ def hook_generation(state: RuntimeState, prefix: str) -> int:
         return state.hook_generation.get(prefix, 0)
 
 
+def hook_generations(state: RuntimeState) -> dict[str, int]:
+    """Every session's SessionEnd generation, copied under the lock.
+
+    The popup decision is taken once per collection, over rows every collector
+    has already returned, so it cannot sample a generation before the read that
+    produced the row it is judging. This is that sample: taken before the
+    harness loop, it names the generation each session was collected under, and
+    `maybe_popup` re-checks it against the live map under the same lock.
+
+    Copied rather than read live, and the copy is the whole point: reading the
+    map at decision time would compare a value against itself and let a
+    SessionEnd that committed mid-collection re-create the state it just
+    cleared. A session with no entry reads 0 through `dict.get` at both ends, so
+    a harness that has no SessionEnd signal at all is judged by the same rule
+    Claude is rather than skipping the check.
+    """
+    with state.hook_lock:
+        return dict(state.hook_generation)
+
+
 def current_hook(
     state: RuntimeState,
     prefix: str,
@@ -312,10 +332,27 @@ def maybe_popup(
 ) -> None:
     """Popup when a session transitions into a needs-input state.
 
+    Called once per collected row, for every harness, from `Application`. It was
+    called from Claude's collector alone until DRC-4192, and that is the whole of
+    why a Codex gate on macOS alerted nobody: the browser layer stands down
+    wherever `native_notifier` names a backend, on the premise that the server
+    already fired, and nothing called this for the other nine.
+
+    ``subject.prefix`` is the key both popup maps are stored under, and it is the
+    session id rather than `(harness, sid)` deliberately: `handle_payload` writes
+    the same key off Claude's hook ingress, and the two lanes must share it or one
+    standing gate pops twice — once when the hook lands and again when the next
+    collection sees the transition it caused. Two harnesses publishing a
+    byte-identical session id would fold together here; the dismissal store is
+    keyed properly and is unaffected, and one suppressed popup is the whole cost.
+
     ``expect_generation`` is re-checked under the same lock that guards the
     last-session-state map. Checking it in the caller leaves a window in which a
     SessionEnd commits first, and this would then re-create the state it just
     cleared and fire a popup for a session that has already exited.
+
+    A transition the machine-wide floor holds is deferred rather than consumed;
+    the comment on that branch has the reason.
     """
     prefix, harness_label = subject.prefix, subject.label
     if dismissals.suppresses(config, state, subject.harness, prefix, subject.activity):
@@ -332,14 +369,30 @@ def maybe_popup(
         ):
             return
         prev = state.last_session_state.get(prefix)
+        entering = session_state == "needs_input" and prev != "needs_input"
+        # The machine-wide floor delays a popup; it must not destroy one. Since
+        # DRC-4192 every harness reaches this floor, so an unrecorded return here
+        # is what stops one harness's gate consuming another's: the transition is
+        # recorded ABOVE the gates, and a transition recorded while floored fails
+        # the edge test on every later collection, silencing that gate for as
+        # long as it stands. `maybe_ask_popup` keys its own floor apart for this
+        # same loss, which it calls actively harmful.
+        #
+        # `popup_cooldown_sec` is deliberately NOT deferred: it is the
+        # per-session re-emission floor, and retrying past it would re-pop the
+        # same standing gate every minute.
+        if (
+            entering
+            and now - state.last_popup.get(prefix, 0) >= config.popup_cooldown_sec
+            and now - state.last_popup.get("_global", 0) < config.global_popup_cooldown_sec
+        ):
+            return
         runtime_state.bounded_put(
             state.last_session_state, prefix, session_state, limit=config.max_cache_entries
         )
-        if session_state != "needs_input" or prev == "needs_input":
+        if not entering:
             return
         if now - state.last_popup.get(prefix, 0) < config.popup_cooldown_sec:
-            return
-        if now - state.last_popup.get("_global", 0) < config.global_popup_cooldown_sec:
             return
         runtime_state.bounded_put(state.last_popup, prefix, now, limit=config.max_cache_entries)
         runtime_state.bounded_put(state.last_popup, "_global", now, limit=config.max_cache_entries)
@@ -404,15 +457,14 @@ def maybe_ask_popup(
 
     **The floor keys are deliberately asymmetric with the gate lane's.** This
     reads and writes `ASK_POPUP_KEY` only, and never the gate lane's `"_global"`.
-    Writing that key would let a question permanently destroy a gate popup rather
-    than delay it: `maybe_popup` records the transition into `last_session_state`
-    ABOVE its cooldown gates, so a transition suppressed by a shared floor is
-    consumed, and every later collection then fails its edge test for as long as
-    the session stays blocked. The transcript path is the only popup source for a
-    gate when no hook is installed, so that loss is total. The reverse direction
-    matters just as much and for the opposite reason: a gate re-emits for as long
-    as it stands, while nothing ever re-registers a question and the sweep deletes
-    it unanswered at `ask_deadline_sec`.
+    Writing that key would put a question in front of every gate on the machine
+    for `global_popup_cooldown_sec`, and the two lanes answer different questions
+    on different timetables: a gate re-emits for as long as it stands, while
+    nothing ever re-registers a question and the sweep deletes it unanswered at
+    `ask_deadline_sec`. (A shared floor used to be worse than a delay — a floored
+    gate transition was consumed and never retried — which is the defect
+    DRC-4192's popup pass had to fix once every harness reached that floor. The
+    asymmetry predates the fix and outlives it.)
 
     No dismissal is consulted. The card is published regardless — `_ask_cards`
     reads no dismissal store — so suppressing the alert would leave the reader an
