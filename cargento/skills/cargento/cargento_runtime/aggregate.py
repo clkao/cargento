@@ -132,6 +132,26 @@ class HarnessSpec:
     say which of the two it is. Declaring it here is what lets a consumer render
     an absence as unknown and rank a real zero, instead of sorting a harness
     that never measured below a session it can prove is slow.
+
+    ``reports_needs_input`` is the same shape on the field where getting it
+    wrong costs more. Eight of the ten cannot observe a gate at all, and their
+    silence is byte-identical to the silence of the two that can when nothing is
+    waiting: no row, no count, no band. So a quiet board cannot say whether
+    nothing is waiting or nothing could have told you, and B2's own note is that
+    a reader assumes the former because everything else here is harness-agnostic.
+    A `reports_rate` false row renders a dash; this one has nothing to draw a
+    dash on, which is why the disclosure has to be per harness rather than per
+    row.
+
+    It answers "can a gate on this harness reach the board", by ANY path -- not
+    "can this collector detect one". The distinction is the whole of what the
+    first review of this field caught: Codex reports a gate through the event
+    overlay and has no collector detection at all, so a flag meaning the second
+    thing labelled Codex blind on the same screen where a Codex gate was red.
+    That is the inversion this field exists to prevent, shipped by the field
+    itself. `tests/test_page.py` now derives the expected set from Claude's
+    collector plus whatever `EVENTS_BY_HARNESS` maps `input_requested` for,
+    because a hand-set bool beside a hand-written literal pinned the bug green.
     """
 
     key: str
@@ -139,6 +159,7 @@ class HarnessSpec:
     discover: Discoverer
     collect: Collector
     reports_rate: bool = False
+    reports_needs_input: bool = False
     usage: UsageProvider | None = None
     usage_is_fetch: bool = False
 
@@ -195,11 +216,24 @@ def default_harnesses(
             claude.discover,
             collect_claude,
             reports_rate=True,
+            # The only row that can. Its three paths are the whole of Cargento's
+            # gate detection; every other harness is tracked per harness under B2.
+            reports_needs_input=True,
             usage=claude.usage if usage_fetch_enabled else None,
             usage_is_fetch=True,
         ),
         HarnessSpec(
-            "codex", "Codex", codex.discover, codex.collect, reports_rate=True, usage=codex.usage
+            "codex",
+            "Codex",
+            codex.discover,
+            codex.collect,
+            reports_rate=True,
+            # Through the event overlay, not the collector: its bundled
+            # `PermissionRequest` hook maps to `input_requested`. Measured on
+            # 0.149.0 -- the hook fires with the prompt open, and a hook that
+            # prints nothing lets that prompt reach the human.
+            reports_needs_input=True,
+            usage=codex.usage,
         ),
         HarnessSpec("pi", "Pi", pi.discover, pi.collect, reports_rate=True),
         # Gemini CLI was retired on 2026-06-18 and Antigravity replaced it.
@@ -317,6 +351,10 @@ class Application:
                 # property of the store, and because a session row cannot carry
                 # the distinction: its 0 is the same 0 either way.
                 "reports_rate": spec.reports_rate,
+                # Whether this harness can report a gate at all, for the same
+                # reason `reports_rate` is here: the page cannot derive it, and
+                # the absence of a needs-input row is not evidence of quiet.
+                "reports_needs_input": spec.reports_needs_input,
                 "error": None,
             }
             harnesses.append(harness)
