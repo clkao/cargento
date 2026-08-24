@@ -71,6 +71,17 @@ class RuntimeConfig:
     global_popup_cooldown_sec: float
     popup_repeat_suppress_sec: float
     long_turn_warn_sec: float
+    # The ceiling on Pi's tool-in-flight assertion. A `toolUse` leaf is the
+    # agent's own in-progress marker and rightly outlives `working_threshold_sec`
+    # — recency cannot tell a long `bash` from a parked session. It cannot
+    # outlive everything, though: a transcript records that a tool started and
+    # can never record that the process died, so a Pi hard-killed mid-tool
+    # leaves that marker as the permanent branch tip. Tied to
+    # `long_turn_warn_sec` on purpose: past that point the turn already carries
+    # the amber long-turn flag, so the two would otherwise disagree about the
+    # same request — one calling it worth a human's attention and the other
+    # still calling it healthy.
+    pi_tool_in_flight_max_sec: float
     loop_error_run_threshold: int
     future_skew_tolerance_sec: float
     sql_message_limit: int
@@ -406,6 +417,7 @@ def build_runtime_config(
         global_popup_cooldown_sec=15,
         popup_repeat_suppress_sec=600,
         long_turn_warn_sec=900,
+        pi_tool_in_flight_max_sec=900,
         # Consecutive failed tool calls before a turn is called a loop.
         # Measured, twice, over the 25 most recent local Claude transcripts:
         # run lengths came out {1: 56, 2: 4, 4: 1}, so 3 and 4 both fire in

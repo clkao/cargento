@@ -526,19 +526,30 @@ def collect(
         session_state, state_detail = "idle", "awaiting your message"
         activity_info = (info or {}).get("activity") or {}
         activity = activity_info.get("kind")
-        if activity == "tool_in_flight":
-            # A toolUse leaf is the agent's own committed in-progress marker,
-            # so it does not age out: recency alone cannot tell "blocked on a
-            # long bash" from "parked", and longer thresholds mark every parked
-            # session working. The asymmetry with `responding` below is
-            # deliberate — a toolResult/user leaf cannot rule out a dead
-            # process, so that class keeps the freshness gate.
+        if activity == "tool_in_flight" and sessions.is_fresh(
+            config, now, last_activity, config.pi_tool_in_flight_max_sec
+        ):
+            # A toolUse leaf is the agent's own committed in-progress marker, so
+            # it outlives `working_threshold_sec`: recency alone cannot tell
+            # "blocked on a long bash" from "parked". It does not outlive
+            # everything, and the ceiling is not timidity — a transcript can
+            # record that a tool started and can never record that the process
+            # died, so a Pi hard-killed mid-tool leaves this marker as the
+            # permanent branch tip, and without a bound that row reads
+            # `running bash` for the whole display window, counts in the
+            # working tile, and sorts to the top of the board carrying a
+            # multi-hour long-turn flag. Past the ceiling it falls to the idle
+            # default rather than back to recency, which would be a lie for the
+            # same reason. A user-initiated interrupt is a different case and
+            # needs no ceiling: Pi writes `aborted`, which `_activity` routes to
+            # `awaiting`.
             session_state = "working"
             state_detail = f"running {activity_info['tool']}"
-        elif activity == "awaiting":
+        elif activity in ("awaiting", "tool_in_flight"):
             # A stop/aborted/error leaf ends the turn the moment it lands, so
             # it reads awaiting even while fresh — recency must not shout over
-            # a completed turn.
+            # a completed turn. An expired in-flight leaf lands here too: the
+            # tool it started can no longer be vouched for either way.
             pass
         elif activity == "responding":
             if fresh:

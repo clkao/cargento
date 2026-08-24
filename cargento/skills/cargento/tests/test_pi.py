@@ -701,7 +701,10 @@ class PiCollectorTest(PiScanTestCase):
         content: Any,
         *,
         usage: dict[str, int] | None = None,
-        stop_reason: str | None = None,
+        # `Any`, not `str | None`: the vocabulary guard has to be shown refusing
+        # a value that is not a string at all, which is what an untrusted record
+        # can carry.
+        stop_reason: Any = None,
     ) -> dict[str, Any]:
         message: dict[str, Any] = {"role": role, "content": content}
         if usage is not None:
@@ -989,12 +992,13 @@ class PiCollectorTest(PiScanTestCase):
         (row,) = rows
         return row
 
-    def test_a_stale_tool_use_leaf_stays_working_at_any_age(self) -> None:
+    def test_a_tool_use_leaf_stays_working_past_the_freshness_window(self) -> None:
         # An assistant leaf with stopReason toolUse is a toolCall whose
         # toolResult Pi has not written yet — a tool in flight. It outlives
         # the 90 s freshness window because recency alone cannot tell a long
         # bash from a parked session. Falsifying edit: gate the tool_in_flight
-        # branch on freshness — this row reads idle / awaiting your message.
+        # branch on `working_threshold_sec` — this row reads idle / awaiting
+        # your message. Its ceiling is the sibling test below.
         row = self._state_row(
             [
                 self._message("prompt", None, self.NOW - 400, "user", "Run it"),
@@ -1030,6 +1034,58 @@ class PiCollectorTest(PiScanTestCase):
         # The tool name comes from the in-flight record itself: the earlier
         # completed `read` must not win an order-dependent name race.
         self.assertEqual("running bash", row["state_detail"])
+
+    def test_a_tool_use_leaf_past_the_ceiling_reads_idle(self) -> None:
+        # The other side of the bound. A transcript records that a tool started
+        # and can never record that the process died, so a Pi hard-killed
+        # mid-tool leaves a toolUse leaf as the permanent branch tip. Without a
+        # ceiling that row read `running bash` for the whole display window,
+        # counted in the working tile and sorted to the top of the board with a
+        # multi-hour long-turn flag. Falsifying edit: drop the
+        # `pi_tool_in_flight_max_sec` gate — this reads working / running bash.
+        age = 4_000.0  # comfortably past the 900 s ceiling
+        row = self._state_row(
+            [
+                self._message("prompt", None, self.NOW - age - 100, "user", "Run it"),
+                self._message(
+                    "bash",
+                    "prompt",
+                    self.NOW - age,
+                    "assistant",
+                    [{"type": "toolCall", "name": "bash"}],
+                    usage={"output": 5},
+                    stop_reason="toolUse",
+                ),
+            ],
+            self.NOW - age,
+        )
+
+        self.assertEqual(("idle", "awaiting your message"), (row["state"], row["state_detail"]))
+
+    def test_an_unknown_stop_reason_keeps_recency_only_behavior(self) -> None:
+        # The vocabulary allowlist in `_projection`. An unrecognised spelling
+        # must fall through to None and leave the row on recency, not be read as
+        # a finished turn — the four values were timed, a fifth was not.
+        # Falsifying edit: drop the allowlist — every value here reads
+        # idle / awaiting your message even though the session is generating.
+        for stop_reason in ("maxTokens", {"type": "stop"}, 0):
+            with self.subTest(stop_reason=stop_reason):
+                row = self._state_row(
+                    [
+                        self._message("prompt", None, self.NOW - 60, "user", "Question"),
+                        self._message(
+                            "done",
+                            "prompt",
+                            self.NOW - 10,
+                            "assistant",
+                            "Answer",
+                            usage={"output": 5},
+                            stop_reason=stop_reason,
+                        ),
+                    ],
+                    self.NOW - 10,
+                )
+                self.assertEqual(("working", "generating…"), (row["state"], row["state_detail"]))
 
     def test_a_fresh_tool_result_leaf_reports_thinking(self) -> None:
         # A toolResult leaf hands the turn to the model, which is generating —
