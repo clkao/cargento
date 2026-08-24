@@ -68,6 +68,7 @@ gates:
                 state: pending
 started: 2026-08-22T05:54:44Z
 worktree: .worktrees/spacedock-ensign-usage-banner-disclosure
+mod-block: merge:pr-merge
 ---
 # Usage-limit disclosure is a blocking modal — should be a dismissable banner
 
