@@ -1,6 +1,6 @@
 ---
 title: Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
-status: done
+status: validation
 source: captain seed
 id: c8ex5x308ssq305b62n3szxm
 gates:
@@ -68,10 +68,10 @@ gates:
                 state: pending
 started: 2026-08-22T05:54:23Z
 worktree: .worktrees/spacedock-ensign-pi-session-state-model
-mod-block: merge:pr-merge
+mod-block:
 verdict: PASSED
 completed: 2026-08-24T21:00:52Z
-pr: pr-merge:145
+pr:
 ---
 # Pi session state-detection mislabels long-running tools and thinking as idle/awaiting
 
