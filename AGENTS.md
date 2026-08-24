@@ -43,6 +43,7 @@ cargento/                           # plugin root: Claude Code, Codex, Antigravi
         │   ├── lifecycle.py        # state file, port probes, stop, and daemon detach
         │   ├── notifications.py    # hook state, popup policy, and the native notifier
         │   ├── observation.py      # the event coordinator: one collection lane, floors, shutdown
+        │   ├── observer.py        # one session's goal, stage and open block, on demand
         │   ├── probe.py            # the coarse store probe: a bounded stat sweep, a hint only
         │   ├── quota.py            # quota: per-vendor fetches, pushed receipts, and the cache
         │   ├── records.py          # untrusted-record parsing and normalization
