@@ -139,7 +139,7 @@ so re-run the job before investigating, and check the traceback is a timeout and
 - Every relative Markdown link, in the skill and in the repository's prose docs, must resolve within
   the repository, and so must every `#heading-anchor`. Anchors are slugged the way GitHub does it,
   so a link to a heading you renamed fails the build.
-- No prose doc may spell the dashboard URL with `localhost`. The server binds IPv4 loopback only, so
+- No prose doc may spell the dashboard URL with `localhost`. The server is IPv4-only, so
   it is always `127.0.0.1:4553`.
 - Two link forms the checker cannot parse, both avoidable: unbalanced parentheses in a bare
   destination (wrap the target in `<>`), and links inside a four-space-indented code block (use a
@@ -165,7 +165,7 @@ allowlist changes only in a PR that makes a reviewed ownership decision.
   live agent's writes, so use `mode=ro` SQLite connections with short timeouts.
 - Defensive parsing. A broken or unexpected harness store is skipped, never fatal. One bad record
   must not take a collector offline.
-- Localhost only. The server binds 127.0.0.1. Do not "fix" this; it exposes local session data.
+- Loopback by default. The server binds `127.0.0.1` unless the operator passes `--host 0.0.0.0`, which is theirs to pass and not yours to default. Do not widen the default in code, and never admit a Host the bind itself did not ask for — see `SECURITY.md`.
 - Never interpolate a literal path into a glob pattern. Go through `glob_under()`, which escapes
   glob metacharacters in the root and sorts the result. A home directory containing `[` otherwise
   breaks discovery completely and silently, and unsorted glob output makes "newest file wins" ties

@@ -140,9 +140,25 @@ class CargentoServerTest(RuntimeTestCase):
         args = cli.build_parser().parse_args(["--host", "0.0.0.0"])
         self.assertEqual("0.0.0.0", args.host)
 
-    def test_host_flag_accepts_explicit_ipv4(self) -> None:
-        args = cli.build_parser().parse_args(["--host", "192.168.1.5"])
-        self.assertEqual("192.168.1.5", args.host)
+    def test_host_flag_refuses_a_single_interface_bind(self) -> None:
+        # A well-formed IPv4 that is neither loopback nor the wildcard. Refused
+        # rather than half-supported: nothing that talks to the dashboard —
+        # `--status`, `--stop`, the four hook forwarders, the MCP server — knows
+        # any destination but loopback, and such a bind does not answer there.
+        # `--stop` was the sharp end: it read "not running", exited 0, and
+        # deleted the live instance's state file with its event-ingress
+        # capability tokens while the server kept serving.
+        for value in ("192.168.1.5", "10.0.0.2", "203.0.113.7"):
+            with self.subTest(host=value), self.assertRaises(SystemExit):
+                cli.build_parser().parse_args(["--host", value])
+
+    def test_host_flag_rejects_malformed_addresses(self) -> None:
+        # `ipaddress`, not a dotted-quad split with `int()`: that accepted a
+        # sign, surrounding whitespace and non-ASCII digits, so each of these
+        # parsed and then reached `socket.bind`.
+        for value in ("+127.0.0.1", "127.0.0.1\n", " 127.0.0.1", "127.0.0.256", "127.0.0"):
+            with self.subTest(host=value), self.assertRaises(SystemExit):
+                cli.build_parser().parse_args(["--host", value])
 
     def test_host_flag_rejects_ipv6(self) -> None:
         # IPv6 binds are out of scope (the server is IPv4-only), so the type

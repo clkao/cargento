@@ -301,7 +301,7 @@ boundary.
 
 ## Known and accepted
 
-`--host` hands that same access to a network. `--host 0.0.0.0` or `--host <address>` is the operator
+`--host` hands that same access to a network. `--host 0.0.0.0` is the operator
 saying the machine's network may read the board, and there is no second gate behind it: everything
 the paragraph below grants another account on the machine, a non-default bind grants anything that
 can reach the port. Reading `/api/data` is the whole board — every session's titles, prompts and
@@ -311,8 +311,7 @@ somebody other than you. There is nothing to authenticate with, for the reason t
 paragraph below gives: the page is served as fixed bytes with no per-run secret in it.
 
 What the non-default bind does *not* spend is the rebinding defense. The Host and Origin gate widens
-to addresses and never to names — exactly the address given, or under `0.0.0.0` any address a client
-could arrive on — so a page on `http://evil.example:4553` whose DNS points at the machine is refused
+to addresses and never to names — under `0.0.0.0`, any address a client could arrive on — so a page on `http://evil.example:4553` whose DNS points at the machine is refused
 in both modes, and the `Sec-Fetch-Site` cross-site check runs unchanged. The gate tells a name from
 an address; it cannot tell one remote client from another. So the honest scope is: use `--host` on a
 network you would hand the transcripts to, and reach a dashboard over `ssh -L` otherwise.

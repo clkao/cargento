@@ -72,9 +72,14 @@ def bind_error_message(exc: OSError, port: int, host: str = "127.0.0.1") -> str:
     """Explain a failed bind instead of dumping a raw traceback."""
     winerror = getattr(exc, "winerror", None)
     if exc.errno == errno.EADDRINUSE or winerror == 10048:  # WSAEADDRINUSE
+        # 0.0.0.0 is a bind address and not a destination, so the hint keeps
+        # loopback there — the wildcard is not connectable, which
+        # `_host_admitted` says in as many words. Any other bind is where the
+        # printed curl was pointing at the wrong machine.
+        reachable = "127.0.0.1" if host in ("127.0.0.1", "0.0.0.0") else host  # noqa: S104
         return (
             f"Cargento: port {port} is already in use. If that is a dashboard "
-            f"already running, use it: curl -s http://127.0.0.1:{port}/api/data. "
+            f"already running, use it: curl -s http://{reachable}:{port}/api/data. "
             f"Otherwise pick another port with --port."
         )
     if exc.errno == errno.EACCES or winerror == 10013:  # WSAEACCES
@@ -247,6 +252,9 @@ class _RequestHandler(BaseHTTPRequestHandler):
             # could have arrived on is theirs. The wildcard itself is not a
             # connectable destination, and neither is a multicast group.
             return not (literal.is_unspecified or literal.is_multicast)
+        # `cli.BIND_HOSTS` no longer produces a bind that reaches here, but this
+        # server is constructible directly, so the gate answers for whatever
+        # address it was actually given rather than assuming the launcher.
         return host == bound
 
     def _local_ok(self, *, allow_cross_site_navigation: bool = False) -> bool:

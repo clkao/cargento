@@ -291,8 +291,11 @@ than its default. Set one and confirm with `--diagnose` that the store line move
 assuming it did.
 
 `--host` moves the bind address, and it is the one flag here that changes who can read the board
-rather than where you read it from. The default is `127.0.0.1`. `--host 0.0.0.0` listens on every
-interface; `--host 10.0.0.2` listens on that one. IPv4 only — the server has never spoken IPv6, so
+rather than where you read it from. It takes two values: `127.0.0.1`, the default, and `0.0.0.0`,
+every interface. Nothing narrower — `--host 10.0.0.2` is a usage error, not a bind, because
+`--status`, `--stop`, the hook forwarders and the MCP server all reach the dashboard over loopback
+and a single-interface bind does not answer there. Binding one interface is a reasonable thing to
+want; it is refused rather than half-supported. IPv4 only, too: the server has never spoken IPv6, so
 `--host ::1` is a usage error rather than a bind failure.
 
 Nothing authenticates the reader that arrives. Whatever can reach the port reads the whole board —

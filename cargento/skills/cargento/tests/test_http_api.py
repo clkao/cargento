@@ -1499,7 +1499,10 @@ class HostAndSocketTest(unittest.TestCase):
         # 0.0.0.0 bind is listening on loopback too, so this needs no route back
         # to the machine and runs identically on all three CI platforms — the
         # sibling below covers the half only a real remote address can.
-        # Reverting _host_admitted makes this 403.
+        # Reverting `_host_admitted` makes this 403. It says nothing about
+        # whether `--host` reaches the bind tuple: this constructs the server
+        # itself, and the launcher's own wiring is pinned in
+        # `test_host_origin_dns_rebinding_and_request_limits_are_preserved`.
         with tempfile.TemporaryDirectory() as tmp:
             with store_patch(**dict.fromkeys(STORE_KEYS, tmp)):
                 httpd = make_server(host="0.0.0.0")
@@ -1523,8 +1526,9 @@ class HostAndSocketTest(unittest.TestCase):
     def test_wildcard_bind_serves_a_remote_host_header(self) -> None:
         # AC-1/AC-2: a server bound 0.0.0.0 accepts a connection to the
         # machine's non-loopback address and serves the page (200, not 403).
-        # Reverting the bind tuple to ("127.0.0.1", args.port) makes the
-        # connection refused.
+        # Constructing it on 127.0.0.1 instead makes the connection refused —
+        # the launcher line that supplies the address is pinned in
+        # `test_host_origin_dns_rebinding_and_request_limits_are_preserved`.
         #
         # The stores are redirected at an empty directory first, and not for
         # hygiene: without it this binds the developer's own dashboard, over
@@ -2269,20 +2273,32 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
             def server_close(self) -> None:
                 pass
 
+        def serve(*argv: str) -> None:
+            with (
+                mock.patch.object(sys, "argv", ["server.py", *argv]),
+                mock.patch.object(http_api, "CargentoHTTPServer", CapturingServer),
+                mock.patch.object(lifecycle, "write_state"),
+                mock.patch.object(lifecycle, "remove_state"),
+                mock.patch.object(runtime_io, "diag"),
+                self.assertRaises(StopServingError),
+            ):
+                cli.main()
+
         # The shipped launcher, rather than this test's fixture, owns the
         # required bind address. Capture the constructor call from main() so a
         # regression to 0.0.0.0 cannot pass merely because this test chose 127.
-        with (
-            mock.patch.object(sys, "argv", ["server.py", "--port", "4553"]),
-            mock.patch.object(http_api, "CargentoHTTPServer", CapturingServer),
-            mock.patch.object(lifecycle, "write_state"),
-            mock.patch.object(lifecycle, "remove_state"),
-            mock.patch.object(runtime_io, "diag"),
-            self.assertRaises(StopServingError),
-        ):
-            cli.main()
+        serve("--port", "4553")
         self.assertEqual([("127.0.0.1", 4553)], captured_addresses)
         self.assertEqual([PAGE_BYTES], captured_pages)
+
+        # And the other direction, through the same launcher: `--host` has to
+        # reach the bind tuple. Nothing pinned that, so reverting cli.py's
+        # `(args.host, args.port)` to the literal left every --host test green —
+        # they all construct the server themselves and never go through main().
+        captured_addresses.clear()
+        captured_pages.clear()
+        serve("--port", "4553", "--host", "0.0.0.0")
+        self.assertEqual([("0.0.0.0", 4553)], captured_addresses)
 
         httpd = make_server()
         thread = serve_until_closed(httpd)
