@@ -459,9 +459,104 @@ class SpacedockReadContractTest(unittest.TestCase):
                 "name": "wf",
                 "stages": ["intake", "review", "posted"],
                 "resting": ["intake", "posted"],
+                "goal": "",
             },
             spacedock.read_workflow(config, state, str(root)),
         )
+
+    def test_workflow_goal_passes_through_the_frontmatter_title(self) -> None:
+        """The session view's goal line reads `workflow.goal`, which is the
+        frontmatter `title` scalar passed through from `read_workflow`. A
+        workflow with a title publishes it; one without publishes an empty
+        string. Fails if the `scalar(lines, "title")` call is removed."""
+        config, state = runtime()
+        body = (
+            "---\n"
+            "commissioned-by: spacedock@0.22.0\n"
+            "title: Ship session view\n"
+            "state: .spacedock-state\n"
+            "stages:\n"
+            "  states:\n"
+            "    - name: intake\n"
+            "      initial: true\n"
+            "    - name: posted\n"
+            "      terminal: true\n"
+            "---\n"
+        )
+        root_with_title = self.workflow(body)
+        result = spacedock.read_workflow(config, state, str(root_with_title))
+        assert result is not None
+        self.assertEqual("Ship session view", result["goal"])
+
+        # A workflow without a title publishes an empty goal.
+        root_no_title = self.workflow(self.README)
+        result_no = spacedock.read_workflow(config, state, str(root_no_title))
+        assert result_no is not None
+        self.assertEqual("", result_no["goal"])
+
+    def test_the_goal_is_bounded_and_stripped_like_every_other_row_value(self) -> None:
+        """The one piece of project-authored *text* that reaches `/api/data`.
+
+        Every other published value is a grammar-checked slug or a stage name,
+        so this is the only one that needed a width. Unbounded, the README byte
+        cap was the only limit — a 64 KiB title on every snapshot and every SSE
+        push. And a bidi control in it reorders how the line after it renders,
+        which is how a title reads as something it does not say.
+
+        Falsifying edit: drop the `records.safe_text` call at the `goal` key.
+        """
+        config, state = runtime()
+
+        def workflow_with(title: str) -> Path:
+            return self.workflow(
+                "---\n"
+                "commissioned-by: spacedock@0.22.0\n"
+                f"title: {title}\n"
+                "stages:\n"
+                "  states:\n"
+                "    - name: intake\n"
+                "---\n"
+            )
+
+        long_root = workflow_with("x" * 5_000)
+        long_result = spacedock.read_workflow(config, state, str(long_root))
+        assert long_result is not None
+        self.assertEqual(config.spacedock_goal_cap_chars, len(long_result["goal"]))
+
+        # U+202E, right-to-left override.
+        hostile_root = workflow_with("Ship it\u202e nope")
+        hostile = spacedock.read_workflow(config, state, str(hostile_root))
+        assert hostile is not None
+        self.assertNotIn("\u202e", hostile["goal"])
+
+    def test_session_workflows_publish_goal_alongside_stages(self) -> None:
+        """The goal survives the trip from `read_workflow` through
+        `session_workflows` into the render-ready workflow strip."""
+        config, state = runtime()
+        body = (
+            "---\n"
+            "commissioned-by: spacedock@0.22.0\n"
+            "title: Ship session view\n"
+            "state: .spacedock-state\n"
+            "stages:\n"
+            "  states:\n"
+            "    - name: intake\n"
+            "      initial: true\n"
+            "    - name: posted\n"
+            "      terminal: true\n"
+            "---\n"
+        )
+        root = self.workflow(body)
+        boot = [
+            {
+                "command": "boot",
+                "definition_dir": str(root),
+                "dispatchable": [{"slug": "drc-1", "current": "intake"}],
+            }
+        ]
+        strips = spacedock.session_workflows(config, state, boot, [], time.time(), 3600)
+        self.assertEqual(1, len(strips))
+        self.assertEqual("Ship session view", strips[0]["goal"])
 
     def test_uncommissioned_or_absent_readme_yields_nothing(self) -> None:
         config, state = runtime()

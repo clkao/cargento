@@ -27,6 +27,13 @@ function render(d){
     document.title = (waiting.length > 0 ? `(${waiting.length}!) ` : "") + "Cargento";
     return;
   }
+  /* Assembled above every branch below, unlike every other section: an ask can
+     come from a session this board is not showing — one outside the display
+     window, or a harness that has since gone quiet — and the empty-board branch
+     would then hide the one card whose session is waiting on a click. Session
+     mode reads it too, which is why it is hoisted above the mode branches
+     rather than sitting inside the regular one. */
+  const asksHtml = askBand(d);
   if(displayMode === "calm"){
     // Carry the outgoing ledger's scroll offset across the DOM swap — unless
     // the last action re-filtered the list, where the old offset is meaningless.
@@ -45,6 +52,34 @@ function render(d){
     calmRestoreScroll();
     calmRestoreFocus(focusKey);
     restoreStopFocus();
+    document.title = (waiting.length > 0 ? `(${waiting.length}!) ` : "") + "Cargento";
+    return;
+  }
+  if(displayMode === "session"){
+    /* The asks band and the liveness line ride along, for the same reason the
+       other two modes carry them. An ask can come from a session this view is
+       not the one for, and a question nobody can see is a question nobody can
+       answer — so a reader who left the page in session mode had an
+       unanswerable card. And without the dot, a dead server looks exactly like
+       a live tree: nothing on a dispatch spine ticks, so there is no other
+       way to tell. `refresh()`'s catch arm writes #live-status by id, and only
+       one mode renders per frame, so the ids stay unique. */
+    const outgoingAsks = document.getElementById("askband");
+    if(outgoingAsks) askScrollTop = outgoingAsks.scrollTop;
+    renderInProgress = true;
+    app.className = "wrap session";
+    app.innerHTML = modeBar() +
+      `<span class="cm-live"><span class="live" id="live-dot"></span>` +
+      `<span id="live-status">${LIVE_SUPPORTED ? "live" : "auto-refresh 5s"} · ` +
+      `${new Date(d.generated*1000).toLocaleTimeString()}</span></span>` +
+      usageBanner(d, true) + asksHtml + sessionView(d);
+    renderInProgress = false;
+    const asksEl = document.getElementById("askband");
+    if(asksEl) asksEl.scrollTop = askScrollTop;
+    restoreStopFocus();
+    /* `waiting`, not `needs`: the other three title sites count everything
+       waiting on a human, gates and asks alike, and a count that disagrees
+       with the band now rendered above is worse than no count. */
     document.title = (waiting.length > 0 ? `(${waiting.length}!) ` : "") + "Cargento";
     return;
   }
@@ -117,11 +152,6 @@ function render(d){
       `${idleExpanded ? "Show less" : "Show all " + idle.length + " idle"}</button></div></div></div>`;
   }
 
-  /* Assembled outside both branches below, unlike every other section: an ask
-     can come from a session this board is not showing — one outside the display
-     window, or a harness that has since gone quiet — and the empty-board branch
-     would then hide the one card whose session is waiting on a click. */
-  const asksHtml = askBand(d);
   let body;
   if(!d.sessions.length){
     body = asksHtml +

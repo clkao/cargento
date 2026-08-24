@@ -14,7 +14,7 @@ import re
 import stat as stat_module
 from typing import TYPE_CHECKING, Any, TypeGuard
 
-from cargento_runtime import sessions
+from cargento_runtime import records, sessions
 from cargento_runtime import state as runtime_state
 
 if TYPE_CHECKING:
@@ -472,8 +472,11 @@ def read_workflow(
     frontmatter declares ``commissioned-by: spacedock@`` — Spacedock's own
     workflow discriminator. No other file in the workflow directory is read and
     no directory is walked; the entity-state directory the boot output names
-    separately is read by :func:`read_entities`. Only derived scalars leave
-    this function; no file text does.
+    separately is read by :func:`read_entities`. Only derived scalars leave this
+    function, plus the frontmatter ``title`` — the goal line, and the one piece
+    of project-authored text on the surface, bounded by
+    ``config.spacedock_goal_cap_chars`` and stripped by ``records.safe_text``.
+    No body text and no filesystem path leaves.
 
     ``resting`` is the subset of stages an entity is not moving through: the
     initial stage it is queued on and the terminal stages it has finished at.
@@ -510,6 +513,11 @@ def read_workflow(
                 "resting": [
                     entry["name"] for entry in entries if entry["initial"] or entry["terminal"]
                 ],
+                # Through `safe_text`, like every other untrusted string that
+                # reaches a row: bounded, and stripped of the bidi controls that
+                # would let a title render as something it does not say. This is
+                # project-authored prose, not a grammar-checked slug.
+                "goal": records.safe_text(scalar(lines, "title"), config.spacedock_goal_cap_chars),
             }
     with state.cache_lock:
         runtime_state.bounded_put(
@@ -723,6 +731,7 @@ def session_workflows(
         out.append(
             {
                 "workflow": info["name"],
+                "goal": info.get("goal", ""),
                 "stages": stages,
                 "entities": entities[: config.spacedock_max_entities],
             }

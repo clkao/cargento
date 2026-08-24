@@ -69,36 +69,40 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "741b3e185654153b0314176ccd48135c1b4499210cd982b4237fcde99c3419ae",
             ),
             "regular.js": (
-                43_545,
-                "4560c73ebc2c1836f2ea3c59c36d4bc6c3d8f57b3676e0abea441135aa2abe59",
+                43_651,
+                "266b5e52a9b17485fe714bf4d009a74c9c33476e4aeb777d12bfbc466960e8f9",
             ),
             "mode.js": (
-                2_087,
-                "fa9920e65db45c4341688db87566d92767f6890136bf7a3355166bffe9f51c9b",
+                4_619,
+                "526b9cae4ee29f756e2e00fca6c88213a1a7423cb5daa111dfbde59c0d121561",
             ),
             "usage.js": (
                 51_910,
                 "8fe192960d45c33ae10c19ac2b31171f4df3264e826c899f59131b0d354e5548",
             ),
             "controls.js": (
-                7_254,
-                "b36c6fd4c6924857f7e86dbc2818de59d1e0984233480701bef0fabe14b6cc12",
+                7_271,
+                "f1fe1ebd088d69c14f72364e88249f625cdba4d82f95239992dc76daceabcd0e",
             ),
             "ask.js": (
                 7_064,
                 "b3427d36b59995b468c6cb8d31bef21b20167d41dd302b56c4781ff9d37b038a",
             ),
             "calm.js": (
-                51_629,
-                "0e2272e5fecb33a9a4eecc93f08f09934b48780eb10e95f3a9b3b27dd526323e",
+                52_978,
+                "96398c655eb708dd86f2b3cab5113de2238788f9a2c55ca8574d9b0f3d25d60a",
+            ),
+            "session.js": (
+                6_988,
+                "d1fcdde8cee18cdc9757f025437c87602313ae56b9cc98b3c5a5e96aaa8fd224",
             ),
             "notify.js": (
                 7_797,
                 "d340a6d8870d2cb210c6e961afbfb6015e4ca915dce41e0193f7aed95c193154",
             ),
             "main.js": (
-                10_418,
-                "600f4cc6591407aae22615c2f4cd13e2c4db6b05b85720167cf765a980c84cae",
+                12_171,
+                "9f7ba1c986be14e640c6340d18cf2b5978b36bae6edcee5d7e636c1ffbe37004",
             ),
             "live.js": (
                 6_176,
@@ -113,16 +117,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(52_827, len(styles))
+        self.assertEqual(57_142, len(styles))
         self.assertEqual(
-            "e4e17a5cc77c59f17dd4569341bb5ca452cd484711095d0f39b74ed4494d01e7",
+            "755cf800169382bbee7ae983bbf978a6becc2357ae5d412c48aaba539861e26c",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(283_978, len(assembled))
+        self.assertEqual(301_038, len(assembled))
         self.assertEqual(
-            "3b9b4822446dee741f724f3cb5c83e31c4009f32ce1806e3221d6ad391ba3739",
+            "75144e4cd76c46a34b6aced10c5d04859b9c559870f0d9260c07dce330911323",
             hashlib.sha256(assembled).hexdigest(),
         )
 
@@ -1652,6 +1656,31 @@ const claude = models => ({harness: 'claude', state: 'ok', asOf: 1700000000,
         # rather than separators, and calm's row sits inside the frame's rules.
         self.assertIn("standalone", rendered["before"]["regular"])
         self.assertNotIn("standalone", rendered["before"]["calm"])
+
+    def test_the_banner_reaches_the_session_view_too(self) -> None:
+        # The third surface, and the one that caught a real collision: #131's
+        # session branch called `usageModal`, which this branch renames, and the
+        # two merged without a textual conflict. Driven through `render()`
+        # rather than by calling the function, because "the call site still
+        # exists and still resolves" is the whole assertion.
+        rendered = self._run_page_js(
+            "__els.app = {innerHTML: '', className: '', querySelectorAll: () => []};"
+            "const d = {generated: 1000, window_hours: 24, show_all: false,"
+            " rate_window_sec: 600, harnesses: [], sessions: [],"
+            " summary: {needs_input: 0, working: 0, rate_per_min: 0, active_sessions: 0,"
+            "  open_tasks: 0, progress_pct: 0, total_tasks: 0, total_done: 0},"
+            " usage: [{harness: 'claude', state: 'ok'}], usage_fetch: true};"
+            "setDisplayMode('session');"
+            "render(d);"
+            "console.log(JSON.stringify({html: __els.app.innerHTML,"
+            " cls: __els.app.className}));",
+            prelude="const __store = {};\nconst localStorage = {"
+            "getItem: k => (k in __store ? __store[k] : null),"
+            "setItem: (k, v) => { __store[k] = String(v); }};\nconst navigator = {};",
+        )
+        self.assertEqual("wrap session", rendered["cls"])
+        self.assertEqual(1, rendered["html"].count('role="region"'))
+        self.assertIn("standalone", rendered["html"])
 
     def test_answering_the_banner_after_turning_usage_off_leaves_it_on(self) -> None:
         # The regression the in-flow placement introduced. Under the modal the
