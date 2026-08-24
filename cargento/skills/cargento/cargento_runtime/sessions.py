@@ -196,6 +196,13 @@ def newest_plausible(config: RuntimeConfig, now: float, timestamps: Iterable[flo
 # either may move without the other.
 MODEL_CAP_CHARS = 40
 
+# Wider than the model cap because the long case here is an MCP tool's wire name
+# — a `mcp` + server + tool triple joined by double underscores, 33 characters
+# for `mcp__claude_ai_Linear__save_issue` and longer for a nested server. The
+# page rewrites those to "server · tool name" at the render site, so truncating
+# them to 40 here would cut the half that says which tool ran.
+TOOL_NAME_CAP_CHARS = 60
+
 
 def base_session(harness: str, sid: Any, project: str) -> Session:
     # "session" is the display id. The 8 below is the floor and must match
@@ -220,9 +227,10 @@ def base_session(harness: str, sid: Any, project: str) -> Session:
     # `model` is not Pi's alone. Claude, Codex, Copilot, Antigravity and Cursor
     # each record the model somewhere their collector already reads, so each
     # fills it; Gemini, Goose, OpenCode and Droid leave it None because nobody
-    # has found where — or whether — those harnesses record it. Cursor fills the
-    # session's own model only: its subagents are still published as peer
-    # top-level rows, so no Cursor row carries a subagent model.
+    # has found where — or whether — those harnesses record it. Cursor fills it
+    # on a child as well as on the parent, out of the child's own store: each
+    # Cursor subagent keeps one, so the reading is the same read done twice
+    # rather than a parent's model attributed downwards.
     #
     # None therefore means "not read", never "no model". Every session runs on
     # some model, so an absent value is a gap in our reading rather than a fact
@@ -273,6 +281,15 @@ def base_session(harness: str, sid: Any, project: str) -> Session:
         # the collector does not report it, and the overlay reducer then leaves a
         # wait standing rather than guessing.
         "own_activity": 0,
+        # When this session's turn was last observed to stop, which is the only
+        # thing that separates the two situations Idle covers: a turn that ended
+        # and nobody read, and a session still waiting on a reply that never came
+        # (DRC-4035). None means "no stop observed" and never "did not finish" —
+        # only the four harnesses in the event vocabulary can supply one at all,
+        # and no collector may infer it, for the reason `model` above may not: a
+        # guessed completion renders identically to a measured one. A row that
+        # cannot ever carry it says so through `acquisition` instead.
+        "finished_at": None,
         "rate_per_min": 0,
         "total": 0,
         "done": 0,
@@ -280,6 +297,15 @@ def base_session(harness: str, sid: Any, project: str) -> Session:
         "progress_pct": 0,
         "eta_h": None,
         "turn": None,
+        # `{"errors": int, "tool": str | None}` where a run of failed tool calls
+        # was measured inside the current turn, else None. Top-level rather than
+        # a key on `turn`, because `turn_progress` publishes nothing for a
+        # session that is not working: riding on `turn` would delete the flag the
+        # moment the loop stopped, which is exactly when the human walks back to
+        # the machine. It is cleared at the next prompt instead — by then they
+        # have seen it. Claude only, since Claude is the only harness that
+        # records whether a tool call failed (see records.tool_outcome).
+        "loop": None,
         # One element per subagent: `{"name": str, "model": str | None}`. `model`
         # is always present, and None means the same thing it means on the parent
         # — not read. It is a key rather than a parallel list of only the children
