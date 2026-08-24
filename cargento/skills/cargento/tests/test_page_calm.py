@@ -255,8 +255,11 @@ out.blockedFlag = hb.includes(">your call<");
 out.blockedWhy = hb.includes("Blocked on you for 5m");
 out.longFlag = hw.includes(">long turn<");
 out.longWhy = hw.includes("This request is running long (or estimated to).");
+// `stale` is gone as a word. It was never a state, only an age badge on an
+// idle row, and the row's own `idle / wait` cell already carries the age.
 out.staleFlag = hq.includes(">stale<");
-out.staleWhy = hq.includes("No activity for 2h 46m");
+out.staleWord = /&gt;stale&lt;|>stale</.test(__els.app.innerHTML);
+out.quietAgeStillShown = hq.includes("2h 46m");
 out.noInvented = !/&gt;stalled&lt;|>stalled<|>failed</.test(hb + hw + hq);
 // A working session inside the long-turn threshold carries no flag.
 render(payload([mk({sid: "s", session: "s", state: "working", active: true,
@@ -273,12 +276,158 @@ console.log(JSON.stringify(out));
         self.assertTrue(out["blockedWhy"])
         self.assertTrue(out["longFlag"])
         self.assertTrue(out["longWhy"], "calm mode reworded the long-turn signal")
-        self.assertTrue(out["staleFlag"])
-        self.assertTrue(out["staleWhy"])
+        self.assertFalse(out["staleFlag"], "the stale chip is still rendered")
+        self.assertFalse(out["staleWord"], "the word `stale` survived somewhere on the page")
+        self.assertTrue(
+            out["quietAgeStillShown"],
+            "dropping the chip also dropped the age it was standing in for",
+        )
         self.assertTrue(out["noInvented"], "flagged a signal the payload cannot support")
         self.assertTrue(out["shortTurnUnflagged"])
         self.assertTrue(out["flagChipZero"])
         self.assertTrue(out["freshIdleUnflagged"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_a_detected_loop_sharpens_the_flag_without_becoming_a_third_one(self) -> None:
+        # The `flag` column holds two words, each a state the server detects, and
+        # a loop is not a third state — it is what makes one of the two worth
+        # acting on. So the chip is unchanged and the explanation behind it is
+        # not, and a loop the chip cannot carry is still readable in the panel.
+        checks = """
+const out = {};
+const loop = {errors: 4, tool: "Bash"};
+const looping = mk({sid: "ddd4", session: "ddd4", title: "Retrying", state: "working",
+  active: true, last_activity: 99990, loop,
+  turn: {elapsed_h: "40m", eta_h: null, pct: 99, long: true}});
+const quick = mk({sid: "eee5", session: "eee5", title: "Quick", state: "working",
+  active: true, last_activity: 99990, loop,
+  turn: {elapsed_h: "2m", eta_h: "3m", pct: 20, long: false}});
+const gated = mk({sid: "fff6", session: "fff6", title: "Ask", state: "needs_input",
+  active: true, last_activity: 99700, blocked_since: 99700, loop,
+  state_detail: "open question (AskUserQuestion), waiting 5m"});
+render(payload([looping, quick, gated]));
+const opened = k => { calmAction("open", k); const h = __els.app.innerHTML;
+  calmAction("open", k); return h; };
+const hl = opened(K("claude", "ddd4")), hq = opened(K("claude", "eee5")),
+      hg = opened(K("claude", "fff6"));
+out.chipStillLongTurn = hl.includes(">long turn<");
+out.whyNamesTheLoop = hl.includes("4 tool calls in a row came back as errors" +
+  " (most recently Bash)");
+out.whySwapsForItRatherThanRepeating = !hl.includes("This request is running long");
+out.loopStatedOnce = (hl.match(/tool calls in a row/g) || []).length;
+// The chip fires on duration and nothing else, so a two-minute turn that has
+// come back with four errors does not join the flagged count.
+out.shortTurnStillSaysSo = hq.includes("4 tool calls in a row came back as errors");
+out.flaggedCount = __els.app.innerHTML.includes("◆ 2 flagged");
+// A blocked row has already spent its one chip on the gate.
+out.gateKeepsItsChip = hg.includes(">your call<");
+out.gateSaysSoToo = hg.includes("4 tool calls in a row came back as errors");
+// Every chip word on the whole board, which is the cap itself.
+out.chipWords = [...new Set([...__els.app.innerHTML
+  .matchAll(/class="cm-flag"[^>]*>([^<]+)</g)].map(m => m[1]))].sort();
+// Alone on the board, so the absence is this row's and not read off a sibling.
+render(payload([quick]));
+out.shortTurnUnchipped = !__els.app.innerHTML.includes('class="cm-flag"');
+// An MCP call reaches the payload under its wire name; the sentence is one of
+// the places a reader meets a tool name, so the same rewrite applies.
+render(payload([mk({sid: "ggg7", session: "ggg7", state: "working", active: true,
+  last_activity: 99990, loop: {errors: 5, tool: "mcp__claude_ai_Linear__save_issue"}})]));
+const hm = opened(K("claude", "ggg7"));
+out.mcpNamed = hm.includes("Linear · save issue");
+out.wireNameHidden = !hm.includes("mcp__claude_ai_Linear");
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["chipStillLongTurn"], "the loop retitled the chip")
+        self.assertTrue(out["whyNamesTheLoop"])
+        self.assertTrue(out["whySwapsForItRatherThanRepeating"])
+        self.assertEqual(1, out["loopStatedOnce"], "the panel stated the loop twice")
+        self.assertTrue(out["shortTurnStillSaysSo"], "a loop with no chip is unreadable")
+        self.assertTrue(out["flaggedCount"], "the flagged count moved with the loop")
+        self.assertTrue(out["gateKeepsItsChip"])
+        self.assertTrue(out["gateSaysSoToo"])
+        self.assertEqual(["long turn", "your call"], out["chipWords"])
+        self.assertTrue(out["shortTurnUnchipped"], "a short turn was flagged for looping")
+        self.assertTrue(out["mcpNamed"])
+        self.assertTrue(out["wireNameHidden"])
+
+    def test_the_loop_wording_has_exactly_one_source(self) -> None:
+        # Three surfaces say it — the calm chip's explanation, calm's panel and
+        # the working card — so it is built in one place, like LONG_TURN_NOTE.
+        self.assertIn("function loopNote(", APP_JS)
+        self.assertEqual(
+            1,
+            APP_JS.count("tool calls in a row came back as errors"),
+            "the loop sentence is duplicated instead of shared",
+        )
+
+    def test_a_finished_idle_row_says_so_without_becoming_a_third_flag(self) -> None:
+        # DRC-4035. Idle is two situations wearing one word: a turn that ended
+        # and nobody read, and a session still waiting on a reply. The published
+        # stop separates them — inside the `idle / wait` cell, because a third
+        # flag would contradict the two-flag cap and drag in the flagged count,
+        # the `f` filter and the attention ordering.
+        checks = """
+const out = {};
+const done = mk({sid: "d1", session: "d1", title: "Finished thing",
+  last_activity: 90000, finished_at: 90000});
+const fresh = mk({sid: "d2", session: "d2", title: "Just stopped",
+  last_activity: 99900, finished_at: 99900});
+const unseen = mk({sid: "d3", session: "d3", title: "No stop seen", last_activity: 90000});
+const blind = mk({sid: "d4", session: "d4", harness: "goose", title: "No adapter",
+  last_activity: 90000, acquisition: "scan-only"});
+render(payload([done, fresh, unseen, blind]));
+const html = __els.app.innerHTML;
+const chunk = needle => html.split('class="cm-item"').find(s => s.includes(needle)) || "";
+out.doneWord = /class="fin-mark"[^>]*>done</.test(chunk("Finished thing"));
+out.doneAge = chunk("Finished thing").includes("2h 46m");
+// Inside the gate the mark would be Idle restated in a second vocabulary.
+out.freshQuiet = !chunk("Just stopped").includes("fin-mark");
+out.unseenQuiet = !chunk("No stop seen").includes("fin-mark");
+out.blindQuiet = !chunk("No adapter").includes("fin-mark");
+// The six harnesses with no event adapter say the answer is unknowable rather
+// than sharing the silence of a row that simply has not finished.
+out.blindTip = chunk("No adapter").includes("cannot be known here");
+out.unseenTip = chunk("No stop seen").includes("cannot be known here");
+out.noFlag = !html.includes('class="cm-flag"');
+out.flagChipZero = html.includes("\\u25c6 0 flagged");
+out.toggle = (html.match(/class="idle-toggle"[^>]*>([^<]*)</) || [null, ""])[1];
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["doneWord"], "a finished-and-unread row said nothing")
+        self.assertTrue(out["doneAge"], "the mark replaced the age instead of joining it")
+        self.assertTrue(out["freshQuiet"], "a turn that just ended is not news")
+        self.assertTrue(out["unseenQuiet"])
+        self.assertTrue(out["blindQuiet"], "a harness with no adapter cannot claim a finish")
+        self.assertTrue(out["blindTip"], "the unknowable case is not disclosed")
+        self.assertFalse(out["unseenTip"], "a harness that can earn a stop was called blind")
+        self.assertTrue(out["noFlag"], "the mark became a third flag")
+        self.assertTrue(out["flagChipZero"], "the mark reached the flagged count")
+        # The reward this exists to collect is inside a block collapsed by
+        # default, so the toggle has to say how much of it is in there.
+        self.assertEqual("4 idle · 1 done · quiet up to 2h 46m", out["toggle"])
+
+    def test_the_finished_wording_and_its_threshold_have_exactly_one_source(self) -> None:
+        # Both views draw this marker and both word the tooltip, so two copies
+        # would be the `fastest` drift again — twice over, since the threshold
+        # decides which rows carry it at all.
+        self.assertIn("const FINISHED_UNREAD_SEC =", APP_JS)
+        self.assertEqual(1, APP_JS.count("nothing has come back to read it"))
+        self.assertEqual(1, APP_JS.count('class="fin-mark"'))
+        self.assertEqual(1, APP_JS.count("cannot be known here"))
+
+    def test_the_retired_stale_threshold_stays_retired(self) -> None:
+        # The threshold above is the one measure of how long an idle session has
+        # been quiet, and it was measured: 1,200s off 10,119 real returns to a
+        # stopped turn (p50 106s, p90 966s). A second constant of that same shape
+        # sat one file away at 7,200s, orphaned when DRC-4162 retired the `stale`
+        # chip and moved its count-and-oldest-age onto the idle block's toggle.
+        # Only 2.5% of returns land past it, so it would have stayed silent
+        # through the whole window in which collecting finished work is worth
+        # anything — a plausible wrong answer beside the right one. calm.js keeps
+        # the comment saying why the chip went; the constant recorded nothing.
+        self.assertNotIn("const CALM_STALE_SEC", APP_JS)
 
     def test_the_long_turn_wording_has_exactly_one_source(self) -> None:
         # The ⚠️ tooltip and the calm flag explanation are the same sentence;
@@ -319,11 +468,14 @@ out.clearOffered = __els.app.innerHTML.includes('data-calm="clear"');
 calmAction("state", "needs");
 out.chipIsAToggle = [calmStateOnly, rows()];
 
-// The flagged chip narrows to flagged rows; every board row is flagged here.
+// The flagged chip narrows to flagged rows, and a quiet session is no longer
+// one of them. `stale` was retired, so a flag means "your call" or "long turn"
+// and nothing else — which is what makes the filter worth having. The idle row
+// drops out of it.
 calmAction("open", "codex:bbb2");
 calmAction("flag", null);
 out.flagFilterResetsRow = [calmOpenKey, calmCursorKey];
-out.flagged = [calmFlagOnly, rows()];
+out.flagged = [calmFlagOnly, rows(), __els.app.innerHTML.includes("Old thing")];
 calmAction("clear", null);
 out.cleared = [calmFlagOnly, calmStateOnly, rows()];
 
@@ -355,12 +507,92 @@ console.log(JSON.stringify(out));
         self.assertEqual([1, True], out["needsOnly"])
         self.assertTrue(out["clearOffered"])
         self.assertEqual([None, 3], out["chipIsAToggle"])
-        self.assertEqual([True, 3], out["flagged"])
+        self.assertEqual(
+            [True, 2, False],
+            out["flagged"],
+            "the flag filter still counts a quiet session as flagged",
+        )
         self.assertEqual([False, None, 3], out["cleared"])
         self.assertTrue(out["emptyState"])
         self.assertEqual(0, out["emptyHasNoRows"])
         self.assertEqual(1, out["recovered"])
         self.assertTrue(out["noData"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_two_live_sessions_in_one_project_are_marked_in_every_ordering(self) -> None:
+        # Grouping was passive. A `repo` heading over two rows reads identically
+        # whether they are one agent and one long-dead session or two agents
+        # about to write over each other, and a reader who never picks that
+        # ordering never sees the grouping at all. The marker rides the project
+        # label instead, so it renders in all four orderings — and on the
+        # divider of the one ordering that exists for this question.
+        checks = """
+const out = {};
+const gate = mk({sid: "gate1", session: "gate1", title: "Approve deploy?",
+  state: "needs_input", active: true, last_activity: 99700, blocked_since: 99700,
+  state_detail: "permission needed"});
+const mate = mk({sid: "mate2", session: "mate2", harness: "codex",
+  title: "Migrate sync", state: "working", active: true, last_activity: 99990,
+  state_detail: "running Bash"});
+const solo = mk({sid: "solo3", session: "solo3", project: "repo/solo",
+  title: "Alone", state: "working", active: true, last_activity: 99990,
+  state_detail: "running Bash"});
+const dead = mk({sid: "dead4", session: "dead4", title: "Finished",
+  last_activity: 90000});
+// Two Cursor windows whose workspace files did not resolve. Nine collectors
+// fall back to their own harness key there, so both rows label `cursor` while
+// sharing no directory at all.
+const cu = n => mk({sid: "cu" + n, session: "cu" + n, harness: "cursor",
+  project: "cursor", title: "cursor " + n, state: "working", active: true,
+  last_activity: 99990, state_detail: "running Bash"});
+// Which ROWS carry the marker, read per row rather than off the whole page, so
+// a marker on the wrong row cannot pass as a marker on the right one.
+const marked = () => __els.app.innerHTML.split('class="cm-item"').slice(1)
+  .map(chunk => chunk.includes('class="dupmark"')
+    ? (chunk.match(/data-arg="[a-z]+:([\\w-]+)" role="button"/) || [])[1] : null)
+  .filter(Boolean);
+const shared = payload([gate, mate, solo, dead, cu(1), cu(2)]);
+for(const sort of ["attention", "recent", "repo", "burn"]){
+  calmAction("sort", sort);
+  render(shared);
+  out[sort] = marked().sort();
+}
+calmAction("sort", "repo");
+render(shared);
+out.dividers = __els.app.innerHTML.split('<div class="cm-div">').slice(1).map(chunk => {
+  const head = chunk.split('class="cm-item"')[0];
+  return [(head.match(/cm-div-k">([^<]*)/) || [])[1], head.includes("cm-div-d")];
+});
+out.tip = (__els.app.innerHTML.match(/class="dupmark" title="([^"]*)"/) || [])[1];
+// The stock board puts a blocked row and an idle row on one label. One live
+// session is not a collision, which is also what keeps the flagged counts
+// this suite already pins unchanged.
+calmAction("sort", "attention");
+render(board());
+out.stock = marked();
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        for sort in ("attention", "recent", "repo", "burn"):
+            with self.subTest(sort=sort):
+                self.assertEqual(
+                    ["gate1", "mate2"],
+                    out[sort],
+                    "the two live sessions sharing a project label are not both marked",
+                )
+        self.assertEqual(
+            [["cursor", False], ["repo/proj", True], ["repo/solo", False]],
+            out["dividers"],
+            "the repo divider does not say which group collides",
+        )
+        # The claim is about the LABEL, which is the last two path segments, so
+        # two worktrees read alike. Saying "the same repo" would assert a
+        # directory the payload does not carry.
+        self.assertIn("project label", out["tip"] or "")
+        self.assertIn("not proof of the same directory", out["tip"] or "")
+        self.assertNotIn("same repo", out["tip"] or "")
+        self.assertIn("Codex mate2", out["tip"] or "", "the marker does not name the other session")
+        self.assertEqual([], out["stock"], "one live session on a label was marked as a collision")
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_the_row_order_does_not_churn_between_polls(self) -> None:
@@ -869,6 +1101,89 @@ console.log(JSON.stringify({
         self.assertTrue(out["chipEscaped"])
         self.assertTrue(out["metaEscaped"])
         self.assertEqual(1, out["rows"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_a_flagless_row_asks_the_tone_table_for_nothing(self) -> None:
+        # CALM_TONE declares the two flag tones and nothing else, so the "quiet"
+        # tone calmRow hands an unflagged row has no entry to find. What keeps
+        # that safe is the `if(r.flag)` guard around every dereference, not a
+        # fallback — so the guard is what gets pinned, on both surfaces the tone
+        # reaches: the chip in the ledger row and the `why` sentence in the panel.
+        checks = """
+const out = {};
+render(board());
+const h = () => __els.app.innerHTML;
+out.chips = (h().match(/class="cm-flag"/g) || []).length;
+// The flagged rows really do ink their chip, so the unflagged row drawing none
+// below is that row's own state and not a table that quietly stopped resolving.
+out.attnChip = h().includes("color:var(--alert);border-color:");
+out.warnChip = h().includes("color:var(--warnink);border-color:");
+calmAction("open", K("claude", "ccc3"));
+const panel = () => h().slice(h().indexOf('class="cm-exp"'));
+out.quietPanel = [panel().includes("cm-why"), h().includes("undefined")];
+calmAction("open", K("claude", "aaa1"));
+out.attnWhy = panel().includes('class="cm-why-g" style="color:var(--alert)"');
+calmAction("open", K("codex", "bbb2"));
+out.warnWhy = panel().includes('class="cm-why-g" style="color:var(--warnink)"');
+out.clean = !h().includes("undefined");
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertEqual(2, out["chips"], "the board's two flagged rows should carry one chip each")
+        self.assertTrue(out["attnChip"], "the blocked row's chip lost its tone")
+        self.assertTrue(out["warnChip"], "the long-turn row's chip lost its tone")
+        self.assertEqual(
+            [False, False],
+            out["quietPanel"],
+            "an unflagged row reached for a tone the table does not declare",
+        )
+        self.assertTrue(out["attnWhy"], "the blocked row's sentence lost its tone")
+        self.assertTrue(out["warnWhy"], "the long-turn row's sentence lost its tone")
+        self.assertTrue(out["clean"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_a_payload_key_named_for_a_prototype_member_lands_on_the_fallback(self) -> None:
+        # `harness` and a task's `status` are payload strings used as table keys,
+        # and every plain object inherits a truthy `constructor` and a truthy
+        # `__proto__` — enough to sail past an `||` fallback and render an object
+        # as a glyph and as a colour. own() is what stops it. The two keys resolve
+        # to different things (a function, and Object.prototype), so a guard that
+        # special-cases one name catches only half of this.
+        checks = """
+const out = {};
+const rowFor = name => mk({harness: name, sid: "p1", session: "p1",
+  title: "Prototype " + name, last_activity: 99000,
+  tasks: [{status: name, subject: "one task", activeForm: null}]});
+const shot = name => {
+  render(payload([rowFor(name)]));
+  calmAction("open", K(name, "p1"));
+  const h = __els.app.innerHTML;
+  return {
+    rows: (h.match(/class="cm-row/g) || []).length,
+    code: (h.match(/class="cm-icot">([^<]*)</) || [])[1],
+    title: (h.match(/class="cm-hcell" title="([^"]*)"/) || [])[1],
+    task: (h.match(/class="cm-task-g" style="color:([^"]*)">([^<]*)</) || []).slice(1, 3),
+    clean: !h.includes("undefined")
+  };
+};
+out.ctor = shot("constructor");
+out.proto = shot("__proto__");
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        for key, code in (("ctor", "CO"), ("proto", "__")):
+            with self.subTest(key=key):
+                got = out[key]
+                self.assertEqual(1, got["rows"])
+                # The unknown-harness fallback: the first two letters of whatever
+                # the payload called it, not a member of Object.prototype.
+                self.assertEqual(code, got["code"])
+                self.assertEqual(
+                    ["var(--ink3)", "·"],
+                    got["task"],
+                    "an unknown task status did not fall back to `pending`",
+                )
+                self.assertTrue(got["clean"], "a prototype member reached the DOM")
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_the_keyboard_drives_the_ledger(self) -> None:
@@ -2308,3 +2623,120 @@ console.log(JSON.stringify(out));
         # and #live-dot, which the DOM stub does not register, so any such check
         # would pass whatever the code did. The failure count is the observable.
         self.assertEqual(0, out["failures"], "a deliberate stop was counted as a refresh failure")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_the_idle_block_arrives_clipped_under_the_default_sort(self) -> None:
+        # Calm mode is a minimal view of what is active. Under `attention`,
+        # byRank leaves the idle bucket as the trailing run (ranks 3 and 4), so
+        # it clips the way regular mode clips its own Idle section rather than
+        # spending the ledger on sessions that finished hours ago.
+        checks = """
+const out = {};
+const many = [blocked, busy];
+for(let i = 0; i < 4; i++) many.push(mk({sid: "idle-" + i, session: "idle-" + i,
+  title: "old " + i, last_activity: 99000 - i * 1000}));
+render(payload(many));
+const h = __els.app.innerHTML;
+out.sort = calmSort;
+out.clip = h.includes("idle-clip");
+out.toggle = h.includes('data-calm="idle"');
+out.collapsed = !h.includes("max-height:3000px");
+// Clipped, not filtered: every idle row is still in the document, which is why
+// this cannot hide a row from anything that reads the ledger.
+out.rowsPresent = [0, 1, 2, 3].every(i => h.includes("idle-" + i));
+out.rowCount = rows();
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertEqual("attention", out["sort"], "the default sort moved")
+        self.assertTrue(out["clip"], "the idle block rendered without a clip")
+        self.assertTrue(out["toggle"], "no [data-calm=idle] control to reveal the block")
+        self.assertTrue(out["collapsed"], "the idle block arrived expanded")
+        self.assertTrue(out["rowsPresent"], "clipping dropped rows instead of hiding them")
+        self.assertEqual(6, out["rowCount"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_no_sort_but_attention_clips_and_burn_never_does(self) -> None:
+        # `burn` groups its leftovers as `!running`, and `running` is
+        # `state === "working" && active`. A needs_input row is not working, so it
+        # lands in that trailing group: clipping there would hide the one row this
+        # mode exists to surface. `recent` interleaves idle with working rows by
+        # age, and `repo` puts idle last per project rather than overall.
+        checks = """
+const out = {};
+const many = [blocked, busy];
+for(let i = 0; i < 4; i++) many.push(mk({sid: "idle-" + i, session: "idle-" + i,
+  last_activity: 99000 - i * 1000}));
+const clipped = () => __els.app.innerHTML.includes("idle-clip");
+for(const s of ["recent", "repo", "burn", "attention"]){
+  calmAction("sort", s);
+  render(payload(many));
+  out[s] = clipped();
+}
+// The row `burn` would have swallowed is still on screen there.
+calmAction("sort", "burn");
+render(payload(many));
+out.burnKeepsBlocked = __els.app.innerHTML.includes("Approve deploy?");
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["attention"], "the default sort stopped clipping")
+        self.assertFalse(out["burn"], "clipping burn's trailing group hides a needs-you row")
+        self.assertFalse(out["recent"], "clipped rows out of the middle of a chronology")
+        self.assertFalse(out["repo"], "clipped a per-project group as if it were the bucket")
+        self.assertTrue(out["burnKeepsBlocked"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_a_ledger_the_reader_filtered_is_never_clipped(self) -> None:
+        # Asking for the idle bucket, or for flagged rows, is the reader saying
+        # what they want on screen. Clipping it back is the same mistake in a
+        # smaller box.
+        checks = """
+const out = {};
+const many = [blocked, busy];
+for(let i = 0; i < 4; i++) many.push(mk({sid: "idle-" + i, session: "idle-" + i,
+  last_activity: 99000 - i * 1000}));
+const clipped = () => __els.app.innerHTML.includes("idle-clip");
+render(payload(many));
+out.unfiltered = clipped();
+calmAction("state", "idle");
+render(payload(many));
+out.idleFilter = clipped();
+calmAction("clear");
+calmAction("flag");
+render(payload(many));
+out.flagFilter = clipped();
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["unfiltered"])
+        self.assertFalse(out["idleFilter"], "clipped the bucket the reader filtered to")
+        self.assertFalse(out["flagFilter"], "clipped a flag-filtered ledger")
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_revealing_the_idle_block_keeps_the_readers_place(self) -> None:
+        # `sort`, `state` and `flag` reset the scroll because they change which
+        # rows exist. Revealing the block does not, so throwing the reader back to
+        # the top would be a regression dressed as consistency.
+        checks = """
+const out = {};
+const many = [blocked, busy];
+for(let i = 0; i < 4; i++) many.push(mk({sid: "idle-" + i, session: "idle-" + i,
+  last_activity: 99000 - i * 1000}));
+render(payload(many));
+__scrollTop = 240;
+calmAction("idle");
+render(payload(many));
+out.expanded = __els.app.innerHTML.includes("max-height:3000px");
+out.showLess = __els.app.innerHTML.includes("Show less");
+out.keptScroll = __scrollTop;
+calmAction("idle");
+render(payload(many));
+out.collapsedAgain = !__els.app.innerHTML.includes("max-height:3000px");
+console.log(JSON.stringify(out));
+"""
+        out = self.run_calm(checks)
+        self.assertTrue(out["expanded"], "the toggle did not reveal the block")
+        self.assertTrue(out["showLess"])
+        self.assertEqual(240, out["keptScroll"], "revealing the block reset the ledger scroll")
+        self.assertTrue(out["collapsedAgain"], "the toggle does not collapse again")

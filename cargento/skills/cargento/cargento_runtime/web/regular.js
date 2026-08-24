@@ -14,11 +14,30 @@ function badge(key, active, name, tipSuffix){
          `<span class="htip">${esc(label)}${esc(tipSuffix || "")}</span></span>`;
 }
 
+/* Whether this strip row can observe a gate, or `null` for a payload that never
+   said. Nine of the ten cannot, and unlike `reports_rate` there is no dash to
+   draw: a harness with no detection publishes no needs-input row, which is the
+   same nothing the one WITH detection publishes when nobody is waiting. So the
+   strip is the only place the fact fits, and it has to be the strip's own field
+   rather than an inference — `=== false` and not `!h.reports_needs_input`,
+   because "Cargento cannot see gates here" is a claim about the harness's design
+   and an absent field has not earned it. Same discipline harnessRateKnown()
+   applies to its fallback, and the same reason spark.js gives for the model
+   dash: telling a reader the gap is deliberate is how a bug report does not get
+   filed. */
+function gateBlind(h){
+  return h && h.discovered && !h.error && h.reports_needs_input === false;
+}
 function harnessStrip(harnesses){
   if(!harnesses || !harnesses.length) return "";
   const chips = harnesses.map(h => {
     const healthy = h.discovered && !h.error;
-    const suffix = h.error ? " — collector error" : (h.discovered ? "" : " — no data");
+    /* `error` still outranks it. A collector that raised never read the store, so
+       what the harness could report in principle is not the fact to lead with —
+       the same precedence this row already gives `error` over `no data`. */
+    const suffix = h.error
+      ? " — collector error"
+      : (h.discovered ? (gateBlind(h) ? " — no gate detection" : "") : " — no data");
     return badge(h.key, healthy, h.label, suffix);
   }).join("");
   return `<span class="hstrip-k">harnesses</span>${chips}`;
@@ -349,6 +368,57 @@ function rateTile(d){
    which left each with a big empty box under a single numeral. Spend it on the
    per-harness split of the very sessions the numeral counted — derived from the
    same list, so the breakdown can never disagree with the total. */
+/* The `Needs you` sub-line, which has to name what is actually being counted.
+   Two kinds of thing land in that tile now, and "sessions blocked on you" is
+   wrong the moment one of them is a question. */
+function needsLine(gates, waiting){
+  const asks = waiting.length - gates.length;
+  if(!asks) return "sessions blocked on you";
+  if(!gates.length) return asks === 1 ? "question waiting on you" : "questions waiting on you";
+  return "sessions and questions waiting on you";
+}
+
+/* What a ZERO in that tile is allowed to say. "Nothing is waiting on you." over a
+   board where one harness in ten can detect a gate is the same false reassurance
+   cargento#116 was filed for, and waitingOnYou() only fixed the half of it the
+   ask lane caused. So the sentence names the rows that could not have told,
+   which makes it a quantity rather than a hedge.
+
+   Scoped to the empty case on purpose. A non-zero tile draws its per-harness
+   breakdown, so a reader can already see which rows the number came from; adding
+   the caveat there too would put it where it is least load-bearing and crowd the
+   count. The ask lane is deliberately left out of the sentence and put in the
+   tooltip: any harness can raise a question, so the blind rows are not silent
+   about everything, and a line that implied otherwise would trade one wrong
+   impression for another. */
+function gateEmpty(d){
+  const rows = (d && d.harnesses) || [];
+  const blind = rows.filter(gateBlind);
+  /* Two ways a row could not have told you, and the second one is the trap. A
+     harness that CAN report a gate but whose collector raised is the row most
+     worth naming, and `gateBlind` deliberately excludes it because on the strip
+     `error` outranks the capability. Naming only the blind ones produced a
+     tooltip that reads as a complete enumeration with the load-bearing gap left
+     out -- worse than the unqualified sentence it replaced. `rateFloor` settled
+     this shape already: an unread harness turns the figure into a floor and says
+     which harness. */
+  const unread = rows.filter(h => h && h.discovered && h.error);
+  if(!blind.length && !unread.length) return {empty: "Nothing is waiting on you."};
+  const name = h => own(HARNESS, h.key, {}).name || h.key;
+  const clauses = [];
+  if(blind.length) clauses.push("no gate detection on " + blind.map(name).join(", "));
+  if(unread.length){
+    clauses.push((unread.length === 1 ? "and this harness could not be read at all: "
+      : "and these could not be read at all: ") + unread.map(name).join(", "));
+  }
+  return {
+    empty: "Nothing waiting that Cargento can see.",
+    emptyTip: "There is " + clauses.join(", ") + ". So a quiet row there is not " +
+      "evidence that nothing is waiting. A session on any harness can still " +
+      "raise a question through the ask lane, and those do appear here."
+  };
+}
+
 function countTile(label, sub, sessions, alert){
   const byH = new Map();
   for(const x of sessions) byH.set(x.harness, (byH.get(x.harness) || 0) + 1);
@@ -361,9 +431,10 @@ function countTile(label, sub, sessions, alert){
         `<span class="tile-bname">${esc(name)}</span>` +
         `<span class="tile-bnum">${n}</span></div>`;
     }).join("");
+  const emptyTip = sub.emptyTip ? ` title="${esc(sub.emptyTip)}"` : "";
   const body = rows
     ? `<div class="tile-break">${rows}</div>`
-    : `<div class="tile-none">${esc(sub.empty)}</div>`;
+    : `<div class="tile-none"${emptyTip}>${esc(sub.empty)}</div>`;
   const val = sessions.length && alert
     ? `<div class="tile-val alert">${sessions.length}</div>`
     : `<div class="tile-val">${sessions.length}</div>`;
@@ -423,11 +494,15 @@ function sdBlock(sess){
     `<span class="sd-role">${esc(role)}</span></div>${rows}</div>`;
 }
 
-function turnBlock(t){
+function turnBlock(t, loop){
   if(!t) return "";
+  /* Same rule as calm's chip: the ⚠️ still fires on duration, and what a
+     detected loop changes is what it says when you reach for it. Escaped now
+     that the sentence can carry a tool name out of the payload. */
+  const note = esc(loop ? loopNote(loop) : LONG_TURN_NOTE);
   const warn = t.long ? `<span class="lwarn" tabindex="0" role="note"` +
-    ` aria-label="${LONG_TURN_NOTE}">!` +
-    `<span class="ltip">${LONG_TURN_NOTE}</span></span>` : "";
+    ` aria-label="${note}">!` +
+    `<span class="ltip">${note}</span></span>` : "";
   const pct = (t.pct != null) ? `<span class="pct">${t.pct}%</span>` : "";
   /* Both shapes draw a track. A turn with no estimate used to drop the bar
      entirely, so two cards stacked in the same column had different anatomy and
@@ -508,6 +583,14 @@ function workingCard(d, sess){
   if(sess.total) bits.push(`${sess.done}/${sess.total} done · ${sess.progress_pct}%`);
   if(sess.eta_h) bits.push(`~${sess.eta_h} left`);
   const bitsLine = bits.length ? `<div class="card-bits">${esc(bits.join(" · "))}</div>` : "";
+  /* On the card whatever the turn is doing, for the reason calm's panel carries
+     it: the ⚠️ it would otherwise hide behind only appears past 15 minutes, and
+     a loop that has not run that long yet is exactly the one worth catching. The
+     warn ink rather than a chip of its own — a card already carries the pills
+     that say what state this session is in, and this is not one. */
+  const loopLine = sess.loop
+    ? `<div class="card-bits" style="color:var(--warnink)">${esc(loopNote(sess.loop))}</div>`
+    : "";
   /* The model chip appears only where the child's and the parent's are both
      measured and unequal — childModelShown() owns that rule for both views, and
      re-deriving it inline is how the two came to disagree about `fastest`. Its
@@ -528,12 +611,13 @@ function workingCard(d, sess){
     `<div class="card-headrow"><span class="pill pill-work"><span class="pill-dot"></span>Working</span>` +
     leadPill + badge(sess.harness, true) + `</div>` +
     `<div class="card-title">${esc(sess.title || sess.project)}</div>` +
-    `<div class="card-meta">${esc(sess.project)} · ${esc(sess.session)}` +
-    `${authorityMeta(sess)}${consumptionMeta(d, sess)}</div>${bitsLine}` +
+    `<div class="card-meta">${esc(sess.project)}${dupMark(d, sess)}` +
+    ` · ${esc(sess.session)}` +
+    `${authorityMeta(sess)}${consumptionMeta(d, sess)}</div>${bitsLine}${loopLine}` +
     `</div>${rateMeter}</div>` +
     `<div class="now"><span class="now-k">now</span>` +
     `<span title="${esc(sess.state_detail)}">${esc(humanTool(sess.state_detail))}</span></div>` +
-    turnBlock(sess.turn) + subs + sdBlock(sess) + taskBlock(sess) + `</div>`;
+    turnBlock(sess.turn, sess.loop) + subs + sdBlock(sess) + taskBlock(sess) + `</div>`;
 }
 
 /* Resolved, not written back: a cursor whose gate has left the queue falls to
@@ -585,7 +669,11 @@ function needRow(d, sess, pos, focusKey){
   const copied = calmCopyNote && calmCopyNote.key === key;
   return `<div class="need${focusKey === key ? " cursor" : ""}">` +
     `<span class="need-n">${pos}</span><div class="need-main">` +
-    `<div class="need-meta">${badge(sess.harness, true)}${esc(sess.project)} · ${esc(sess.session)}` +
+    /* The gate row carries the marker for the same reason a blocked session
+       counts as live at all: answering this gate is the keystroke that lets one
+       of the two sessions write over the other. */
+    `<div class="need-meta">${badge(sess.harness, true)}${esc(sess.project)}` +
+    `${dupMark(d, sess)} · ${esc(sess.session)}` +
     `${authorityMeta(sess)}${consumptionMeta(d, sess)}</div>` +
     `<div class="need-title">${esc(sess.title || sess.last_prompt || sess.project)}</div>` +
     detailHtml + `</div>` +
@@ -597,7 +685,12 @@ function needRow(d, sess, pos, focusKey){
     `<div class="blocked-v">${esc(blocked)}</div>` +
     `<button type="button" class="need-copy" data-calm="copy"` +
     ` data-arg="${esc(key)}" title="copy this session's id">` +
-    `${copied ? esc(calmCopyNote.text) : "copy id"}</button></div></div>`;
+    `${copied ? esc(calmCopyNote.text) : "copy id"}</button>` +
+    /* A gate IS clearable, and clearing it also stops its desktop popup. A gate
+       the reader has decided to answer somewhere else is exactly the row they
+       want off the board, and a control that removed it from the board while the
+       notifications kept arriving would read as broken. */
+    handledButton(d, dismissKey(sess), "need-copy") + `</div></div>`;
 }
 
 function idleRow(d, sess){
@@ -636,7 +729,14 @@ function idleRow(d, sess){
        surface holds a session lifetime total, and none of the three pretends to —
        consumptionBit() carries that distinction in its visible words. */
     `<span class="idle-proj">${esc(sess.project)} · ${esc(sess.session)}${t}</span>` +
-    `<span class="idle-age">idle ${esc(age)}</span></div>`;
+    /* Beside the age rather than inside it: `.idle-age` is a fixed width holding
+       one nowrap figure, so a second clause in there would push the number out of
+       the row. Same markup and same wording as calm's cell — one rule read twice
+       is what keeps the two views from telling one reader a session finished and
+       the other that it merely went quiet. */
+    finishedBit(d, sess) +
+    `<span class="idle-age" title="${esc(idleQuietNote(d, sess, age))}">` +
+    `idle ${esc(age)}</span></div>`;
 }
 
 function toggleIdle(){ idleExpanded = !idleExpanded; if(lastData) render(lastData); }

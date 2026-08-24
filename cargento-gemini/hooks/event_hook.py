@@ -107,24 +107,61 @@ CLAUDE_EVENTS = {
 # `agent_id` to `subagent_id` rename is all that was needed. One subagent produced
 # exactly one start and one stop.
 #
-# `PermissionRequest` remains absent, and the reason is now measured rather than
-# contradictory. The event is real and the name registers: a hooks file listing it
-# beside these five left all five firing normally. But `codex exec` pins
-# `approval_policy` to `never`, measured from a session's own `turn_context` while
-# `-c approval_policy=untrusted` was passed and overridden, so no approval is ever
-# requested and the hook has nothing to be asked about. Enabling the
-# `exec_permission_approvals` feature changed nothing. Its payload is therefore
-# unmeasured, which is the same reason Gemini's `Notification` is unmapped.
+# `PermissionRequest` is mapped, and it took three readings to get there. It was
+# "unmeasured", then "measured, and deliberately declined", and both of those
+# conflated two questions this entry finally separates: whether to REPORT a gate,
+# and whether to ANSWER one.
 #
-# One extra reason not to register it casually: alone among Codex's hooks it gets to
-# decide, `hookSpecificOutput.decision.behavior` being exactly `allow` or `deny`.
-# Emitting nothing is the documented way to decline, which is what this script does on
-# every path, but three reserved `decision` fields fail closed, so a forwarder that
-# grew one by mistake would block a user's tool call. See the design doc.
+# Measured on 0.149.0, driven interactively
+# (`docs/captures/codex/permission-hook-interactive-0.149.0-macos.jsonl`): it
+# fires with a real approval prompt standing open, its payload carries
+# `session_id`, and Codex blocks the tool call on the hook -- honoured at 25
+# seconds on allow and 70 on deny rather than timing out. The earlier negative
+# was narrower than it read: `codex exec` pins `approval_policy` to `never`, so
+# under `exec` nothing ever asks. That is a property of the mode, not the event.
+# (`approval_policy = "untrusted"`, which that run passed, is now a hard error.)
+#
+# **Reporting is separable from answering, and this file can only report.** Alone
+# among Codex's hooks this one gets to decide, and Codex validates what comes
+# back: `hookSpecificOutput` requires `hookEventName`, `decision.behavior` is
+# exactly `allow` or `deny`, and three reserved fields fail closed. But `main()`
+# writes nothing to stdout on any of its five exit paths, and empty output is
+# read as an abstain -- so declining is not a choice this script makes correctly,
+# it is the only thing it can do.
+#
+# That last step was a documentation read until it was measured, which mattered
+# because every earlier arm returned NON-empty output and Codex fails closed on a
+# malformed one: if zero bytes had parsed as invalid rather than as no-opinion,
+# registering this event would have denied every escalated tool call for every
+# install. Measured on 0.149.0, interactively: the hook fired, printed nothing,
+# exited 0, the prompt reached the person, and the approved command ran
+# (`docs/captures/codex/permission-abstain-0.149.0-macos.jsonl`). Tests pin the
+# empty stdout on the four early exits and on the far side of a real forward,
+# and they are mutation-checked -- the first version of that test patched
+# `sys.stdin` with a `StringIO`, which has no `.buffer`, so all four arms
+# measured the no-stdin path and a mutant printing a `deny` sailed through.
+#
+# Two channels the argument does NOT cover, recorded rather than argued away.
+# A failure before `main()` runs -- no interpreter, an unreadable file, an
+# interrupt -- exits non-zero, and whether Codex reads a non-zero exit from this
+# event as a block is unmeasured. And no `timeout` is set on the bundled entry,
+# deliberately: the interactive capture could not exclude a fail-closed timeout,
+# so naming a short one risks converting a slow disk into a refused tool call,
+# which is worse than the stall it would bound. Both are in the capture's
+# `_unrun` records.
+#
+# Note the asymmetry with Antigravity, which is exactly inverted and is why
+# `agy_hook.py` cannot borrow this reasoning: there an empty object is a DENY, so
+# the harmless-looking output gates the call. Here empty output is the safe one.
+#
+# Answering a gate is still a product decision (DEC-2 / B4) and nothing here
+# advances it. What this ships is a red row, on the harness where a gate was the
+# one thing the board could not see.
 CODEX_EVENTS = {
     "SessionStart": "session_started",
     "UserPromptSubmit": "turn_started",
     "Stop": "turn_stopped",
+    "PermissionRequest": "input_requested",
     "PostToolUse": "store_changed",
     "PostCompact": "reconcile_required",
     "SubagentStart": "subagent_started",
