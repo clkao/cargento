@@ -1,0 +1,21 @@
+{
+  "cargento": {
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"./skills/cargento/agy_hook.py\" PostToolUse"
+          }
+        ]
+      }
+    ],
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "python3 \"./skills/cargento/agy_hook.py\" PostInvocation"
+      }
+    ]
+  }
+}
