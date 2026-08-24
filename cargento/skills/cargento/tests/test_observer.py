@@ -240,6 +240,67 @@ class ObserverAnalyzerTest(unittest.TestCase):
             ],
         )
 
+    def test_ordinary_reporting_prose_is_not_a_block(self) -> None:
+        # The false-positive case, which the indicator table had none of. A bare
+        # `cannot`/`can't`/`failed to`/`error:` matches an agent describing work
+        # it has finished, and a block is the one field on the panel a reader
+        # would act on. Falsifying edit: put the bare words back — every line
+        # here publishes a block.
+        for line in (
+            "I can't reproduce the failure any more, so the fix holds.",
+            "The old code cannot have worked; the new one does.",
+            "It failed to build before the patch. It builds now.",
+            "The log said error: missing header, which the include fixes.",
+            "I was unable to reproduce it until I widened the window.",
+            "Waiting for the suite to finish, then I will push.",
+        ):
+            with self.subTest(line=line), tempfile.TemporaryDirectory() as tmp:
+                path = self._write_transcript(
+                    tmp,
+                    [
+                        _pi_session("fp-001"),
+                        _pi_message("m1", None, "user", "Fix the build"),
+                        _pi_message("m2", "m1", "assistant", line),
+                    ],
+                )
+                self.assertEqual("", self.analyze(path)["block"])
+
+    def test_a_resolved_block_is_not_walked_back_to(self) -> None:
+        # Scanning backwards through every assistant message found a block that
+        # had been reported and then resolved, and published it as current.
+        # Falsifying edit: drop the `return ""` after the newest assistant
+        # message — this publishes the twenty-turn-old block.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_transcript(
+                tmp,
+                [
+                    _pi_session("res-001"),
+                    _pi_message("m1", None, "user", "Fix the build"),
+                    _pi_message("m2", "m1", "assistant", "I am blocked on a missing token."),
+                    _pi_message("m3", "m2", "user", "Here is the token."),
+                    _pi_message("m4", "m3", "assistant", "Thanks — the build is green now."),
+                ],
+            )
+            self.assertEqual("", self.analyze(path)["block"])
+
+    def test_a_current_block_is_still_reported(self) -> None:
+        # The other side: narrowing the table must not cost the real case.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_transcript(
+                tmp,
+                [
+                    _pi_session("cur-001"),
+                    _pi_message("m1", None, "user", "Deploy it"),
+                    _pi_message(
+                        "m2",
+                        "m1",
+                        "assistant",
+                        "I pulled the manifest. I am blocked on a missing AWS role.",
+                    ),
+                ],
+            )
+            self.assertEqual("I am blocked on a missing AWS role.", self.analyze(path)["block"])
+
     def test_no_spacedock_withdraws_the_project_reads(self) -> None:
         # `--no-spacedock` is the switch that turns off the project reads, and
         # SECURITY.md's project-read contract is written against it. The route

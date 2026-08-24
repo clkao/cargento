@@ -51,18 +51,24 @@ _GENERIC_OPENER_PREFIXES = (
     "skill(",
 )
 
-# Block indicators scanned for in recent assistant text. The MVP derives one
-# open block; the scan is a bounded keyword search, not a semantic parse.
+# Block indicators, scanned in the newest assistant message only. Self-state
+# phrases, and not the bare words this started with: `cannot`, `can't`,
+# `unable`, `failed to` and `error:` match ordinary reporting prose — "I can't
+# reproduce it any more, so the fix holds" published a finished session as
+# blocked, and "error:" matches any agent quoting a log line it has already
+# dealt with. A false block is worse than no block: it is the one field on the
+# panel a reader would act on.
 _BLOCK_INDICATORS = (
-    "blocked",
-    "cannot",
-    "can't",
-    "unable",
-    "stuck",
-    "waiting for",
-    "failed to",
-    "error:",
+    "i'm blocked",
+    "i am blocked",
+    "blocked on",
+    "i'm stuck",
+    "i am stuck",
+    "waiting for you",
+    "waiting for your",
+    "waiting for approval",
     "not permitted",
+    "permission denied",
 )
 
 
@@ -228,11 +234,16 @@ def _derive_block(
     config: RuntimeConfig,
     messages: list[dict[str, str]],
 ) -> str:
-    """One open block from recent assistant text, or empty.
+    """One open block from the newest assistant message, or empty.
 
-    A bounded keyword scan: the last assistant message whose text contains a
-    block indicator contributes the sentence around the first hit. Nothing
-    is inferred; a message without an indicator yields no block.
+    A bounded keyword scan over that one message: if its text carries a block
+    indicator, the sentence around the first hit is the block. Nothing is
+    inferred; a message without an indicator yields no block.
+
+    The newest message and not a walk back through all of them. Scanning
+    backwards found a block that had been reported and then resolved twenty
+    turns earlier and published it as current, which is a worse answer than
+    none — this is the one field on the panel a reader would act on.
     """
     for msg in reversed(messages):
         if msg["role"] != "assistant":
@@ -251,6 +262,7 @@ def _derive_block(
             sentence = text[start:end].strip()
             if sentence:
                 return records.safe_text(sentence, config.observer_block_cap_chars)
+        return ""  # the newest assistant message had nothing; do not walk back
     return ""
 
 
