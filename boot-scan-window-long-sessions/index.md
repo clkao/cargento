@@ -29,7 +29,7 @@ gates:
 started: 2026-08-21T09:55:52Z
 worktree: .worktrees/spacedock-ensign-boot-scan-window-long-sessions
 mod-block: merge:pr-merge
-pr: spacedock-dev/cargento#127
+pr: pr-merge:127
 ---
 
 The Pi collector's `transcript_boot` reads only the last `spacedock_boot_scan_bytes` (512KB) of the session transcript to find the boot envelope. For a long-running first-officer session (3MB+ transcript after hours of work), the boot envelope written at the START of the session has scrolled out of the scan window, so `transcript_boot` returns `[]`, `session_spacedock` returns `None`, and the session shows `spacedock: null` — losing its Spacedock classification and workflow strip entirely.
