@@ -1,6 +1,6 @@
 ---
 title: Group and filter the session list by project
-status: validation
+status: done
 source: captain dogfood feedback
 id: zp7z36m3am49jyqrp685nhz9
 gates:
@@ -65,11 +65,14 @@ gates:
                 reason: 'conn granted: ''you have the conn to push to the forked repo and open PR'' (re-granted post-compaction). Per captain: when you have the conn, you do not need to present — just record the gate and resolution.. Implementation verified: all checklist items DONE, suite green (independently confirmed for z4), commit landed. Delivery proceeds to done.'
               application:
                 target-stage: done
-                state: pending
+                state: consumed
 started: 2026-08-21T08:07:14Z
 worktree: .worktrees/spacedock-ensign-group-sessions-by-project
-mod-block: merge:pr-merge
+mod-block:
 pr: pr-merge:134
+verdict: PASSED
+completed: 2026-08-24T21:21:11Z
+archived: 2026-08-24T21:21:11Z
 ---
 
 With 18 sessions across cargento, subspace-ssh, subspace-v0, tycho, spacedock,
