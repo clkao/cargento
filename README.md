@@ -83,13 +83,17 @@ codex plugin add cargento@cargento-marketplace
 
 Restart Codex after installation.
 
+Installing the plugin is most of the setup. What is left is configured by hand, because a plugin
+cannot write it for you: the ask-lane MCP server, Claude's lifecycle hooks, Antigravity's status
+line. See [HOW_TO_USE.md](HOW_TO_USE.md) for one procedure per task.
+
 ---
 
 ## 2. Skills
 
 | Skill | What it does | Standalone invocation |
 |-------|--------------|------------------------|
-| `cargento` | Live agent-cartography dashboard: maps sessions, subagents, task progress, ETAs, and token rate across ten coding-agent harnesses, with input-wait notifications for Claude (native on macOS, browser notifications elsewhere) | `/cargento:cargento` |
+| `cargento` | Live agent-cartography dashboard: maps sessions, subagents, task progress, ETAs, and token rate across ten coding-agent harnesses, with input-wait notifications (native on macOS, browser notifications elsewhere) | `/cargento:cargento` |
 
 In Codex, invoke it as `$cargento`. In any harness you can also just ask: "open cargento" or "monitor my agents".
 

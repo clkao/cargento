@@ -2,12 +2,12 @@
 
 ## Scope
 
-Cargento ships two components that touch the network. The dashboard server
+Cargento ships three kinds of component that touch the network. The dashboard server
 (`cargento/skills/cargento/server.py`, whose code is the `cargento_runtime` package beside it)
 reads local coding-agent session stores (transcripts, task
 files, SQLite databases) and serves them over HTTP. When the usage feature is on, the server also
 makes one kind of outbound request, the quota poll described in Usage quota reads (the quota
-fetcher); it carries no session data. Three small forwarders ship beside it, each wired into a
+fetcher); it carries no session data. Four small forwarders ship beside it, each wired into a
 harness's own configuration by the user or by the plugin: `notify_hook.py` POSTs a Claude
 `Notification` payload to the dashboard, `event_hook.py` posts command-hook lifecycle events for
 Claude and Codex, `agy_hook.py` posts Antigravity's hook events, and `statusline_hook.py` posts
@@ -19,19 +19,31 @@ that allows, denies or re-prompts a tool call, so a reporting hook there can blo
 `agy_hook.py` prints exactly `{}` and nothing else, on every path including every failure path, and a
 test asserts that for malformed, empty and valid input alike.
 
+The third kind is one stdio MCP server, `mcp_server.py`, described under The ask lane below. It is
+not a forwarder and shares none of the four's transport: a harness spawns it, it speaks JSON-RPC on
+stdin and stdout, and it reaches the dashboard on loopback under the same three guards.
+
 The posture rests on two invariants:
 
-1. Localhost only. The server binds `127.0.0.1` exclusively, and every forwarder refuses to POST
-   anywhere but loopback, ignores proxy environment variables, and does not follow redirects.
+1. Localhost only. The server binds `127.0.0.1` exclusively, and every forwarder and the MCP server
+   refuse to reach anywhere but loopback, ignore proxy environment variables, and do not follow
+   redirects.
    Session data never leaves the machine. The quota poll is the single outbound exception, and it
    carries a vendor token out and quota numbers back, nothing else.
-2. Read-only against harness stores. They are opened read-only and never written. Two endpoints
-   mutate, and both only in memory: `POST /api/notify` updates needs-input state, and
+2. Read-only against harness stores. They are opened read-only and never written. Seven endpoints
+   mutate, and six of them only in memory: `POST /api/notify` updates needs-input state, and
    `POST /api/usage` stores a quota figure a harness published to its own status-line command.
-   Neither writes anything to disk. `POST /api/events/<harness>` also mutates in memory only, behind
-   the capability described under Known and accepted. The one thing a forwarder writes to disk is
-   `statusline_hook.py`'s deduplication memo under the Cargento state directory, which holds a
-   normalized state name and a timestamp and nothing about the session's content.
+   `POST /api/events/<harness>` also mutates in memory only, behind the capability described under
+   Known and accepted, and so do `POST /api/ask`, `POST /api/answer` and `POST /api/ask/withdraw`,
+   which register a question a session asked, record the option the reader chose, and drop a question
+   whose asker has stopped waiting for it, all three described under The ask lane. The long
+   poll that delivers an answer, `GET /api/ask/<id>`, drops that question from memory once it has,
+   which is the delivery completing rather than a change a caller asked for. The seventh,
+   `POST /api/dismiss`, does write to disk, but what it writes is
+   Cargento's own state under `~/.cargento` and never a harness store, so the read-only rule above stands
+   unchanged. What that file holds and how to clear it is in Dismissals. One forwarder writes too:
+   `statusline_hook.py`'s deduplication memo under the same directory, which holds a normalized state
+   name and a timestamp and nothing about the session's content.
 
 Anything that weakens either invariant is a security bug: a bind-address escape, file reads outside
 the documented store paths and the project-read contract below (however the path was derived),
@@ -141,8 +153,8 @@ Consent and the off switch: the feature is on by default and disclosed before it
 time the dashboard opens with the feature available, a banner explains the token read and the
 request above, and carries the switch that turns the feature off. The setting can be changed later
 from the dashboard's configure panel, and `--no-usage` disables the feature for a run regardless
-of the stored setting. With the feature off, Cargento's network surface is exactly the two
-loopback-bound components described above, and nothing is fetched.
+of the stored setting. With the feature off, Cargento's network surface is exactly the three
+loopback-bound kinds of component described above, and nothing is fetched.
 
 Polling posture: responses are cached, and at most one request per vendor is made every five
 minutes. No polling happens while no dashboard page is connected. `--diagnose` never triggers a
@@ -167,10 +179,11 @@ retention for a run is what `--no-usage` is for.
 
 ## Process lifecycle: written paths, and `/api/shutdown`
 
-The server writes exactly two files, both under `~/.cargento` (relocatable with `CARGENTO_HOME`,
+The server writes three files, all under `~/.cargento` (relocatable with `CARGENTO_HOME`,
 authoritative when nonblank): `cargento-<port>.json`, recording the running instance (`pid`, `port`,
-`started`, `log`, `python`), and `cargento-<port>.log`, where a detached (`--daemon`) instance's
-output goes. One forwarder writes a third, in the same directory and named in invariant 2 above:
+`started`, `log`, `python`); `cargento-<port>.log`, where a detached (`--daemon`) instance's
+output goes; and `cargento-dismissals.json`, the sessions the reader marked handled, described in
+Dismissals below. One forwarder writes a fourth, in the same directory and named in invariant 2 above:
 `statusline_hook.py` keeps `statusline-<harness>-<session>.json` per conversation, holding a
 normalized state name and a timestamp, so a status line that fires many times a turn posts once. The directory is created `0o700` because the log can carry local paths: uncaught
 tracebacks land there, not just Python-level prints. Nothing ever removes or rotates the log: a
@@ -197,6 +210,93 @@ dashboard had read as waiting. A record holds the same fields plus the two activ
 reducer compared, and no more: the row's title and its state detail are deliberately absent, because
 a state detail can carry a permission prompt's own text, an open question's, or a plan's first line.
 
+## Dismissals
+
+Marking a session handled writes one file, and it is the only thing Cargento writes on your behalf:
+`~/.cargento/cargento-dismissals.json`, opened `0600` with the mode in the `open` call so it is never
+briefly world-readable, written through a temp file and `os.replace` so a reader mid-write sees the
+old file or the new one.
+
+It holds a harness key, a session id, and two timestamps per entry. Nothing else: no title, no
+prompt, no project path, no state detail. Nothing sends it anywhere either. The one route that reads
+it out is `GET /api/cleared`, on the loopback port, and what that serves back to the page is strictly
+less than `/api/data` already does. It applies the strict same-origin check rather than the relaxed
+one `/api/data` uses for navigations, and answers 503 under `--no-dismiss`.
+
+Two properties bound what a forged `POST /api/dismiss` can do. The body carries no timestamp: the
+watermark that decides how long a mark holds is the server's own clock at the moment it lands, so
+there is no value a caller can send that hides a row past that session's next write. And the file is
+capped at 256 entries, oldest mark evicted first, so nothing can grow it without limit. A corrupt,
+truncated or over-cap file degrades to "no dismissals", with every row visible, rather than
+raising, and one malformed entry is dropped on its own without discarding the rest.
+
+To clear it, delete the file, or use the page's `handled` chip to restore individual sessions.
+`--no-dismiss` leaves it unread and unwritten for a run.
+
+Two exposures come with the feature and are accepted rather than solved. The first is that clearing a
+session suppresses its desktop popup as well as its row, including a session still waiting on an
+answer, which is what the control is for when the gate was answered somewhere else. It is also the
+most a forged `POST /api/dismiss` can achieve: one session's alert stays silent until that session
+writes again, and its standing question is still on the board the moment the row is restored. The
+second is that two dashboards on one machine share the one file. Each picks up the other's marks on
+its next collection, but two marks landing in the same instant resolve last-writer-wins on the whole
+file, and the losing mark is lost.
+[`docs/design-dismissals.md`](docs/design-dismissals.md) records why that race is stated rather than
+solved.
+
+## The ask lane (`ask_operator`)
+
+Cargento ships one MCP tool. A session that wants a human decision calls `ask_operator`, and the
+question appears in the dashboard for the reader to answer. This is the only path by which anything
+a reader does in Cargento reaches a running session, and it exists because the session asked.
+
+What it is, precisely. Cargento ships a stdio MCP server beside the dashboard. It is not one of the
+four forwarders and shares none of their transport. A harness spawns it, it speaks JSON-RPC on stdin
+and stdout, and it holds the agent's tool call open while the question is outstanding. It registers
+the question with the dashboard over loopback and polls for the answer.
+
+The direction is the invariant. Cargento never reaches into a session. A session can only ever be
+waiting because it asked to be, and a session that never calls the tool is untouched by all of this.
+Nothing is typed into a terminal, no harness store is written, and the tool cannot answer a native
+permission prompt. That last point is not a limitation to be lifted later: answering a harness's own
+gate is refused, and the four probes DEC-2 filed are research rather than a roadmap.
+
+What the reader's click can and cannot say. The question's options are recorded when the question is
+registered. An answer names the question and an option by index, and the MCP server returns its own
+copy of that option to the agent. An answer cannot introduce text. The strongest thing a forged
+answer can do is select the wrong one of the options the asking agent itself wrote, and it cannot put
+new content into that agent's context.
+
+What is bounded. The question text and the option list are bounded when they arrive, and rendered as
+text and never as markup. The number of questions outstanding at once is capped, and the honest
+answer past the cap is a refusal the server turns into a decline rather than an error. A question
+that is never answered expires and declines. The question is also delivered as a notification: on macOS by the server,
+through the same truncation and AppleScript escaping the needs-input popup uses, and elsewhere by the page, which
+passes the text to the browser's own notification API and applies neither (it is not building a
+shell command, and the text is already bounded at the ingress); the notification is a pointer rather than a decision surface, and an option can
+only ever be chosen back in the page.
+
+Failure is always a decline, never a hang. If the dashboard is not running, if no reader answers, if
+the deadline passes, or if the process is stopped while a question is outstanding, the tool returns a
+decline and the agent proceeds as it judges best. A stopped dashboard releases every outstanding
+question before it exits. A tool call that gives up for any of those reasons also withdraws its own
+question on the way out, so a card nobody is waiting on leaves the board instead of staying clickable
+until its deadline. A click on a question whose asker has gone is accepted and discarded either way,
+which is why the withdrawal matters to the reader rather than to the agent.
+
+The standing permission this needs, and what granting it means. At default settings every harness
+gates the first call to this tool in the user's own terminal, before the call reaches Cargento. The
+feature is therefore useless until the user grants the tool once, which on Claude Code writes
+`permissions.allow: ["mcp__plugin_cargento_cargento__ask_operator"]` into that project's
+`.claude/settings.local.json`. Granting it means that project's sessions may pause themselves on a
+Cargento question without asking again. It is scoped to that directory, it is the user's to revoke by
+deleting the line, and Cargento never writes it.
+
+Answering is a real decision. Every other click in the dashboard changes what you see. This one
+changes what an agent does next, with your credentials, in your repository. The exposure that follows
+is recorded under Known and accepted rather than solved here, because loopback is not a per-user
+boundary.
+
 ## Known and accepted
 
 Loopback is not a per-user boundary. Any other account on the same machine can `GET /api/data` and
@@ -221,7 +321,8 @@ way. Any process running as the same user can read the token and post events, an
 the trust boundary for the same reason the rest of this section does, since such a process can read
 the user's secret material directly. An overlay may also only ever patch a row a collector produced;
 it can never create or delete one, and it can only write `state`, `state_detail`, `active`,
-`blocked_since` and the acquisition marker. `--no-events` turns the whole path off for a run.
+`blocked_since`, the acquisition marker and `finished_at`, the stamp of the turn's last observed
+stop. `--no-events` turns the whole path off for a run.
 
 The event envelope is allowlisted at both ends. Each adapter builds the nine permitted fields one at
 a time from the native payload, so the prompt, the tool name, the tool input and the tool output are
@@ -232,6 +333,35 @@ transcript path; none of those reach a socket. `statusline_hook.py` also shapes 
 the `quota` block alone, which is what this document asks for a paragraph below rather than sending
 the whole status-line document and relying on the server to discard it. `cwd` and `transcript_path` are
 matching hints and are never echoed to `/api/data`.
+
+The ask lane inherits the loopback exposure above, and it is the first place where that exposure
+reaches beyond what a reader sees. Any local process that can reach the port can answer a question a
+session is waiting on. Two things keep this narrow rather than solved. An answer selects an option by
+index from a list the asking agent wrote, so a forgery cannot introduce text into an agent's context,
+only choose badly among choices the agent already offered. And a session is only ever waiting because
+it asked, so there is no question to answer unless an agent raised one. A per-reader
+authentication would be the real fix, and it is not available: the dashboard page is served as fixed
+bytes with no per-run secret in it, and a local process could read such a secret anyway.
+
+A question's attribution is unverified, and this is the second half of that exposure. `harness`,
+`session_id` and `project` are taken from the registration body and bounded, and nothing checks that
+the named session exists or that the caller is it, so any local process that can reach the port can
+put a card on the board that reads as coming from a specific session in a specific repository. Two
+things bound the damage. The card is its own band and touches no collector-measured session state, so
+a forged attribution cannot alter a row, a state, a count or a dismissal
+([`docs/design-ask-lane.md`](docs/design-ask-lane.md#a-4-an-outstanding-question-is-its-own-band-not-a-row-in-sessions)
+records why the band is separate); and answering the card still
+only selects among options its own registrant wrote, so the forger gains nothing from being answered.
+What a forgery does buy is plausibility, at the one place in the dashboard where a reader makes a
+decision, which is why it is named here rather than left implicit in the loopback paragraph above. That
+plausibility now reaches a reader with no tab open, because the question also raises a notification. The
+title renders the display label of the harness key the registration claimed, and neither the key nor the
+claim is verified. A registration that inherits or forges the harness environment variable titles the
+banner with that harness. What the registry lookup does buy is that the title is a name the registry
+carries or nothing at all, so a 120-character agent-authored string cannot reach it, and an
+unattributable question is announced as "An agent" rather than under a borrowed name.
+Verifying it would need a per-session secret that the sessions do not have and that the loopback
+boundary could not keep.
 
 `--diagnose` output is sensitive. It prints the home directory, the interpreter path, the *values* of
 the store relocation variables, every candidate store path, and per-path read errors. Nothing is

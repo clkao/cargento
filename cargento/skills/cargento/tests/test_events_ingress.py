@@ -643,18 +643,115 @@ class CodexAdapterTest(unittest.TestCase):
         # double every tool call for no gain.
         self.assertIsNone(self.envelope("PreToolUse"))
 
-    def test_the_permission_hook_stays_unmapped_because_exec_cannot_fire_it(self) -> None:
-        """Measured, and the reason changed without the outcome changing.
+    def test_the_permission_hook_reports_a_gate_because_it_was_finally_measured(self) -> None:
+        """The negative this test used to pin was the mode's, not the event's.
 
-        The event is real and the name registers: a hooks file listing it beside the
-        five mapped names left all five firing normally, twice. But `codex exec`
-        pins `approval_policy` to `never`, so no approval is ever requested and the
-        hook has nothing to be asked about. Its payload is unmeasured, and
-        `input_requested` is the overlay with no dedicated clearing event, so a
-        guessed mapping is the most expensive kind to get wrong.
+        `codex exec` pins `approval_policy` to `never`, so under `exec` nothing ever
+        asks and the hook has nothing to be asked about. Driven interactively on
+        0.149.0 it fires with a real gate standing open, and its payload carries the
+        session id this envelope needs
+        (`docs/captures/codex/permission-hook-interactive-0.149.0-macos.jsonl`).
+
+        Mapping it reports; it does not decide. `main()` writes nothing to stdout on
+        any of its five exit paths, and emitting nothing is Codex's documented way to
+        decline, so this adapter cannot answer a gate even by accident. That is the
+        mirror image of Antigravity, where an empty object denies.
         """
-        self.assertIsNone(self.envelope("PermissionRequest"))
-        self.assertNotIn("PermissionRequest", event_hook.CODEX_EVENTS)
+        built = self.envelope("PermissionRequest")
+        self.assertIsNotNone(built)
+        assert built is not None
+        self.assertEqual("input_requested", built["event"])
+        self.assertEqual("input_requested", event_hook.CODEX_EVENTS["PermissionRequest"])
+
+    def test_no_codex_hook_path_writes_anything_a_gate_could_read(self) -> None:
+        """The safety property behind the mapping above, asserted rather than read.
+
+        Codex blocks the tool call on this hook and applies whatever comes back, and
+        it validates the shape: a malformed output is refused by name and fails
+        closed. So the one thing this script must never do is print.
+
+        Measured on 0.149.0, not inferred: a hook registered on this event that
+        printed nothing and exited 0 let the approval prompt reach the human, who
+        approved, and the command ran
+        (`docs/captures/codex/permission-abstain-0.149.0-macos.jsonl`). Empty output
+        is the abstain. This test is what keeps it empty.
+
+        `SimpleNamespace(buffer=...)` is the idiom the rest of this file uses,
+        because `main()` reads `sys.stdin.buffer`. An `io.StringIO` has no
+        `.buffer`, so the AttributeError guard swallows it and every arm silently
+        measures the no-stdin path instead of the one it is named after -- which is
+        what the first version of this test did on all four arms, where a mutant
+        printing a `deny` still passed. Hence the `reached` assertion.
+        """
+        gate = json.dumps(
+            {"hook_event_name": "PermissionRequest", "session_id": CODEX_SESSION, "cwd": "/w"}
+        ).encode()
+        reached: list[str] = []
+        real_read_event = event_hook.read_event
+        with tempfile.TemporaryDirectory() as empty_home:
+            for label, stdin in (
+                ("a real gate, no dashboard", gate),
+                ("unparseable stdin", b"not json"),
+                ("empty stdin", b""),
+                ("an unmapped name", json.dumps({"hook_event_name": "Nope"}).encode()),
+            ):
+                with self.subTest(label):
+                    out = io.StringIO()
+                    seen = label
+
+                    def spy(*a: Any, _seen: str = seen, **k: Any) -> Any:
+                        reached.append(_seen)
+                        return real_read_event(*a, **k)
+
+                    with (
+                        unittest.mock.patch.dict(os.environ, {"CARGENTO_HOME": empty_home}),
+                        unittest.mock.patch.object(
+                            sys, "stdin", SimpleNamespace(buffer=io.BytesIO(stdin))
+                        ),
+                        unittest.mock.patch.object(sys, "stdout", out),
+                        unittest.mock.patch.object(event_hook, "read_event", spy),
+                    ):
+                        self.assertEqual(0, event_hook.main(["event_hook.py", "codex"]))
+                    self.assertEqual("", out.getvalue())
+                    # The arm reached the code it names. Without this the test is
+                    # four copies of the cheapest early return.
+                    self.assertIn(label, reached, "this arm never parsed its stdin")
+
+    def test_the_gate_hook_stays_silent_even_when_it_forwards(self) -> None:
+        """The forwarding path, which the arms above stop short of.
+
+        With no dashboard the adapter returns before it opens a socket, so those
+        four arms never run `capability` or `_shared`. This one gives it a real
+        state file and a real capability so the whole path runs, and pins the same
+        property on the far side of the post: a gate that is actually forwarded
+        still says nothing to Codex.
+        """
+        sent: list[Any] = []
+
+        def _forward(*a: Any, **k: Any) -> bool:
+            sent.append((a, k))
+            return True
+
+        fake = SimpleNamespace(forward=_forward)
+        payload = json.dumps(
+            {"hook_event_name": "PermissionRequest", "session_id": CODEX_SESSION, "cwd": "/w"}
+        ).encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "cargento-4553.json"
+            state.write_text(json.dumps({"capabilities": {"codex": "t"}}), encoding="utf-8")
+            out = io.StringIO()
+            with (
+                unittest.mock.patch.dict(os.environ, {"CARGENTO_HOME": tmp}),
+                unittest.mock.patch.object(
+                    sys, "stdin", SimpleNamespace(buffer=io.BytesIO(payload))
+                ),
+                unittest.mock.patch.object(sys, "stdout", out),
+                unittest.mock.patch.object(event_hook, "_shared", lambda: fake),
+            ):
+                self.assertEqual(0, event_hook.main(["event_hook.py", "codex"]))
+
+        self.assertEqual(1, len(sent), "the gate was not forwarded, so this pins nothing")
+        self.assertEqual("", out.getvalue())
 
     def test_the_subagent_pair_maps_because_it_was_measured(self) -> None:
         # Measured for DRC-4093 from a `codex exec` turn that really did spawn one.
@@ -1428,23 +1525,43 @@ class AntigravityHookTest(unittest.TestCase):
         self.assertEqual("http://127.0.0.1:4553/api/events/antigravity", posted[0][0])
         self.assertEqual({"X-Cargento-Capability": AGY_TOKEN}, posted[0][1])
 
-    def test_the_bundled_file_registers_only_the_hooks_the_adapter_forwards(self) -> None:
-        # Antigravity's schema has no `hooks` wrapper: each top-level key is an
-        # event name. Cargento's validator rejected the file until it learned that,
-        # which is how the difference was found.
+    def _bundled_events(self) -> dict[str, Any]:
+        """The event map inside the bundled Antigravity file's name wrapper.
+
+        The wrapper is the thing these two tests exist to hold. Each top-level key
+        is a hook NAME and the events sit one level inside it; this file used to
+        put the event names at the top level, agy rejected it on every session with
+        only a log line, and these tests asserted the broken shape was correct. See
+        `docs/captures/antigravity/hooks-schema-1.1.19-macos.jsonl`.
+        """
         bundled = json.loads(
             (Path(__file__).resolve().parents[3] / "hooks.json").read_text(encoding="utf-8")
         )
-        self.assertNotIn("hooks", bundled, "Antigravity events are top-level keys")
-        self.assertEqual(set(agy_hook.STORE_CHANGED_HOOKS), set(bundled))
+        self.assertNotIn("hooks", bundled, "Antigravity wraps in a name, not in `hooks`")
+        for key, value in bundled.items():
+            self.assertIsInstance(value, dict, f"top-level {key!r} must be a hook name")
+        events: dict[str, Any] = {}
+        for value in bundled.values():
+            events.update(value)
+        return events
+
+    def test_the_bundled_file_registers_only_the_hooks_the_adapter_forwards(self) -> None:
+        self.assertEqual(set(agy_hook.STORE_CHANGED_HOOKS), set(self._bundled_events()))
+
+    def test_the_bundled_file_never_registers_pretooluse(self) -> None:
+        """Registering it would deny every tool call in every Antigravity session.
+
+        Measured on agy 1.1.19: a `PreToolUse` hook printing exactly `{}` refuses
+        the call. `agy_hook.py` prints `{}` on every path including every failure
+        path, so this is a hard exclusion rather than a mapping preference.
+        """
+        self.assertNotIn("PreToolUse", self._bundled_events())
 
     def test_the_bundled_file_uses_both_handler_layouts_correctly(self) -> None:
         # Tool-scoped events group handlers under a matcher; loop-scoped events
-        # list them directly. Antigravity's own validator enforces this, and
-        # getting it wrong means the half in the wrong shape never runs.
-        bundled = json.loads(
-            (Path(__file__).resolve().parents[3] / "hooks.json").read_text(encoding="utf-8")
-        )
-        self.assertIn("matcher", bundled["PostToolUse"][0])
-        self.assertNotIn("matcher", bundled["PostInvocation"][0])
-        self.assertEqual("command", bundled["PostInvocation"][0]["type"])
+        # list them directly. Getting it wrong means the half in the wrong shape
+        # never runs.
+        events = self._bundled_events()
+        self.assertIn("matcher", events["PostToolUse"][0])
+        self.assertNotIn("matcher", events["PostInvocation"][0])
+        self.assertEqual("command", events["PostInvocation"][0]["type"])

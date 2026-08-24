@@ -16,7 +16,9 @@ from typing import Any
 from unittest import mock
 
 from cargento_runtime import aggregate, cli, events, http_api, lifecycle, observation
+from cargento_runtime import asks as runtime_asks
 from cargento_runtime import io as runtime_io
+from cargento_runtime import sessions as runtime_sessions
 
 from . import support
 
@@ -35,6 +37,10 @@ class FakeStreams:
 class FakeState:
     def __init__(self, streams: FakeStreams) -> None:
         self.streams = streams
+        # The real registry rather than a stand-in: `_due` reads its `count`,
+        # and the meaning of that count (unresolved, not stored) is half of the
+        # wedge this suite has to hold shut.
+        self.asks = runtime_asks.AskRegistry()
 
 
 class FakeApplication:
@@ -78,6 +84,26 @@ class ObservationTestCase(unittest.TestCase):
             clock=self.clock,
             diagnostic_sink=lambda _message: None,
         )
+
+    def open_ask(self, *, created: float | None = None) -> runtime_asks.PendingAsk:
+        """One unresolved ask in the coordinator's registry.
+
+        The sweep windows are absurd so that registering cannot expire anything:
+        these tests are about what the coordinator does with an ask that is
+        genuinely outstanding.
+        """
+        ask = runtime_asks.PendingAsk(
+            harness="claude",
+            session_id=SESSION,
+            project="cargento",
+            question="Ship it?",
+            options=("yes", "no"),
+            created=self.now if created is None else created,
+        )
+        self.assertTrue(
+            self.app.state.asks.register(ask, limit=8, deadline=10_000.0, retention=10_000.0)
+        )
+        return ask
 
     def envelope(self, **overrides: Any) -> dict[str, Any]:
         payload: dict[str, Any] = {"v": 1, "event": "turn_started", "session_id": SESSION}
@@ -187,6 +213,30 @@ class LedgerTest(ObservationTestCase):
         coordinator.submit("claude", self.envelope(event="session_ended"))
         self.assertEqual([], coordinator.overlays_for("claude", PREFIX))
         self.assertEqual(1, coordinator.counters["retired"])
+
+    def test_a_stop_is_remembered_outside_the_ledger_it_gets_retired_with(self) -> None:
+        # DRC-4035's motivating case is `claude -p`: the stop and the exit arrive
+        # back to back, so a mark held in the ledger is destroyed milliseconds
+        # after the only session it describes finished.
+        coordinator = self.build()
+        coordinator.submit("claude", self.envelope(event="turn_stopped"))
+        coordinator.submit("claude", self.envelope(event="session_ended"))
+        self.assertEqual([], coordinator.overlays_for("claude", PREFIX))
+        self.assertEqual(NOW, coordinator.finished_at("claude", PREFIX))
+
+    def test_a_session_that_works_again_is_no_longer_finished(self) -> None:
+        # The DRC-4101 failure class: the mark outlives the ledger by design, so
+        # a resumption has to remove it rather than be outranked by it.
+        coordinator = self.build()
+        coordinator.submit("claude", self.envelope(event="turn_stopped"))
+        coordinator.submit("claude", self.envelope(event="turn_started"))
+        self.assertEqual(0.0, coordinator.finished_at("claude", PREFIX))
+
+    def test_a_gate_after_a_stop_is_not_a_finished_session(self) -> None:
+        coordinator = self.build()
+        coordinator.submit("claude", self.envelope(event="turn_stopped"))
+        coordinator.submit("claude", self.envelope(event="input_requested"))
+        self.assertEqual(0.0, coordinator.finished_at("claude", PREFIX))
 
     def test_a_clear_followed_by_a_prompt_inside_one_window_reads_as_working(self) -> None:
         # Claude fires session_ended on /clear as well as on exit, so this exact
@@ -335,6 +385,33 @@ class PendingTest(ObservationTestCase):
         coordinator.note_rows({("claude", PREFIX)})
         self.assertEqual({}, coordinator._pending)
         self.assertEqual(1, len(coordinator.overlays_for("claude", PREFIX)))
+
+    def test_a_completion_mark_is_dropped_once_no_collection_produces_its_row(self) -> None:
+        # No event retires the mark, so this is its only bound: a session the
+        # collector has stopped publishing can never render it again.
+        coordinator = self.build()
+        coordinator.submit("claude", self.envelope(event="turn_stopped"))
+        coordinator.submit("claude", self.envelope(event="session_ended"))
+        coordinator.note_rows({("claude", PREFIX)})
+        self.assertEqual(NOW, coordinator.finished_at("claude", PREFIX))
+        coordinator.note_rows(set())
+        self.assertEqual(0.0, coordinator.finished_at("claude", PREFIX))
+
+    def test_a_mark_survives_a_collection_that_had_not_seen_its_session_yet(self) -> None:
+        # A collection already in flight when the stop arrived reports a key set
+        # that predates it. Its overlay is pending, so the mark waits with it.
+        coordinator = self.build()
+        coordinator.submit("claude", self.envelope(event="turn_stopped"))
+        coordinator.note_rows(set())
+        self.assertEqual(NOW, coordinator.finished_at("claude", PREFIX))
+
+    def test_completion_marks_are_capped_like_the_ledger_and_count_the_refusal(self) -> None:
+        coordinator = self.build(event_overlay_max_sessions=1)
+        coordinator.submit("claude", self.envelope(event="turn_stopped"))
+        coordinator.submit("claude", self.envelope(event="turn_stopped", session_id=OTHER))
+        self.assertEqual(NOW, coordinator.finished_at("claude", PREFIX))
+        self.assertEqual(0.0, coordinator.finished_at("claude", OTHER_PREFIX))
+        self.assertEqual(1, coordinator.counters["finished.refused"])
 
     def test_a_waiting_overlay_expires_after_the_ttl_with_a_counter(self) -> None:
         coordinator = self.build()
@@ -732,6 +809,100 @@ class WorkerLifecycleTest(ObservationTestCase):
             coordinator.stop(timeout=5)
 
 
+class AskWakeTest(ObservationTestCase):
+    """An outstanding question has to guarantee its own collection.
+
+    `AskRegistry.pending` is both what renders a card and what sweeps the table,
+    and its only caller is a collection. Before this, `_due` needed a dirty
+    generation or a connected stream, so on a dashboard with no browser tab open
+    an ask never rendered, never expired and was never released: the budget
+    filled with resolved and abandoned questions and every later registration was
+    refused. Measured on the branch this fixes, on the tabless path the feature
+    exists for: 503 at t+321s and t+341s while the payload reported zero cards.
+    """
+
+    def test_an_outstanding_ask_is_reason_enough_to_collect(self) -> None:
+        coordinator = self.build()
+        coordinator._last_collect_at = self.now - 3600
+        self.open_ask()
+        self.assertEqual(0, self.app.state.streams.count, "no tab, which is the whole point")
+        self.assertEqual((True, "ask"), coordinator._due())
+
+    def test_nothing_is_due_once_the_last_ask_is_resolved(self) -> None:
+        # The other half. An answered ask still waiting for its poller must not
+        # hold the coordinator in a collection loop for the rest of the process.
+        coordinator = self.build()
+        coordinator._last_collect_at = self.now - 3600
+        ask = self.open_ask()
+        self.assertTrue(self.app.state.asks.answer(ask.id, 0))
+        self.assertEqual((False, ""), coordinator._due())
+
+    def test_an_ask_does_not_lift_the_floor(self) -> None:
+        # The floor is the store-protection guarantee, so it may not become a
+        # derived side effect of anything, this included.
+        coordinator = self.build()
+        coordinator._last_collect_at = self.now
+        self.open_ask()
+        self.assertEqual((False, ""), coordinator._due())
+        self.now += self.config.collect_memo_sec
+        self.assertEqual((True, "ask"), coordinator._due())
+
+    def test_an_event_still_outranks_an_ask_so_the_reason_stays_honest(self) -> None:
+        coordinator = self.build()
+        coordinator._last_collect_at = self.now - 3600
+        self.open_ask()
+        coordinator.submit("claude", self.envelope())
+        self.now += self.config.event_coalesce_sec
+        self.assertEqual((True, "event"), coordinator._due())
+
+    def test_an_ask_driven_collection_is_never_skipped_by_the_probe(self) -> None:
+        # The probe answers "did a store move", and the sweep this pass exists to
+        # run does not care. A skipped sweep is the wedge again.
+        coordinator = self.build()
+        coordinator._worth_collecting(self.now)
+        self.now += 1
+        self.open_ask()
+        coordinator._collect("ask")
+        self.assertEqual(1, self.app.collected)
+        self.assertNotIn("skipped.probe", coordinator.counters)
+
+    def test_note_ask_marks_dirty_and_clears_the_reconcile_floor(self) -> None:
+        # No ask is registered here on purpose: this asserts the seam itself,
+        # which is what brings the collection forward from the next tick to now.
+        coordinator = self.build()
+        coordinator._last_collect_at = self.now - 3600
+        coordinator._last_reconcile_at = self.now
+        coordinator.note_ask()
+        self.assertEqual(0.0, coordinator._last_reconcile_at)
+        self.assertEqual((True, "event"), coordinator._due())
+
+    def test_note_ask_wakes_the_worker_rather_than_waiting_out_its_interval(self) -> None:
+        # The producer interval is five seconds and the page's own fallback poll
+        # is twenty, which is what a registered ask used to wait on: measured at
+        # 18.2 to 22.3 seconds from register to a published revision. A short
+        # deadline here means a regression times out rather than passing slowly.
+        coordinator = self.build()
+        collected = threading.Event()
+        real = self.app.collect_json
+
+        def signalling(*, show_all: bool) -> Any:
+            result = real(show_all=show_all)
+            collected.set()
+            return result
+
+        self.app.collect_json = signalling  # type: ignore[method-assign]
+        coordinator.clock = time.time
+        coordinator._last_reconcile_at = coordinator.clock()
+        ask = self.open_ask(created=time.time())
+        coordinator.start()
+        try:
+            coordinator.note_ask()
+            self.assertTrue(collected.wait(timeout=3), "the coordinator did not wake on the ask")
+        finally:
+            self.app.state.asks.withdraw(ask.id)
+            coordinator.stop(timeout=5)
+
+
 class WaitDetailTest(unittest.TestCase):
     """An agreeing overlay must not blank the question the collector found."""
 
@@ -753,6 +924,10 @@ class WaitDetailTest(unittest.TestCase):
                     at=support.SERVER_STARTED,
                 )
             ]
+
+        def finished_at(self, harness: str, sid: str) -> float:
+            del harness, sid  # this stub remembers no stop
+            return 0.0
 
         def note_rows(self, keys: set[tuple[str, str]]) -> None:
             pass
@@ -878,6 +1053,10 @@ class StateDisputeTest(unittest.TestCase):
 
         def overlays_for(self, harness: str, sid: str) -> list[events.Overlay]:
             return self.overlays if (harness, sid) == ("claude", PREFIX) else []
+
+        def finished_at(self, harness: str, sid: str) -> float:
+            del harness, sid  # this stub remembers no stop
+            return 0.0
 
         def note_rows(self, keys: set[tuple[str, str]]) -> None:
             pass
@@ -1239,6 +1418,10 @@ class ApplicationOverlayTest(unittest.TestCase):
                     )
                 ]
 
+            def finished_at(self, harness: str, sid: str) -> float:
+                del harness, sid  # this stub remembers no stop
+                return 0.0
+
             def note_rows(self, keys: set[tuple[str, str]]) -> None:
                 self.noted = keys
 
@@ -1265,11 +1448,73 @@ class ApplicationOverlayTest(unittest.TestCase):
                     )
                 ]
 
+            def finished_at(self, harness: str, sid: str) -> float:
+                del harness, sid  # this stub remembers no stop
+                return 0.0
+
             def note_rows(self, keys: set[tuple[str, str]]) -> None:
                 pass
 
         collection = self._collect_with(Source())
         self.assertEqual(1, collection["summary"]["needs_input"])
+
+    def test_a_remembered_stop_reaches_the_row_with_no_overlay_left(self) -> None:
+        # The `claude -p` row: the ledger is gone, the mark is not, and the
+        # session still has to publish that its turn ended.
+        class Source:
+            def overlays_for(self, harness: str, sid: str) -> list[events.Overlay]:
+                del harness, sid
+                return []
+
+            def finished_at(self, harness: str, sid: str) -> float:
+                if (harness, sid) != ("claude", PREFIX):
+                    return 0.0
+                # After the transcript's last write, which is what a session
+                # that stopped and stayed stopped looks like.
+                return support.SERVER_STARTED - 200
+
+            def note_rows(self, keys: set[tuple[str, str]]) -> None:
+                pass
+
+        row = self._row(self._collect_with(Source()))
+        self.assertEqual("idle", row["state"], "the collector still owns the state")
+        self.assertEqual(support.SERVER_STARTED - 200, row["finished_at"])
+
+    def test_a_harness_with_no_event_adapter_publishes_that_it_is_scan_only(self) -> None:
+        # DRC-4035 D4: six harnesses can never earn a stop, so their idle rows
+        # must say the answer is unknowable here rather than share the silence of
+        # a Claude row that simply has not finished.
+        config, state = support.runtime()
+
+        def collect_one(harness: str) -> Any:
+            def collect(
+                _config: Any, _state: Any, _when: float, _window: float, _show_all: bool
+            ) -> list[Any]:
+                return [runtime_sessions.base_session(harness, f"{harness}-1", "proj")]
+
+            return collect
+
+        application = aggregate.Application(
+            config,
+            state,
+            tuple(
+                aggregate.HarnessSpec(
+                    key=key, label=key, discover=lambda *_: True, collect=collect_one(key)
+                )
+                for key in ("claude", "goose")
+            ),
+            native_notifier=lambda _platform: "",
+            popup_notifier=lambda *_: None,
+            diagnostic_sink=lambda _message: None,
+            clock=lambda: support.SERVER_STARTED,
+        )
+        rows = {str(row["harness"]): row for row in application.collect(show_all=True)["sessions"]}
+        self.assertEqual(events.ACQUISITION_SCAN, rows["goose"]["acquisition"])
+        self.assertNotIn(
+            "acquisition",
+            rows["claude"],
+            "a harness that can earn a stop must not be marked unknowable",
+        )
 
     def test_an_overlay_for_an_unknown_session_creates_no_row(self) -> None:
         class Source:
@@ -1287,6 +1532,10 @@ class ApplicationOverlayTest(unittest.TestCase):
                         at=support.SERVER_STARTED,
                     )
                 ]
+
+            def finished_at(self, harness: str, sid: str) -> float:
+                del harness, sid  # this stub remembers no stop
+                return 0.0
 
             def note_rows(self, keys: set[tuple[str, str]]) -> None:
                 pass
@@ -1426,3 +1675,167 @@ class WiringTest(unittest.TestCase):
                 diagnostic_sink=lambda _message: None,
             )
         producer.assert_called_once()
+
+
+class AskPayloadTest(unittest.TestCase):
+    """What a collection publishes for the questions a session asked.
+
+    Collection is the only sweep the ask registry gets, so these also stand as
+    the test that a stale ask is retired by being collected rather than by a
+    timer nobody runs.
+    """
+
+    def _runtime(self, **changes: Any) -> tuple[Any, Any]:
+        from cargento_runtime.state import build_runtime_state  # noqa: PLC0415
+
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        fields: dict[str, Any] = {
+            "state_home": home.name,
+            "state_dir": Path(home.name),
+            "os_name": support.os_name(),
+        }
+        fields.update(changes)
+        config = support.make_config(**fields)
+        return config, build_runtime_state(config, started=NOW)
+
+    def _application(self, config: Any, state: Any, *, clock: float = NOW) -> aggregate.Application:
+        return aggregate.Application(
+            config,
+            state,
+            (),
+            native_notifier=lambda _platform: "",
+            popup_notifier=lambda *_: None,
+            diagnostic_sink=lambda _message: None,
+            clock=lambda: clock,
+        )
+
+    def _ask(
+        self,
+        state: Any,
+        *,
+        created: float,
+        question: str = "Ship it?",
+        limit: int = 8,
+        config: Any = None,
+    ) -> Any:
+        """Register one ask the way the route does, or fail the test.
+
+        With `config`, the real deadline and retention are used, so registration
+        sweeps exactly as it does in the daemon. Without it the windows are
+        absurd, which keeps a test about the payload from also being a test about
+        the sweep.
+        """
+        ask = runtime_asks.PendingAsk(
+            harness="claude",
+            session_id=SESSION,
+            project="cargento",
+            question=question,
+            options=("yes", "no"),
+            created=created,
+        )
+        deadline = 10_000.0 if config is None else config.ask_deadline_sec
+        retention = 10_000.0 if config is None else config.ask_retention_sec
+        self.assertTrue(
+            state.asks.register(ask, limit=limit, deadline=deadline, retention=retention)
+        )
+        return ask
+
+    def test_a_budget_full_of_answered_asks_does_not_wedge_a_tabless_dashboard(self) -> None:
+        """The headline defect, end to end over the real registry and config.
+
+        No collection happens anywhere in this test: no `/api/data`, no
+        coordinator tick, no `pending`. That is a dashboard with no browser tab
+        open, which is the run the ask lane exists for, and it is where the lane
+        used to wedge shut for the rest of the process. Measured before the fix,
+        with the cap filled and 14 answered: 503 at t+10s, t+321s and t+341s
+        while the payload reported zero cards.
+
+        The two registrations below fail for different reasons, which is why both
+        are here. At t+10 nothing is overdue, so only the budget counting
+        unresolved asks can accept it. At t+301 the budget is not the problem and
+        the registration sweep is.
+        """
+        config, state = self._runtime()
+        limit = config.ask_max_pending
+        filled = [
+            self._ask(state, created=NOW, question=f"Q{index}?", limit=limit, config=config)
+            for index in range(limit)
+        ]
+        for ask in filled[:14]:
+            self.assertTrue(state.asks.answer(ask.id, 0))
+
+        early = self._register(state, config, created=NOW + 10.0, question="Early?")
+        self.assertTrue(early, "an answered ask holds no slot worth rationing")
+        late = self._register(state, config, created=NOW + 301.0, question="Late?")
+        self.assertTrue(late, "the registry has to heal itself with nobody reading it")
+
+        for ask in filled[14:]:
+            self.assertEqual(("expired", None), ask.outcome, "aged out with nobody watching")
+        for ask in filled[:14]:
+            self.assertIsNone(state.asks.get(ask.id), "dropped once retention ran out")
+            self.assertEqual(("answered", 0), ask.outcome, "the outcome outlives the row")
+        self.assertEqual(2, state.asks.count)
+
+    def _register(self, state: Any, config: Any, *, created: float, question: str) -> bool:
+        """Register the way the route does, and report the refusal rather than fail."""
+        ask = runtime_asks.PendingAsk(
+            harness="claude",
+            session_id=SESSION,
+            project="cargento",
+            question=question,
+            options=("yes", "no"),
+            created=created,
+        )
+        accepted: bool = state.asks.register(
+            ask,
+            limit=config.ask_max_pending,
+            deadline=config.ask_deadline_sec,
+            retention=config.ask_retention_sec,
+        )
+        return accepted
+
+    def test_a_pending_ask_reaches_the_payload_with_its_age(self) -> None:
+        config, state = self._runtime()
+        ask = self._ask(state, created=NOW - 42.4)
+        data = self._application(config, state).collect(show_all=True)
+
+        self.assertIs(True, data["ask"])
+        self.assertEqual(
+            [
+                {
+                    "id": ask.id,
+                    "harness": "claude",
+                    "session_id": SESSION,
+                    "project": "cargento",
+                    "question": "Ship it?",
+                    "options": ["yes", "no"],
+                    "age_sec": 42,
+                }
+            ],
+            data["asks"],
+        )
+
+    def test_the_flag_and_the_array_are_both_absent_with_the_feature_off(self) -> None:
+        config, state = self._runtime(ask_enabled=False)
+        self._ask(state, created=NOW)
+        data = self._application(config, state).collect(show_all=True)
+
+        self.assertNotIn("ask", data)
+        self.assertNotIn("asks", data)
+
+    def test_the_flag_rises_with_no_ask_outstanding(self) -> None:
+        config, state = self._runtime()
+        data = self._application(config, state).collect(show_all=True)
+
+        self.assertIs(True, data["ask"])
+        self.assertEqual([], data["asks"])
+
+    def test_collecting_is_what_retires_an_ask_past_the_deadline(self) -> None:
+        config, state = self._runtime(ask_deadline_sec=60.0)
+        stale = self._ask(state, created=NOW - 61.0, question="Stale?")
+        live = self._ask(state, created=NOW - 59.0, question="Live?")
+        data = self._application(config, state).collect(show_all=True)
+
+        self.assertEqual([live.id], [entry["id"] for entry in data["asks"]])
+        self.assertEqual(("expired", None), stale.outcome)

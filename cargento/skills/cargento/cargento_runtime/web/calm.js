@@ -1,20 +1,28 @@
 /* Two flag tones, and only signals the payload actually carries: --alert for
-   "you are the blocker", --warn for "worth a look", neither for "gone quiet".
-   The fixture's stalled/failed flags have no server-side detector, so calm
-   mode does not invent them. */
+   "you are the blocker" and --warn for "worth a look". Nothing for "gone quiet",
+   which is what the clipped idle block is for rather than a chip. The fixture's
+   stalled/failed flags have no server-side detector, so calm mode does not
+   invent them either.
+
+   Colour only. The rank each tone used to carry lives in attentionKey's ladder,
+   which both views read: a table that defined the sort position beside the
+   colour let a flag be added here and ranked nowhere.
+
+   Its three readers all index it with a key this file chose — calmRow's own
+   `tone`, or a legend entry's — never with a payload string, which is why they
+   skip own(). A flagless row carries "quiet", which has no entry here: every
+   dereference sits inside an `if(r.flag)` branch, so a third tone has to arrive
+   with the chip that renders it. There was a `|| CALM_TONE.quiet` fallback
+   standing where that precondition is; it named a key the table has never
+   declared, so it resolved to undefined and read as a safety net that was not
+   one. */
 const CALM_TONE = {
-  attn: {rank:0, ink:"var(--alert)",
+  attn: {ink:"var(--alert)",
          bg:"color-mix(in oklab,var(--alert) 13%,transparent)",
          bd:"color-mix(in oklab,var(--alert) 34%,transparent)"},
-  warn: {rank:1, ink:"var(--warnink)",
+  warn: {ink:"var(--warnink)",
          bg:"color-mix(in oklab,var(--warn) 26%,transparent)",
          bd:"color-mix(in oklab,var(--warn) 42%,transparent)"},
-  /* A real chip, not grey text on a grey row. `stale` is the quietest of the
-     three flags but it is still a flag, and rendering it at --ink3 with a
-     hairline border made it disappear into the column it sits in. */
-  quiet:{rank:3, ink:"var(--ink2)",
-         bg:"color-mix(in oklab,var(--ink3) 14%,transparent)",
-         bd:"var(--line2)"}
 };
 /* The footer legend is generated from the same table the row chips use, and its
    labels are the chip labels verbatim. It used to paraphrase them — "you are the
@@ -22,8 +30,7 @@ const CALM_TONE = {
    reader could not find on any row. */
 const CALM_FLAG_LEGEND = [
   {label:"your call", tone:"attn"},
-  {label:"long turn", tone:"warn"},
-  {label:"stale", tone:"quiet"}
+  {label:"long turn", tone:"warn"}
 ];
 const CALM_RAIL = {needs:"var(--alert)", work:"var(--accent)", idle:"var(--line2)"};
 const CALM_TASK = {
@@ -50,7 +57,13 @@ function own(table, key, fallback){
 /* One ledger row per session. Every session lands in exactly one of the three
    buckets — a ledger that silently drops a row is worse than useless. */
 function calmRow(d, x){
-  const st = x.state === "needs_input" ? "needs" : (x.state === "working" ? "work" : "idle");
+  /* The sort key comes from the shared ladder rather than from this row's tone:
+     the card view ranks the same sessions off the same key, and a second
+     derivation here is where the two views drift. A new flag has to extend
+     attentionKey's ladder, not just CALM_TONE, or it will render as urgent and
+     sort as ordinary. */
+  const sortKey = attentionKey(d, x);
+  const st = sortKey.st;
   const ageSec = Math.max(0, d.generated - (x.last_activity || 0));
   const waitSec = Math.max(0, d.generated - (x.blocked_since || x.last_activity || 0));
   const turn = x.turn || null;
@@ -61,11 +74,22 @@ function calmRow(d, x){
       " — nothing in this session moves until you answer.";
   } else if(st === "work" && turn && turn.long){
     flag = "long turn"; tone = "warn"; why = LONG_TURN_NOTE;
-  } else if(st === "idle" && ageSec >= CALM_STALE_SEC){
-    flag = "stale"; tone = "quiet";
-    why = "No activity for " + fmtDur(ageSec) + ". Either it finished quietly and " +
-      "nobody read the result, or it is waiting on a reply that never came.";
   }
+  const loop = x.loop || null;
+  /* The chip keeps firing on duration alone, and keeps its word. Raising `long
+     turn` on a three-minute turn because four calls failed would put a claim on
+     screen the row cannot back, and a third word is not available — the column
+     is capped at two, each one a state the server detects. What the loop changes
+     is the sentence behind the chip, which is where the reader was going to find
+     out whether this is worth walking over for. */
+  if(flag === "long turn" && loop) why = loopNote(loop);
+  /* No third flag. `stale` used to fire here for an idle row past
+     CALM_STALE_SEC, which made two words for one bucket: every stale row was an
+     idle row, and the difference was only "quiet for a while" — which the row's
+     own `idle / wait` cell states as a number. The clip's toggle now carries the
+     count and the oldest age, so what the chip was for survives without a second
+     vocabulary word for the same thing. A flag here means "look at this", and a
+     session that has gone quiet is the opposite of that. */
   const title = x.title || x.last_prompt || x.project;
   const prompt = String(x.last_prompt || "").trim();
   const tasks = (x.tasks || []).slice().sort(
@@ -94,6 +118,11 @@ function calmRow(d, x){
   const showRate = st === "work";
   return {
     key: sessKey(x), sid: x.sid,
+    /* The (harness, sid) pair the dismissal store keys on, resolved here rather
+       than at the render site so the row shape stays the only thing that reads
+       the payload. Empty for a row with no sid, which is what stops the control
+       being drawn for a session the server could not match a mark to. */
+    dismiss: dismissKey(x),
     harness: x.harness, project: x.project, session: x.session,
     /* Carried for the detail panel only. The ledger row itself is a fixed grid
        whose columns are compared down their own length, and `cm-where` already
@@ -132,10 +161,15 @@ function calmRow(d, x){
       (st === "needs"
         ? "Blocked on you, but nothing this session has written says what it is asking for."
         : null),
-    ageSec, waitSec, turn, flag, tone, why,
-    /* What byWait ranks on, unclamped, beside the `waitSec` that renders. */
-    blockedAt: x.blocked_since || x.last_activity || 0,
-    sortAge: st === "work" ? 0 : ageSec,   /* see byAge — a working row's age is noise */
+    ageSec, waitSec, turn, loop, flag, tone, why,
+    /* The marker for two live sessions on one project label, as markup rather
+       than as facts to re-render here: the card view draws the same chip, and a
+       second rendering of it is how two surfaces come to word one claim two
+       ways. Placed on the project cell rather than the flag column — a
+       needs_input row has already spent that single chip slot on `your call`,
+       and the collision is a property of the project either way. */
+    dup: dupMark(d, x),
+    blockedAt: sortKey.blockedAt, sortAge: sortKey.sortAge, rank: sortKey.rank,
     rail: CALM_RAIL[st] || CALM_RAIL.idle,
     /* The prompt is only worth quoting when the title is not already it. */
     excerpt: (prompt && prompt !== String(title).trim()) ? prompt : "",
@@ -145,7 +179,6 @@ function calmRow(d, x){
        name with model null rather than reaching the renderer as a raw string. */
     subagents: (x.subagents || []).map(a => ({name: subName(a), model: subModel(a)})),
     spacedock: x.spacedock || null,
-    rank: flag ? CALM_TONE[tone].rank : (st === "work" ? 2 : 4),
     /* Whether the burn ordering may rank this row at all: `state === "working"
        && active`, which is the predicate regular.js's burnLeaders() takes,
        rather than the `work` bucket alone. `active` is the server's "wrote
@@ -180,11 +213,19 @@ function calmRow(d, x){
       : "",
     quiet: st === "needs" ? fmtDur(waitSec) : (st === "idle" ? fmtDur(ageSec) : ""),
     quietTip: st === "needs" ? "blocked on you for " + fmtDur(waitSec)
-      : (st === "idle" ? "no activity for " + fmtDur(ageSec) : ""),
+      : (st === "idle" ? idleQuietNote(d, x, fmtDur(ageSec)) : ""),
     quietInk: st === "needs" ? "var(--alert)" : "var(--ink3)",
+    /* Which of the two idle situations this row is, as markup, beside the number
+       rather than in the flag column: a third chip would contradict the two-flag
+       cap and pull in the flagged count, the `f` filter and the attention
+       ordering, and "it finished" is not "look at this". Empty on every row the
+       server cannot answer for, which is what `quietTip` says instead. */
+    finished: st === "idle" ? finishedBit(d, x) : "",
     titleInk: st === "idle" ? "var(--ink2)" : "var(--ink)",
     detailAge: st === "needs" ? "blocked " + fmtDur(waitSec)
-      : (st === "work" ? "last event " + fmtDur(ageSec) + " ago" : "idle " + fmtDur(ageSec)),
+      : (st === "work" ? "last event " + fmtDur(ageSec) + " ago"
+        : (finishedMark(d, x) ? "finished " + fmtDur(ageSec) + " ago, unread"
+          : "idle " + fmtDur(ageSec))),
     turnLine: turn ? turn.elapsed_h + " elapsed · " +
       (turn.eta_h ? "~" + turn.eta_h + " left (est)" : "running longer than recent turns") : ""
   };
@@ -195,32 +236,6 @@ function calmFilter(all){
                          (!calmStateOnly || r.st === calmStateOnly));
 }
 
-/* Ordering has to be STABLE across the 5s poll — a row that swaps places under
-   the reader's cursor is worse than a row in the wrong place. Age is stable by
-   construction everywhere it means something: it is a fixed per-session
-   timestamp subtracted from one clock shared by the whole payload, so two idle
-   rows keep their relative order forever. The exception is a WORKING row,
-   whose last activity is always within WORKING_THRESHOLD_SEC of now — ordering
-   those by age sorts on nothing but which one wrote most recently, which flips
-   every poll. `sortAge` pins them level (see calmRow) and the session id, which
-   never changes, breaks every remaining tie. This is the same call collect()
-   makes server-side for the same reason. */
-const bySid = (a, b) => (a.sid < b.sid ? -1 : (a.sid > b.sid ? 1 : 0));
-const byAge = (a, b) => a.sortAge - b.sortAge || bySid(a, b);
-/* Longest-blocked first: the queue order, ranked on the same raw field
-   aggregate.py sorts the payload by. Not on `waitSec`, which is the rendered
-   elapsed time and floors at 0 — two rows carrying implausibly future stamps
-   would both clamp to zero here and fall to the id, while the server still
-   ordered them by the stamps, and the two views would name a different gate at
-   the head. A fixed timestamp is also what keeps the order stable across a
-   poll, which an elapsed time is not. */
-const byWait = (a, b) => a.blockedAt - b.blockedAt || bySid(a, b);
-/* Newest-first is right for a row you are watching and wrong for one that is
-   waiting on you: it puts the gate you just saw open above the one that has held
-   you up for an hour. `recent` keeps genuine newest-first for every state,
-   because it takes byAge directly. */
-const byRank = (a, b) => a.rank - b.rank ||
-  (a.st === "needs" && b.st === "needs" ? byWait(a, b) : byAge(a, b));
 /* Fastest known rate first. Only ever applied to working rows whose rate is
    known: see the burn branch below for where the others go, which is not "the
    bottom". */
@@ -311,8 +326,13 @@ function calmEntries(shown, d){
     const out = [];
     for(const key of Array.from(by.keys()).sort()){
       const g = by.get(key).sort(byRank);
+      /* The ordering that groups by project is the one place the collision
+         is a property of the heading, so the heading says it — for the label,
+         not for the rows shown under it, so a filter that hides one of the two
+         cannot quietly turn the group back into an ordinary one. */
       out.push({divider: {label: key, count: g.length,
-                          flagged: g.filter(r => r.flag).length}});
+                          flagged: g.filter(r => r.flag).length,
+                          dup: dupNote(d, key, null)}});
       for(const r of g) out.push({row: r});
     }
     return out;
@@ -365,9 +385,64 @@ function calmCopyId(key){
   else note("blocked");
 }
 
+/* Mark one session handled, or put one back. The server subtracts it from the
+   payload before the summary is counted, so nothing here filters anything: the
+   next poll simply arrives without the row, and the tile, the tab title and both
+   views follow without knowing this control exists.
+
+   No optimistic hide. The board is a claim about what is running, and a row
+   removed locally before the server agreed is the one lie this page must not
+   tell — a failed POST would leave the reader believing they had cleared
+   something. So the refresh below is what removes it, and a write that could not
+   reach disk says so instead. */
+async function markHandled(key, clear){
+  const pair = splitDismissKey(key);
+  if(!pair) return;
+  let answer = null;
+  try{
+    const r = await fetch("/api/dismiss", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({harness: pair.harness, sid: pair.sid, clear: !!clear})
+    });
+    if(!r.ok) throw new Error("status " + r.status);
+    answer = await r.json();
+  }catch(e){
+    console.error("dashboard could not mark a session handled", e);
+    clearedNote = clear ? "clear failed" : "restore failed";
+    if(lastData) render(lastData);
+    return;
+  }
+  /* The mark is in force either way — the server holds it in memory — but a
+     write that never reached disk will not survive a restart, and saying so is
+     the difference between a durable action and one that looks durable. */
+  clearedNote = (answer && answer.persisted === false)
+    ? "cleared for this run only — could not write the store" : "";
+  if(clearedOpen) await loadCleared();
+  await refresh();
+}
+
+/* What the handled panel lists. A second request, because these rows are not in
+   the payload: the whole point of the subtraction is that no consumer of
+   `sessions` has to remember they exist. */
+async function loadCleared(){
+  try{
+    const r = await fetch("/api/cleared");
+    if(!r.ok) throw new Error("status " + r.status);
+    const data = await r.json();
+    clearedRows = Array.isArray(data.cleared) ? data.cleared : [];
+  }catch(e){
+    console.error("dashboard could not read the handled list", e);
+    clearedRows = [];
+    clearedNote = "could not read the handled list";
+  }
+  if(lastData) render(lastData);
+}
+
 function calmAction(act, arg){
   if(act === "mode"){ setDisplayMode(arg); return; }
   if(usageAction(act, arg)) return;
+  if(askAction(act, arg)) return;
   if(act === "stop"){
     if(!stopArmed){
       stopArmed = true; stopError = ""; stopFocusPending = true;
@@ -378,12 +453,32 @@ function calmAction(act, arg){
     return;
   }
   if(act === "copy"){ calmCopyId(arg); return; }
+  /* These three answer over the network, so they return rather than falling
+     through to the synchronous render below — each paints when its own request
+     settles. */
+  if(act === "handled"){ markHandled(arg, true); return; }
+  if(act === "restore"){ markHandled(arg, false); return; }
+  if(act === "cleared"){
+    clearedOpen = !clearedOpen;
+    clearedNote = "";
+    /* Re-read on every open, not once: a second dashboard on this machine writes
+       the same store, and a list cached from the first open would be stale in
+       exactly the case the panel exists to explain. */
+    if(clearedOpen) loadCleared();
+    else if(lastData) render(lastData);
+    return;
+  }
   if(act === "sort"){
     if(calmSort === arg) return;
     calmSort = arg; calmResetScroll = true;
   } else if(act === "state"){
     calmStateOnly = calmStateOnly === arg ? null : arg;
     calmOpenKey = null; calmCursorKey = null; calmResetScroll = true;
+  } else if(act === "idle"){
+    /* No `calmResetScroll` here, unlike the filters below: revealing the block
+       does not change which rows exist, and resetting the scroll would throw the
+       reader back to the top of a ledger they were already reading. */
+    calmIdleExpanded = !calmIdleExpanded;
   } else if(act === "flag"){
     calmFlagOnly = !calmFlagOnly;
     calmOpenKey = null; calmCursorKey = null; calmResetScroll = true;
@@ -502,6 +597,15 @@ document.addEventListener("keydown", e => {
     if(sid) calmAction("open", sid);
   }
   else if(k === "f"){ stop(); calmAction("flag", null); }
+  else if(k === "x" && lastData.dismiss){
+    /* The one-keystroke path the ledger's row deliberately does not carry as an
+       eleventh column. It acts on the cursor row, which is drawn, so the reader
+       can see what they are about to remove. */
+    stop();
+    const order = calmOrder(lastData);
+    const focus = order.find(r => r.key === calmEffectiveFocus(order));
+    if(focus && focus.dismiss) calmAction("handled", focus.dismiss);
+  }
   else if(k === "u" && usagePresent(lastData)){ stop(); usageAction("usage", null); }
   else if(k === "Escape"){
     stop();
@@ -527,11 +631,21 @@ function calmHarnessCell(r){
    than precomputed into the row, because the clause is markup and building it
    twice is how the two views came to word `fastest` differently twice over. */
 function calmExpansion(r, d){
-  const tone = CALM_TONE[r.tone] || CALM_TONE.quiet;
+  const tone = CALM_TONE[r.tone];
   const why = r.flag
     ? `<div class="cm-why"><span class="cm-why-g" style="color:${tone.ink}">◆</span>` +
       `<span class="cm-why-t"><b style="color:${tone.ink}">${esc(r.flag)}</b>` +
       ` — ${esc(r.why)}</span></div>`
+    : "";
+  /* In the panel whatever the duration, and whatever the state. The chip column
+     holds two words and a loop is not one of them, so a loop that never ran long
+     — or one on a row whose chip is already spent on `your call` — has nowhere
+     else to be read. No label of its own: a bold word here would be the third
+     flag by another route, and the sentence says what it is.
+     Suppressed only where the flag's explanation is already this sentence. */
+  const loop = (r.loop && r.why !== loopNote(r.loop))
+    ? `<div class="cm-why"><span class="cm-why-g" style="color:${CALM_TONE.warn.ink}">◆</span>` +
+      `<span class="cm-why-t">${esc(loopNote(r.loop))}</span></div>`
     : "";
   const quote = r.excerpt
     ? `<div class="cm-quote"><span class="cm-subk">last prompt</span>` +
@@ -579,11 +693,16 @@ function calmExpansion(r, d){
         : "") + `</div>`
     : "";
   const copied = calmCopyNote && calmCopyNote.key === r.key;
+  /* The drawer, not the row. The row is ten grid columns wide already, and an
+     eleventh for a control that removes a session would sit one pixel from the
+     caret that merely opens it. Calm's keyboard covers the one-keystroke path:
+     `x` on the cursor row. */
   const acts = `<div class="cm-acts"><button type="button" class="cm-act" data-calm="copy"` +
     ` data-arg="${esc(r.key)}">${copied ? esc(calmCopyNote.text) : "copy id"}</button>` +
+    handledButton(d, r.dismiss, "cm-act") +
     `<button type="button" class="cm-act" data-calm="open"` +
     ` data-arg="${esc(r.key)}">collapse</button></div>`;
-  return `<div class="cm-exp"><div class="cm-exp-main">${why}${quote}${tasks}` +
+  return `<div class="cm-exp"><div class="cm-exp-main">${why}${loop}${quote}${tasks}` +
     sdBlock({spacedock: r.spacedock}) + meta + `</div>` +
     `<div class="cm-exp-side">${turn}${subs}${acts}</div></div>`;
 }
@@ -591,7 +710,7 @@ function calmExpansion(r, d){
 function calmRowHTML(r, focusSid, d){
   const open = calmOpenKey === r.key;
   const focus = r.key === focusSid;
-  const tone = CALM_TONE[r.tone] || CALM_TONE.quiet;
+  const tone = CALM_TONE[r.tone];
   const pct = (r.turn && r.turn.pct != null) ? r.turn.pct : null;
   /* The progress bar lives under the rate, not in a column of its own. As a
      separate track it was 46px wide and empty on every row that was not both
@@ -615,15 +734,16 @@ function calmRowHTML(r, focusSid, d){
     /* Real project names fill the whole cell, and tail truncation would eat the
        session id — the part that identifies the row. Only the project gives way. */
     `<span class="cm-where" title="${esc(r.project + " · " + r.session)}">` +
-    `<span class="cm-proj">${esc(r.project)}</span>` +
+    `<span class="cm-proj">${esc(r.project)}</span>${r.dup}` +
     `<span class="cm-sess">· ${esc(r.session)}</span></span>` +
     `<span class="cm-doing${r.doingUnread ? " unread" : ""}"` +
     ` title="${esc(r.doingRaw)}">${esc(r.doing)}</span>` +
     `<span>${flag}</span>` +
     `<span class="cm-rate"><span class="cm-metric" style="color:var(--ink2)"` +
     ` title="${esc(r.rateTip)}">${esc(r.rate)}</span>${bar}</span>` +
+    `<span class="cm-quiet">${r.finished}` +
     `<span class="cm-metric" style="color:${r.quietInk}"` +
-    ` title="${esc(r.quietTip)}">${esc(r.quiet)}</span>` +
+    ` title="${esc(r.quietTip)}">${esc(r.quiet)}</span></span>` +
     `<span class="cm-q"><button type="button" class="cm-qb" data-calm="copy"` +
     ` data-arg="${esc(r.key)}" title="copy this session's id">` +
     `${copied ? esc(calmCopyNote.text) : "copy id"}</button></span>` +
@@ -651,6 +771,27 @@ function calmRateFloor(d){
       ? `<span title="${esc(floor.tip)}">${esc(floor.line)}</span>`
       : ""
   };
+}
+
+/* The index where the trailing idle run starts, or -1 when there is nothing to
+   clip. Narrow on purpose, and every condition is load-bearing.
+
+   `attention` only, because it is the one ordering whose trailing run IS the idle
+   bucket: byRank gives needs 0, long-turn work 1, work 2, and idle 3 or 4. The
+   other three each break it differently. `recent` sorts everything by age alone,
+   so idle and working rows interleave and a clip would swallow rows out of the
+   middle of a chronology. `repo` puts idle last within each project rather than
+   overall. And `burn`'s trailing group is `!running` — `state === "working" &&
+   active` negated — so a needs_input row lands there too, and clipping it would
+   hide the one row this mode exists to surface.
+
+   Not while a filter is on, because a reader who asked for the idle bucket or for
+   flagged rows has already said what they want on screen. */
+function calmIdleCut(entries){
+  if(calmSort !== "attention" || calmStateOnly || calmFlagOnly) return -1;
+  let i = entries.length;
+  while(i > 0 && entries[i - 1].row && entries[i - 1].row.st === "idle") i--;
+  return i < entries.length ? i : -1;
 }
 
 function calmLedger(d){
@@ -688,12 +829,45 @@ function calmLedger(d){
       `<button type="button" class="cm-link" data-calm="clear">Show all ${all.length}` +
       `</button></div></div>`;
   } else {
-    body = entries.map(e => e.row ? calmRowHTML(e.row, focusSid, d)
+    const html = e => e.row ? calmRowHTML(e.row, focusSid, d)
       : `<div class="cm-div"><span class="cm-div-k">${esc(e.divider.label)}</span>` +
         `<span class="cm-div-n">${e.divider.count}</span>` +
+        (e.divider.dup
+          ? `<span class="cm-div-d" title="${esc(e.divider.dup.tip)}">` +
+            `${esc(e.divider.dup.text)}</span>`
+          : "") +
         `<span class="cm-div-rule"></span>` +
         (e.divider.flagged ? `<span class="cm-div-f">◆ ${e.divider.flagged}</span>` : "") +
-        `</div>`).join("");
+        `</div>`;
+    const cut = calmIdleCut(entries);
+    if(cut < 0){
+      body = entries.map(html).join("");
+    } else {
+      /* Clipped, never filtered. The rows stay in the document, so the keyboard
+         order, the focus hand-off and anything else reading the ledger see the
+         same set they did before — and an all-idle board still shows its first
+         rows instead of an empty ledger that reads as a fault. */
+      const hidden = entries.slice(cut).filter(e => e.row).map(e => e.row);
+      const quietest = hidden.reduce((m, r) => Math.max(m, r.ageSec), 0);
+      /* How much of what is hidden is work already paid for. The clip collapses
+         the idle run by default and a finished-unread session is idle, so
+         without this the one thing in there worth opening the block for is the
+         one thing the toggle does not mention. Only when there is some: a
+         `· 0 done` on a board with no event hooks installed would be a number
+         that never moves. */
+      const collected = hidden.filter(r => r.finished).length;
+      const collectedBit = collected ? collected + " done · " : "";
+      body = entries.slice(0, cut).map(html).join("") +
+        `<div class="idle-wrap"><div class="idle-clip" style="max-height:` +
+        (calmIdleExpanded ? "3000px" : "148px") + `">` +
+        entries.slice(cut).map(html).join("") +
+        (calmIdleExpanded ? "" : `<div class="idle-fade"></div>`) + `</div>` +
+        `<div class="idle-toggle-wrap"><button type="button" class="idle-toggle"` +
+        ` data-calm="idle" aria-expanded="${calmIdleExpanded}">` +
+        (calmIdleExpanded ? "Show less"
+          : `${hidden.length} idle · ${collectedBit}quiet up to ${fmtDur(quietest)}`) +
+        `</button></div></div>`;
+    }
   }
 
   const found = (d.harnesses || []).filter(h => h.discovered);
@@ -719,6 +893,11 @@ function calmLedger(d){
     `<span class="cm-sp"></span><span class="cm-note">${esc(note)}</span></div>` +
     usageBanner(d) +
     usageBandCalm(d) +
+    /* Above the ledger, not inside it: an ask is not a session row, and the one
+       thing calm must not do is leave a reader unable to release a session that
+       is holding its call open. Full parity with the ledger's ordering and its
+       keyboard is a follow-up; being answerable is not. */
+    askBand(d) +
     `<div class="cm-body" id="cm-body">` +
     `<div class="cm-head"><span></span><span></span><span>session</span><span>where</span>` +
     `<span>doing</span><span>flag</span><span class="r">rate</span>` +
@@ -737,6 +916,7 @@ function calmLedger(d){
     `</span><span class="cm-sp"></span>` +
     `<span class="cm-keys"><span>j k move</span><span>⏎ expand</span><span>f flagged</span>` +
     `<span>g gates</span>` +
+    (d.dismiss ? `<span>x handled</span>` : "") +
     (usagePresent(d) ? `<span>u usage</span>` : "") +
     `<span>c mode</span><span>esc clear</span></span></div></div>`;
 }
@@ -771,6 +951,8 @@ function calmRestoreFocus(key){
    scroll offset. Put it back, then bring the keyboard cursor into view if the
    last action moved it. */
 function calmRestoreScroll(){
+  const asks = document.getElementById("askband");
+  if(asks) asks.scrollTop = askScrollTop;
   const body = document.getElementById("cm-body");
   if(!body) return;
   body.scrollTop = calmScrollTop;
