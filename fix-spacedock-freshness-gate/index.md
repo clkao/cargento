@@ -69,7 +69,7 @@ gates:
 started: 2026-08-21T07:28:35Z
 worktree: .worktrees/spacedock-ensign-fix-spacedock-freshness-gate
 mod-block: merge:pr-merge
-pr: spacedock-dev/cargento#157
+pr: pr-merge:157
 ---
 
 A long-running first-officer session that has been driving a workflow for hours
