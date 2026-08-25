@@ -217,36 +217,49 @@ def _assignment_summary(message: str) -> str:
     return ""
 
 
-def _ensign_dispatch_assignment(agent_path: str) -> str:
-    """Human title from the durable artifact named by a Codex ensign path."""
+def _ensign_dispatch_metadata(agent_path: str) -> tuple[str, str, str]:
+    """Human title plus entity/stage identity from one durable ensign artifact."""
     match = _ENSIGN_AGENT_PATH_RE.fullmatch(agent_path)
     if match is None or not match.group(1):
-        return ""
+        return "", "", ""
     slug = match.group(1).replace("_", "-")
     artifact = f"{_DISPATCH_DIRECTORY}/spacedock-ensign-{slug}.md"
-    prefix = "You are working on:"
+    title = ""
+    stage = ""
     for raw in runtime_io.iter_bounded_text_lines(
         artifact,
         max_lines=40,
         per_line_bytes=2048,
     ):
         line = raw.strip()
-        if line.startswith(prefix):
-            return records.safe_text(line[len(prefix) :].strip(), _CHILD_ASSIGNMENT_CAP)
-    return ""
+        if line.startswith("You are working on:"):
+            title = records.safe_text(
+                line[len("You are working on:") :].strip(),
+                _CHILD_ASSIGNMENT_CAP,
+            )
+        elif line.startswith("Stage:"):
+            candidate = line[len("Stage:") :].strip()
+            if re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate):
+                stage = candidate
+        if title and stage:
+            break
+    suffix = f"-{stage}" if stage else ""
+    entity = slug[: -len(suffix)] if suffix and slug.endswith(suffix) else ""
+    return title, entity, stage
 
 
 def _child_assignment(
     config: RuntimeConfig,
     parent_path: str,
     agent_path: str,
-) -> tuple[str | None, str]:
+) -> tuple[str | None, str, str, str]:
     """Latest exact plaintext parent assignment for one child path."""
-    if not parent_path or not agent_path:
-        return None, "unavailable"
+    if not agent_path:
+        return None, "unavailable", "", ""
+    artifact_assignment, workflow_entity, workflow_stage = _ensign_dispatch_metadata(agent_path)
     task_name = agent_path.rstrip("/").rsplit("/", 1)[-1]
     latest: str | None = None
-    for raw in runtime_io.read_tail(config, parent_path):
+    for raw in runtime_io.read_tail(config, parent_path) if parent_path else ():
         try:
             row = records.as_dict(json.loads(raw))
         except (ValueError, json.JSONDecodeError):
@@ -271,11 +284,15 @@ def _child_assignment(
             continue
         latest = _assignment_summary(message) or None
     if latest:
-        return latest, "exact parent dispatch"
-    artifact_assignment = _ensign_dispatch_assignment(agent_path)
+        return latest, "exact parent dispatch", workflow_entity, workflow_stage
     if artifact_assignment:
-        return artifact_assignment, "structured dispatch artifact"
-    return None, "unavailable"
+        return (
+            artifact_assignment,
+            "structured dispatch artifact",
+            workflow_entity,
+            workflow_stage,
+        )
+    return None, "unavailable", "", ""
 
 
 def _rollouts(
@@ -325,7 +342,7 @@ def collect(
     agent_data: dict[str, dict[str, Any]] = {}
     found, rollouts, meta_by_sid = _rollouts(config, state)
     path_by_sid = {sid: fp for sid, _, fp, _ in rollouts}
-    assignment_cache: dict[tuple[str, str], tuple[str | None, str]] = {}
+    assignment_cache: dict[tuple[str, str], tuple[str | None, str, str, str]] = {}
     lifecycle_paths = set(
         [
             fp
@@ -406,6 +423,8 @@ def collect(
                         parent_name,
                         assignment[0],
                         assignment[1],
+                        assignment[2],
+                        assignment[3],
                         sid,
                     )
                 )
@@ -446,6 +465,14 @@ def collect(
                 "assignment": assignment,
                 "assignment_status": assignment_status,
                 "observer_sid": observer_sid,
+                **(
+                    {
+                        "workflow_entity": workflow_entity,
+                        "workflow_stage": workflow_stage,
+                    }
+                    if workflow_entity and workflow_stage
+                    else {}
+                ),
             }
             for (
                  label,
@@ -454,8 +481,10 @@ def collect(
                  started_at,
                  depth,
                  parent_name,
-                assignment,
-                assignment_status,
+                 assignment,
+                 assignment_status,
+                 workflow_entity,
+                 workflow_stage,
                  observer_sid,
              ) in sorted(
                 agents,

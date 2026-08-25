@@ -1345,6 +1345,15 @@ def _active_child_assignments(
             "parent_name": child.get("parent_name"),
             "observer_sid": child.get("observer_sid"),
         }
+        workflow_entity = child.get("workflow_entity")
+        workflow_stage = child.get("workflow_stage")
+        if isinstance(workflow_entity, str) and isinstance(workflow_stage, str):
+            row.update(
+                {
+                    "workflow_entity": workflow_entity,
+                    "workflow_stage": workflow_stage,
+                }
+            )
         exact = child.get("assignment")
         if isinstance(exact, str) and exact:
             assignments.append(

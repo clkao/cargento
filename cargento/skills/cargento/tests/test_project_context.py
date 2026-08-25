@@ -616,6 +616,8 @@ class ProjectContextTest(unittest.TestCase):
                     "observer_sid": "child-thread",
                     "assignment": None,
                     "assignment_status": "unavailable",
+                    "workflow_entity": "project-cockpit",
+                    "workflow_stage": "shaping",
                 }
             ]
         }
@@ -641,6 +643,8 @@ class ProjectContextTest(unittest.TestCase):
 
         self.assertEqual("Improve the assignment roster", refreshed[0]["assignment"])
         self.assertEqual("derived", refreshed[0]["confidence"])
+        self.assertEqual("project-cockpit", refreshed[0]["workflow_entity"])
+        self.assertEqual("shaping", refreshed[0]["workflow_stage"])
         self.assertTrue(observe.call_args.kwargs["refresh"])
 
         with (

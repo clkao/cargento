@@ -301,9 +301,11 @@ projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generat
 const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
   active: true, state: "working", last_activity: 99990, subagent_hierarchy: [
     {name: "Einstein", depth: 1, assignment: "Project cockpit and remembered goal",
-      assignment_status: "structured dispatch artifact"},
+      assignment_status: "structured dispatch artifact", workflow_entity: "project-cockpit",
+      workflow_stage: "shaping"},
     {name: "Ampere", depth: 1, assignment: "Session interaction origin",
-      assignment_status: "structured dispatch artifact"}
+      assignment_status: "structured dispatch artifact",
+      workflow_entity: "session-interaction-origin", workflow_stage: "shaping"}
   ]})]);
 Object.assign(d, {generated: 100000, ask: true, asks: []});
 render(d);
@@ -312,9 +314,16 @@ console.log(JSON.stringify({
   ordinary: !h.includes("Recovery mirror") && !h.includes("Safe resume") &&
     !h.includes("checkpoint") && h.includes("Project context") && h.includes("Right now"),
   toward: h.includes("Maintain orientation from ordinary project context"),
-  assignments: h.includes("Einstein") && h.includes("Project cockpit and remembered goal") &&
-    h.includes("Ampere") && h.includes("Session interaction origin") &&
-    h.includes("structured dispatch artifact"),
+  assignments: h.includes('data-work-item="project-cockpit"') &&
+    h.includes('data-work-item="session-interaction-origin"') &&
+    h.includes('data-work-stage="shaping"') &&
+    h.includes("Project cockpit") && h.includes("Project cockpit and remembered goal") &&
+    h.includes("Session interaction origin") && h.includes("structured dispatch artifact"),
+  taskFirst: !h.includes("<strong>Einstein</strong>") && !h.includes("<strong>Ampere</strong>") &&
+    h.indexOf("Project cockpit") < h.indexOf("Einstein") &&
+    h.indexOf("Session interaction origin") < h.indexOf("Ampere"),
+  compact: h.split('class="pc-work-item').length - 1 === 2 &&
+    !h.includes("<details><summary>source</summary>"),
   changed: h.includes("Assignment roster restored") && h.includes("5s ago") &&
     h.includes('data-trail-head="outcome"'),
   freshness: h.includes("latest session evidence · 10s ago"),
@@ -330,6 +339,8 @@ console.log(JSON.stringify({
         self.assertTrue(out["ordinary"])
         self.assertTrue(out["toward"])
         self.assertTrue(out["assignments"])
+        self.assertTrue(out["taskFirst"])
+        self.assertTrue(out["compact"])
         self.assertTrue(out["changed"])
         self.assertTrue(out["freshness"])
         self.assertTrue(out["continueAt"])

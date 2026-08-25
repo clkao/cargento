@@ -310,6 +310,10 @@ function projectLiveAssignments(sess, group){
     ? entry.data.child_assignments : [];
   const rows = reported.slice().sort((a, b) =>
     (Number(a.depth) || 1) - (Number(b.depth) || 1));
+  const workflowTitle = entity => {
+    const words = String(entity || "").replace(/-/g, " ");
+    return words ? words.charAt(0).toUpperCase() + words.slice(1) : "";
+  };
   return `<div class="pc-assignment-group" data-assignment-group="working">` +
     `<div class="pc-assignment-head"><strong>Working now</strong><b>${rows.length}</b></div>` +
     rows.map(agent => {
@@ -322,6 +326,17 @@ function projectLiveAssignments(sess, group){
           "no readable parent dispatch or cached child snapshot");
       const observedAt = Number(fallback.observed_at)
         ? ` · ${new Date(Number(fallback.observed_at) * 1000).toISOString()}` : "";
+      const entity = agent.workflow_entity || fallback.workflow_entity || "";
+      const stage = agent.workflow_stage || fallback.workflow_stage || "";
+      if(entity && stage){
+        return `<div class="pc-work-item depth-${depth}" data-subagent-depth="${depth}"` +
+          ` data-assignment-state="working" data-work-item="${esc(entity)}"` +
+          ` data-work-stage="${esc(stage)}"><span class="pc-child-node"></span>` +
+          `<div class="pc-work-copy"><strong>${esc(workflowTitle(entity))}` +
+          ` <b>· ${esc(stage)}</b></strong><span>${esc(assignment)}</span>` +
+          `<small>${esc(agent.name || "Ensign")} · ${esc(relation)} · ${esc(source + observedAt)}</small>` +
+          `</div><em>working now</em></div>`;
+      }
       return `<div class="pc-assignment depth-${depth}" data-subagent-depth="${depth}"` +
         ` data-assignment-state="working"><span class="pc-child-node"></span>` +
         `<div class="pc-assignment-copy"><strong>${esc(agent.name || "Subagent")}</strong>` +
@@ -340,6 +355,15 @@ function projectAssignmentRow(row, model){
   const itemLabel = item.label || "";
   const assignment = row.assignment || itemLabel || "assignment unavailable";
   const distinctLabel = itemLabel && itemLabel !== assignment;
+  if(item.kind === "workflow_item" || row.worker_kind === "ensign"){
+    return `<div class="pc-work-item" data-assignment-state="${esc(row.state || "unknown")}">` +
+      `<span class="pc-child-node"></span><div class="pc-work-copy">` +
+      `<strong>${esc(itemLabel || assignment)}</strong>` +
+      (distinctLabel ? `<span>${esc(assignment)}</span>` : "") +
+      `<small>${esc(worker)} · ${row.state === "completed" ? "result returned" : "awaiting result"}</small>` +
+      projectFactEvidence(fact) + `</div>` +
+      `<em>${row.state === "completed" ? "completed" : "awaiting result"}</em></div>`;
+  }
   return `<div class="pc-assignment" data-assignment-state="${esc(row.state || "unknown")}">` +
     `<span class="pc-child-node"></span><div class="pc-assignment-copy"><strong>${esc(worker)}</strong>` +
     (distinctLabel ? `<b>${esc(itemLabel)}</b>` : "") + `<span>${esc(assignment)}</span>` +

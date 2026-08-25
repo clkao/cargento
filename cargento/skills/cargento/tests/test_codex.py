@@ -378,7 +378,10 @@ class CodexCollectorTest(RuntimeTestCase):
         unavailable = collect_with("gAAAA-encrypted")
         recovered = collect_with(
             "gAAAA-encrypted",
-            artifact_lines=("You are working on: Project cockpit and remembered goal\n",),
+            artifact_lines=(
+                "You are working on: Project cockpit and remembered goal\n",
+                "Stage: shaping\n",
+            ),
             agent_path="/root/spacedock_ensign_project_cockpit_shaping_cycle2",
         )
         self.assertEqual("Make subagent and ensign assignments visible", visible["assignment"])
@@ -387,6 +390,8 @@ class CodexCollectorTest(RuntimeTestCase):
         self.assertEqual("unavailable", unavailable["assignment_status"])
         self.assertEqual("Project cockpit and remembered goal", recovered["assignment"])
         self.assertEqual("structured dispatch artifact", recovered["assignment_status"])
+        self.assertEqual("project-cockpit", recovered["workflow_entity"])
+        self.assertEqual("shaping", recovered["workflow_stage"])
 
     def test_codex_meta_tolerates_malformed_payload_types(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
