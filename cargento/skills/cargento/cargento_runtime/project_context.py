@@ -1375,9 +1375,17 @@ def _semantic_activity_projection(
         if head.get("status") == "requested"
         and label_key(str(head["work_item_id"])) not in represented_keys
     }
+    represented_ids = {
+        work_item_id for node in nodes for work_item_id in node.get("work_item_ids", [])
+    }
+    historical_dispatches = sum(
+        head.get("status") == "requested" and str(head["work_item_id"]) not in represented_ids
+        for head in trail_heads
+    )
     return {
         "nodes": nodes,
         "historical_unresolved": len(historical_keys),
+        "historical_dispatches": historical_dispatches,
         "current_after": current_after,
     }
 

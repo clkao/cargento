@@ -526,6 +526,7 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual("burst", activity["nodes"][0]["kind"])
         self.assertEqual(8, activity["nodes"][0]["count"])
         self.assertEqual(1, activity["historical_unresolved"])
+        self.assertEqual(2, activity["historical_dispatches"])
 
     def test_intent_promotion_rejects_output_code_and_path_rows(self) -> None:
         rejected = (

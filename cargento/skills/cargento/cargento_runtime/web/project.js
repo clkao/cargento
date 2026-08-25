@@ -306,8 +306,12 @@ function projectLiveAssignments(sess, group){
   const entry = projectContextEntry(group.label);
   const observed = entry && entry.data && Array.isArray(entry.data.child_assignments)
     ? entry.data.child_assignments : [];
-  const rows = reported.slice().sort((a, b) =>
-    (Number(a.depth) || 1) - (Number(b.depth) || 1));
+  const rows = reported.filter(agent => {
+    const fallback = observed.find(row => row.observer_sid && row.observer_sid === agent.observer_sid) || {};
+    return !(agent.workflow_entity || fallback.workflow_entity) ||
+      !(agent.workflow_stage || fallback.workflow_stage);
+  }).sort((a, b) => (Number(a.depth) || 1) - (Number(b.depth) || 1));
+  if(!rows.length) return "";
   const workflowTitle = entity => {
     const words = String(entity || "").replace(/-/g, " ");
     return words ? words.charAt(0).toUpperCase() + words.slice(1) : "";
@@ -344,52 +348,35 @@ function projectLiveAssignments(sess, group){
     }).join("") + `</div>`;
 }
 
-function projectAssignmentRow(row, model){
-  const facts = Array.isArray(model.facts) ? model.facts : [];
-  const items = Array.isArray(model.work_items) ? model.work_items : [];
-  const fact = facts.find(candidate => candidate.fact_id === row.assignment_fact) || {};
-  const item = items.find(candidate => candidate.work_item_id === row.work_item_id) || {};
-  const worker = row.worker_kind === "ensign" ? "Ensign" : "Subagent";
-  const itemLabel = item.label || "";
-  const assignment = row.assignment || itemLabel || "assignment unavailable";
-  const distinctLabel = itemLabel && itemLabel !== assignment;
-  if(item.kind === "workflow_item" || row.worker_kind === "ensign"){
-    return `<div class="pc-work-item" data-assignment-state="${esc(row.state || "unknown")}">` +
-      `<span class="pc-child-node"></span><div class="pc-work-copy">` +
-      `<strong>${esc(itemLabel || assignment)}</strong>` +
-      (distinctLabel ? `<span>${esc(assignment)}</span>` : "") +
-      `<small>${esc(worker)} · ${row.state === "completed" ? "result returned" : "awaiting result"}</small>` +
-      projectFactEvidence(fact) + `</div>` +
-      `<em>${row.state === "completed" ? "completed" : "awaiting result"}</em></div>`;
-  }
-  return `<div class="pc-assignment" data-assignment-state="${esc(row.state || "unknown")}">` +
-    `<span class="pc-child-node"></span><div class="pc-assignment-copy"><strong>${esc(worker)}</strong>` +
-    (distinctLabel ? `<b>${esc(itemLabel)}</b>` : "") + `<span>${esc(assignment)}</span>` +
-    projectFactEvidence(fact) + `</div>` +
-    `<em>${row.state === "completed" ? "completed" : "awaiting result"}</em></div>`;
+function projectWorkflowLanes(sess, group){
+  if(!sess) return [];
+  const reported = Array.isArray(sess.subagent_hierarchy)
+    ? sess.subagent_hierarchy
+    : (Array.isArray(sess.subagents) ? sess.subagents : []);
+  const entry = projectContextEntry(group.label);
+  const observed = entry && entry.data && Array.isArray(entry.data.child_assignments)
+    ? entry.data.child_assignments : [];
+  return reported.map(agent => {
+    const fallback = observed.find(row => row.observer_sid &&
+      row.observer_sid === agent.observer_sid) || {};
+    const entity = agent.workflow_entity || fallback.workflow_entity || "";
+    const stage = agent.workflow_stage || fallback.workflow_stage || "";
+    if(!entity || !stage) return null;
+    return {entity, stage, worker:agent.name || fallback.name || "Ensign",
+      assignment:agent.assignment || fallback.assignment || "assignment unavailable",
+      source:agent.assignment ? (agent.assignment_status || "exact parent dispatch") :
+        (fallback.source || "structured workflow assignment"), at:Number(sess.last_activity) || 0};
+  }).filter(Boolean);
 }
 
 function projectAssignmentRoster(group, sess){
   const entry = projectContextEntry(group.label);
-  const model = entry && entry.data && entry.data.semantic || {};
-  const projections = model.projections || {};
-  const assignments = Array.isArray(projections.assignments) ? projections.assignments : [];
-  const awaiting = assignments.filter(row => row.state === "awaiting_result");
-  const completed = assignments.filter(row => row.state === "completed");
   const live = projectLiveAssignments(sess, group);
-  const pending = awaiting.length ? `<div class="pc-assignment-group" data-assignment-group="awaiting">` +
-    `<div class="pc-assignment-head"><strong>Dispatched / awaiting result</strong><b>${awaiting.length}</b></div>` +
-    awaiting.map(row => projectAssignmentRow(row, model)).join("") + `</div>` : "";
-  const doneRows = completed.map(row => projectAssignmentRow(row, model)).join("");
-  const done = completed.length ? ((live || awaiting.length)
-    ? `<details class="pc-assignment-completed"><summary>Completed · ${completed.length}</summary>${doneRows}</details>`
-    : `<div class="pc-assignment-group" data-assignment-group="completed"><div class="pc-assignment-head">` +
-      `<strong>Completed</strong><b>${completed.length}</b></div>${doneRows}</div>`) : "";
   const loading = !entry || entry.state === "loading"
     ? `<div class="pc-child-empty">Reading assignment evidence…</div>` : "";
-  if(!live && !pending && !done && !loading) return "";
+  if(!live && !loading) return "";
   return `<div class="pc-assignment-roster"><span class="pc-kicker">Assignments</span>` +
-    live + pending + done + loading + `</div>`;
+    live + loading + `</div>`;
 }
 
 function projectSessionMirror(d, sess, group){
@@ -493,7 +480,7 @@ function projectTrailRow(d, head, model, node, lane){
   const history = facts.filter(fact => fact.work_item_id === head.work_item_id)
     .sort((a, b) => Number(b.at) - Number(a.at));
   const status = head.status === "requested"
-    ? "requested · current state unknown" : head.status;
+    ? "recently dispatched · current state not confirmed" : head.status;
   const kind = item.kind === "workflow_item" ? "stage" :
     (head.status === "outcome" || head.status === "decision" ? "result" : "work");
   const retries = Number(node && node.retry_count) || 0;
@@ -561,13 +548,25 @@ function projectBurstRow(d, node, model, lane){
     `data-semantic-burst="${ids.length}"`, `${count} entities touched`);
 }
 
-function projectSemanticTimeline(d, model){
+function projectWorkflowLaneRow(d, row, lane){
+  const title = String(row.entity || "").replace(/-/g, " ").replace(/^./, first => first.toUpperCase());
+  const body = `<div class="pc-trail-top"><strong>${esc(title)} · ${esc(row.stage)}</strong>` +
+    `<span>current stage</span></div><div class="pc-trail-result">${esc(row.assignment)}</div>` +
+    `<div class="pc-trail-quiet">${esc(row.worker)} · working now · ${esc(row.source)}</div>`;
+  return projectGraphRow(d, row.at, "stage", lane, body,
+    `data-work-item="${esc(row.entity)}" data-work-stage="${esc(row.stage)}"`,
+    `${title} · ${row.stage}`);
+}
+
+function projectSemanticTimeline(d, model, workflowLanes){
   const projections = model.projections || {};
   const facts = Array.isArray(model.facts) ? model.facts : [];
   const heads = Array.isArray(projections.trail_heads) ? projections.trail_heads : [];
   const episodes = Array.isArray(projections.steering_episodes)
     ? projections.steering_episodes : [];
   const activity = projections.activity || {};
+  const liveEntities = new Set(workflowLanes.map(row => row.entity));
+  const items = Array.isArray(model.work_items) ? model.work_items : [];
   const pairedIntents = new Set(episodes.map(episode => episode.intent_id));
   const intentPool = Array.isArray(activity.steering) ? activity.steering :
     (Array.isArray(projections.operator_intents) ? projections.operator_intents.slice(-3).reverse() : []);
@@ -582,7 +581,12 @@ function projectSemanticTimeline(d, model){
     });
   }
   const headByItem = new Map(heads.map(head => [head.work_item_id, head]));
-  const activityRows = nodes.map((node, index) => {
+  const activityRows = nodes.filter(node => !["requested", "prepared"].includes(node.status) ||
+    !(node.work_item_ids || []).some(id => {
+    const item = items.find(candidate => candidate.work_item_id === id) || {};
+    const entity = String(item.label || "").split(" · ")[0];
+    return item.kind === "workflow_item" && liveEntities.has(entity);
+  })).map((node, index) => {
     const lane = index % 3;
     if(node.kind === "burst") return {at:Number(node.at), html:projectBurstRow(d, node, model, lane)};
     const firstId = Array.isArray(node.work_item_ids) ? node.work_item_ids[0] : "";
@@ -597,7 +601,10 @@ function projectSemanticTimeline(d, model){
   const steeringRows = steering.map(intent => ({
     at:Number(intent.at), html:projectSteeringRow(d, intent, model)
   }));
-  const visible = activityRows.concat(episodeRows, steeringRows)
+  const workflowRows = workflowLanes.map((row, index) => ({
+    at:Number(row.at), html:projectWorkflowLaneRow(d, row, index % 3)
+  }));
+  const visible = workflowRows.concat(activityRows, episodeRows, steeringRows)
     .sort((a, b) => b.at - a.at);
   if(!visible.length) return `<div class="pc-empty">No source-backed current work or reaction.</div>`;
   return `<section class="pc-semantic-timeline" data-order="newest-first" data-model="fact-projection"` +
@@ -617,12 +624,16 @@ function projectSemanticEvidence(group){
     !primarySteering.has(intent.projection_id));
   const facts = Array.isArray(model.facts) ? model.facts : [];
   const heads = Array.isArray(projections.trail_heads) ? projections.trail_heads : [];
-  const historicalHeads = heads.filter(head => head.status === "requested");
+  const currentWork = new Set((activity.nodes || []).flatMap(node => node.work_item_ids || []));
+  const historicalHeads = heads.filter(head => head.status === "requested" &&
+    !currentWork.has(head.work_item_id));
   const historical = Number(activity.historical_unresolved) || historicalHeads.length;
+  const historicalDispatches = Number(activity.historical_dispatches) || historicalHeads.length;
   const contextFacts = facts.filter(fact => !fact.work_item_id &&
     ["result", "decision", "observer_snapshot"].includes(fact.type));
   if(!historical && !unpaired.length && !contextFacts.length) return "";
-  return `<li><b>Collapsed semantic evidence:</b> ${historical} historical unresolved request${historical === 1 ? "" : "s"}` +
+  return `<li><b>Past dispatches without observed result · ${historicalDispatches}</b>` +
+    (historical !== historicalDispatches ? ` · ${historical} distinct work label${historical === 1 ? "" : "s"}` : "") +
     ` · ${unpaired.length} intent candidate${unpaired.length === 1 ? "" : "s"} without a supported reaction.` +
     (unpaired.length ? `<details><summary>show unpaired intent evidence</summary>` +
       unpaired.map(intent => {
@@ -642,10 +653,11 @@ function projectSemanticEvidence(group){
       `</details>` : "") + `</li>`;
 }
 
-function projectActivity(d, group){
+function projectActivity(d, group, focus){
   const entry = projectContextEntry(group.label);
   const model = entry && entry.data && entry.data.semantic;
-  if(!model || !Array.isArray(model.facts) || !model.facts.length){
+  const workflowLanes = projectWorkflowLanes(focus, group);
+  if((!model || !Array.isArray(model.facts) || !model.facts.length) && !workflowLanes.length){
     const reading = !entry || entry.state === "loading"
       ? "Reading deterministic session evidence…"
       : (entry.state === "error" || !entry.data
@@ -653,8 +665,9 @@ function projectActivity(d, group){
         : "No meaningful exact-session event was found.");
     return `<div class="pc-empty${entry && entry.state === "error" ? " unavailable" : ""}">${reading}</div>`;
   }
+  const semantic = model || {facts: [], work_items: [], projections: {}};
   return `<div class="pc-semantic-graph" data-causal-model="explicit-relations-only">` +
-    projectSemanticTimeline(d, model) + `</div>`;
+    projectSemanticTimeline(d, semantic, workflowLanes) + `</div>`;
 }
 
 function projectEvidenceLimits(group, focus){

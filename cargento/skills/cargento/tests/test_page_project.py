@@ -322,8 +322,9 @@ console.log(JSON.stringify({
   taskFirst: !h.includes("<strong>Einstein</strong>") && !h.includes("<strong>Ampere</strong>") &&
     h.indexOf("Project cockpit") < h.indexOf("Einstein") &&
     h.indexOf("Session interaction origin") < h.indexOf("Ampere"),
-  compact: h.split('class="pc-work-item').length - 1 === 2 &&
-    !h.includes("<details><summary>source</summary>"),
+  compact: h.split('data-work-item=').length - 1 === 2 &&
+    h.includes('data-graph-layout="time-spine-work-lanes"') &&
+    !h.includes('class="pc-work-item') && !h.includes("<details><summary>source</summary>"),
   changed: h.includes("Assignment roster restored") && h.includes("5s ago") &&
     h.includes('data-trail-head="outcome"'),
   freshness: h.includes("latest session evidence · 10s ago"),
@@ -822,7 +823,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["labelWithoutOutcome"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
-    def test_assignment_roster_separates_awaiting_and_completed_source_backed_work(self) -> None:
+    def test_semantic_assignments_do_not_enter_the_current_worker_roster(self) -> None:
         checks = """
 projectContextByLabel[projectContextKey("git/asr")] = {state: "ready", generated: 100000,
   data: {observers: [], events: [], semantic: {facts: [
@@ -856,12 +857,9 @@ Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  groups: h.includes("Dispatched / awaiting result") && h.includes("Completed · 1"),
-  assignments: h.includes("Append the missing Stage Report") &&
-    h.includes("release-cockpit · implementation") && h.includes("Implement the assignment roster"),
-  workerKinds: h.includes("Ensign") && h.includes("Subagent"),
-  states: h.includes('data-assignment-state="awaiting_result"') &&
-    h.includes('data-assignment-state="completed"'),
+  noRoster: !h.includes("Dispatched / awaiting result") && !h.includes("Completed · 1") &&
+    !h.includes('data-assignment-state="awaiting_result"') &&
+    !h.includes('data-assignment-state="completed"'),
   transportHidden: !h.includes("/tmp/spacedock-dispatch") && !h.includes("task is DONE") &&
     !h.includes("gpt-") && !h.includes("toolCall")
 }));
@@ -872,11 +870,57 @@ console.log(JSON.stringify({
             query_project="git/asr",
             query_session="pi:asr-root",
         )
-        self.assertTrue(out["groups"])
-        self.assertTrue(out["assignments"])
-        self.assertTrue(out["workerKinds"])
-        self.assertTrue(out["states"])
+        self.assertTrue(out["noRoster"])
         self.assertTrue(out["transportHidden"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_one_recent_and_twelve_old_pi_births_render_as_work_not_workers(self) -> None:
+        checks = """
+const facts = Array.from({length: 13}, (_, i) => ({fact_id: `birth-${i}`,
+  at: i === 0 ? 99999 : 98000 - i, type: "work_birth",
+  summary: i === 0 ? "Fix current encoder fault" : `Historical dispatch ${i}`,
+  work_item_id: `work-${i}`, evidence: {source: "Pi subagent task label", confidence: "exact"}}));
+const workItems = Array.from({length: 13}, (_, i) => ({work_item_id: `work-${i}`,
+  label: i === 0 ? "Fix current encoder fault" : `Historical dispatch ${i}`, kind: "one_off"}));
+const heads = Array.from({length: 13}, (_, i) => ({work_item_id: `work-${i}`,
+  status: "requested", latest_meaningful_event: `birth-${i}`}));
+projectContextByLabel[projectContextKey("git/asr")] = {state: "ready", generated: 100000,
+  data: {observers: [], events: [], semantic: {facts, work_items: workItems,
+  contributors: [], relations: [], projections: {operator_intents: [], trail_heads: heads,
+  assignments: heads.map((head, i) => ({work_item_id: head.work_item_id,
+    assignment_fact: `birth-${i}`, state: "awaiting_result"})),
+  activity: {nodes: [{kind: "work", at: 99999, status: "requested",
+    work_item_ids: ["work-0"], latest_event: "birth-0", retry_count: 0}],
+    historical_unresolved: 12, historical_dispatches: 12, steering: []},
+  steering_episodes: [], candidate_goal_shifts: []}},
+  sources: {gate: {}, steer: {unavailable: []}}}};
+const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
+  active: true, state: "idle", subagent_hierarchy: []})]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+const rightNow = h.slice(h.indexOf("Right now"), h.indexOf("What changed"));
+const graph = h.slice(h.indexOf("What changed"), h.indexOf("Other project sessions"));
+const evidence = h.slice(h.indexOf("Evidence / limits"));
+console.log(JSON.stringify({
+  noFalseRoster: !rightNow.includes("Assignments") &&
+    !rightNow.includes('data-assignment-state="awaiting_result"'),
+  currentWork: graph.includes("Fix current encoder fault") &&
+    graph.includes("recently dispatched · current state not confirmed"),
+  historyCollapsed: evidence.includes("Past dispatches without observed result · 12") &&
+    evidence.includes("show historical request evidence") &&
+    !graph.includes("Historical dispatch 1")
+}));
+"""
+        out = self.run_project(
+            checks,
+            project="git/asr",
+            query_project="git/asr",
+            query_session="pi:asr-root",
+        )
+        self.assertTrue(out["noFalseRoster"])
+        self.assertTrue(out["currentWork"])
+        self.assertTrue(out["historyCollapsed"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_live_child_uses_cached_derived_assignment_only_as_a_labeled_fallback(self) -> None:
