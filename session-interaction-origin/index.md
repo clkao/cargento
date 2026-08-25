@@ -95,3 +95,16 @@ Verified by: an adversarial request containing an unregistered tmux locator and 
 ### Summary
 
 The tmux spike proved server-owned resolution and literal delivery through a registered receiver. It also proved that tmux transport success cannot support an acknowledgement label without an application receipt. The breadboard recommends a registered long-poll mailbox, pending captain review of authentication, payload power, consent lifetime, queueing, and retry semantics.
+
+## Stage Report: shaping
+
+- DONE: Derive and record the comparison criterion for registered tmux delivery versus a registered long-poll mailbox, resolving or classifying authentication, payload power, consent lifetime, queueing, and retry choices.
+  The cockpit README records six viability conditions, the side-by-side costs, three captain-owned boundaries, one-slot queueing, and no automatic retry.
+- DONE: Integrate an inspectable selected checkpoint through the single-writer proto/operator-cockpit lane while preserving exact-target registration, literal payload handling, and honest delivery states.
+  `db7af84e7a02fa35329e2c83346f8dfdb36065a1` advances base `45711064de8389bda0e0d42c88b4880516565365` on `clkao/proto/operator-cockpit`; seven checks fail if those contracts change.
+- DONE: Name the exact exercised integration commit and provide a reproducible procedure covering acknowledged, rejected, stale, disconnected, unregistered-target, and shell-metacharacter cases.
+  The exact commit is `db7af84e7a02fa35329e2c83346f8dfdb36065a1`; `docs/breadboards/project-cockpit/README.md` gives the static-page, Node, and isolated-tmux procedures.
+
+### Summary
+
+Shaping selects a registered long-poll mailbox because application acknowledgement belongs in its transport contract. Authentication, payload power, and consent lifetime remain captain-owned boundaries; one outstanding message and no automatic retry are the recommended operational choices. Browser automation was unavailable, but the static server, seven Node checks, tmux replay, frontend linter, and plugin validator passed on the exact pushed commit; full-tree ruff reports eight unchanged base-file findings.
