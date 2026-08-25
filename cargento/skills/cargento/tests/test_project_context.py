@@ -723,7 +723,7 @@ class ProjectContextTest(unittest.TestCase):
             [item["summary"] for item in steering],
         )
 
-    def test_primary_steering_keeps_recent_meaningful_questions(self) -> None:
+    def test_primary_steering_keeps_questions_as_evidence_not_diamonds(self) -> None:
         intents = [
             {"at": 1.0, "summary": "how far are we?"},
             {"at": 2.0, "summary": "why is there also audio alignment?"},
@@ -732,13 +732,7 @@ class ProjectContextTest(unittest.TestCase):
 
         steering = project_context._recent_steering_nodes(intents)
 
-        self.assertEqual(
-            [
-                "where is the attention head shipped?",
-                "why is there also audio alignment?",
-            ],
-            [item["summary"] for item in steering],
-        )
+        self.assertEqual([], steering)
 
     def test_exact_dispatch_artifact_binds_spawn_and_result_to_workflow_item(self) -> None:
         artifact = "/tmp/spacedock-dispatch/spacedock-ensign-search-review.md"

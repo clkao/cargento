@@ -1453,16 +1453,32 @@ def _semantic_activity_projection(
     }
 
 
-def _recent_steering_nodes(intents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _recent_steering_nodes(
+    intents: list[dict[str, Any]], paired_intent_ids: set[str] | None = None
+) -> list[dict[str, Any]]:
     low_signal = re.compile(
         r"^(?:how far are we\b|is this a raw subagent\b|oh\b.*\b(?:i see|got it)\b|"
         r"ok(?:ay)?\b|thanks?\b)",
         flags=re.IGNORECASE,
     )
+    directive = re.compile(
+        r"^(?:also\b|before\b|do not\b|don't\b|let's\b|no,?\s+that\b|redispatch\b|"
+        r"use\b|we\b.*\b(?:orient|resume|continue)\b)|"
+        r"\b(?:must|should|do|keep|make|redispatch|remove|replace|revise|show|update)\b",
+        flags=re.IGNORECASE,
+    )
+    paired = paired_intent_ids or set()
     candidates = [
         intent
         for intent in intents
-        if not low_signal.match(str(intent.get("summary") or "").strip())
+        if (
+            str(intent.get("projection_id") or "") in paired
+            or (
+                not str(intent.get("summary") or "").strip().endswith("?")
+                and not low_signal.match(str(intent.get("summary") or "").strip())
+                and directive.search(str(intent.get("summary") or "").strip())
+            )
+        )
     ]
     selected: list[dict[str, Any]] = []
     selected_tokens: list[tuple[float, list[str]]] = []
@@ -1672,9 +1688,10 @@ def _semantic_model(
     facts.sort(key=lambda fact: float(fact.get("at") or 0), reverse=True)
     trail_heads = _semantic_trail_heads(fact_by_work_item, facts)
     assignments = _semantic_assignments(fact_by_work_item, work_items)
-    activity = _semantic_activity_projection(work_items, trail_heads, facts, now=now)
-    activity["steering"] = _recent_steering_nodes(intent_projections)
     steering_episodes = _structural_steering_episodes(intent_projections, facts, relations)
+    paired_intent_ids = {str(episode["intent_id"]) for episode in steering_episodes}
+    activity = _semantic_activity_projection(work_items, trail_heads, facts, now=now)
+    activity["steering"] = _recent_steering_nodes(intent_projections, paired_intent_ids)
     return {
         "facts": facts,
         "work_items": list(work_items.values()),
