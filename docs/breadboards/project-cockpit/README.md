@@ -7,7 +7,7 @@ Open `index.html` through any static HTTP server. The page offers two project-ov
 - **Project deck:** one bounded card per project, with goal, sessions, and interruption together.
 - **Attention ledger:** a denser scan across projects, with the goal and active sessions held in columns.
 
-The controls below the overview exercise the two risky contracts. Move the outstanding ask and verify the project-level `needs you` signal follows it. Write and remember a project goal, reload the page, publish conflicting observer text, and verify that the operator text remains visible.
+The controls below the overview exercise the two risky contracts. Move the outstanding ask in both directions and verify the project-level `needs you` signal follows it. Write and remember a project goal, reload the page, publish conflicting observer text, and verify that the operator text remains visible.
 
 ## Run locally
 
@@ -29,7 +29,9 @@ The survey began from mirror prototype `e2fdaffc10ac31da5e5d39361bb2e95e3ca4c1a7
 
 The card deck makes the three facts easiest to recover for one project because attention, goal, and active work share a boundary. The ledger makes cross-project comparison faster and keeps attention from turning into a card-decoration hunt.
 
-Production integration remains deliberately unchosen. Project/session collection and observer publication are fixtures here. Browser goal ownership, source precedence, ask reassignment, and needs-you reduction are exercised mechanisms. The page's evidence inventory names these boundaries and fails its audit if a fixture-only source is labeled live.
+Production integration remains deliberately unchosen. Project/session collection and observer publication are fixtures here. Browser goal ownership, source precedence, ask reassignment, and needs-you reduction are exercised mechanisms. The page's evidence inventory names these boundaries and binds each live row to a behavioral probe. The mutation exercise replaces ask routing and browser goal writes with fixture constants one at a time and proves each replacement changes the observed result.
+
+Ask ownership is explicit: the ask envelope's `projectId` is authoritative for project-level attention. Reassigning an ask does not rewrite the asking session's project. The destination project therefore renders the full question and originating session id independently of its own session list, while the session remains visible under its original project.
 
 ## Shaping recommendation
 
@@ -116,7 +118,8 @@ This command starts two sessions on a new isolated tmux server. Only one session
 
 ## Observed failure modes
 
-- A project-level badge alone was insufficient after reassignment: the question became detached from its original session row. Both shapes now render the outstanding ask independently of session membership, so the reason for attention follows the signal.
+- A project-level badge alone was insufficient after reassignment: the question became detached from its original session row. Both shapes now render the outstanding ask independently of session membership, so the reason for attention follows the signal while the session stays under its authoritative session project.
+- A one-way ask exercise did not falsify a hard-coded destination. The targeted live-source probe now moves the same ask `cockpit → launch-notes → cockpit`, and a mutation test proves the reviewer's exact constant replacement changes the result.
 - Cross-realm objects from the page harness looked structurally equal but failed strict Node assertions. The checks normalize page values before comparison; this is a harness boundary, not product evidence.
 - Browser visual automation was unavailable in this worker. The artifact was served successfully and its page script was syntax-checked, but visual inspection remains a review action rather than claimed evidence.
 

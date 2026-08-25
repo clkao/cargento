@@ -30,8 +30,8 @@
   const SOURCE_INVENTORY = [
     { source: "Project grouping and session facts", kind: "mocked", mechanism: "FIXTURE payload; shaped like the current grouped dashboard response" },
     { source: "Outstanding ask payload", kind: "mocked", mechanism: "Seed ask is a fixture; reassignment uses the live reducer below" },
-    { source: "Ask-to-project reassignment", kind: "live", mechanism: "In-memory state transition followed by a complete re-render" },
-    { source: "Operator-written goal", kind: "live", mechanism: "Browser localStorage, keyed by project; survives a real reload" },
+    { source: "Ask-to-project reassignment", kind: "live", probe: "ask-reassignment-bidirectional", mechanism: "The ask envelope's projectId is authoritative; reassignment never moves its session" },
+    { source: "Operator-written goal", kind: "live", probe: "operator-goal-roundtrip", mechanism: "Browser localStorage, keyed by project; survives a real reload" },
     { source: "Observer goal publication", kind: "mocked", mechanism: "Button simulates a newly published observer payload" },
     { source: "Needs-you project signal", kind: "derived", mechanism: "Reduced from outstanding asks on every render" },
     { source: "Session mirror, memory, causal log, consistency", kind: "mocked", mechanism: "Not rendered; baseline prototype remains drill-down evidence only" },
@@ -193,10 +193,48 @@
     rows.forEach(row => {
       if (!allowed.has(row.kind)) errors.push(`${row.source}: unknown kind`);
       if (!row.mechanism) errors.push(`${row.source}: missing mechanism`);
+      if (row.kind === "live" && !row.probe) errors.push(`${row.source}: live source has no behavioral probe`);
     });
     const fixtureClaims = rows.filter(row => row.kind === "live" && /fixture|constant/i.test(row.mechanism));
     fixtureClaims.forEach(row => errors.push(`${row.source}: fixture-only source cannot be called live`));
     return errors;
+  }
+
+  function exerciseLiveInventory(storage, fixture) {
+    const source = fixture || FIXTURE;
+    const results = {};
+    const ownerOf = (projects, askId) => {
+      const owner = projects.find(project => project.asks.some(ask => ask.id === askId));
+      return owner ? owner.id : null;
+    };
+    const probes = {
+      "ask-reassignment-bidirectional": () => {
+        const model = createModel(storage, source);
+        const route = [ownerOf(model.snapshot(), "ask-1")];
+        model.moveAsk("ask-1", "launch-notes");
+        route.push(ownerOf(model.snapshot(), "ask-1"));
+        model.moveAsk("ask-1", "cockpit");
+        const final = model.snapshot();
+        route.push(ownerOf(final, "ask-1"));
+        const sessionOwner = final.find(project => project.sessions.some(session => session.id === "codex:8f21"));
+        return { route, sessionOwner: sessionOwner ? sessionOwner.id : null };
+      },
+      "operator-goal-roundtrip": () => {
+        const model = createModel(storage, source);
+        model.rememberGoal("cockpit", "Operator goal alpha");
+        model.rememberGoal("launch-notes", "Operator goal beta");
+        const reloaded = createModel(storage, source);
+        return {
+          cockpit: reloaded.goalFor("cockpit").text,
+          launchNotes: reloaded.goalFor("launch-notes").text,
+        };
+      },
+    };
+    SOURCE_INVENTORY.filter(row => row.kind === "live").forEach(row => {
+      const probe = probes[row.probe];
+      if (probe) results[row.probe] = probe();
+    });
+    return results;
   }
 
   const esc = value => String(value).replace(/[&<>"']/g, char => ({
@@ -266,7 +304,7 @@
 
   global.CockpitBreadboard = {
     FIXTURE, INTERACTION_FIXTURE, SOURCE_INVENTORY, createInteractionModel, createModel,
-    goalKey, interactionMarkup, inventoryAudit, renderShape,
+    exerciseLiveInventory, goalKey, interactionMarkup, inventoryAudit, renderShape,
   };
 
   if (!global.document || !global.localStorage) return;

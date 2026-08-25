@@ -5,18 +5,23 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const script = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
-const libraryContext = { window: {} };
-vm.createContext(libraryContext);
-vm.runInContext(script, libraryContext);
+function loadLibrary(source = script) {
+  const context = { window: {} };
+  vm.createContext(context);
+  vm.runInContext(source, context);
+  return context.window.CockpitBreadboard;
+}
+const library = loadLibrary();
 const {
   FIXTURE,
   SOURCE_INVENTORY,
   createInteractionModel,
   createModel,
+  exerciseLiveInventory,
   interactionMarkup,
   inventoryAudit,
   renderShape,
-} = libraryContext.window.CockpitBreadboard;
+} = library;
 const plain = value => JSON.parse(JSON.stringify(value));
 
 class MemoryStorage {
@@ -103,6 +108,39 @@ test("moving an outstanding ask moves the one project-level needs-you signal", (
       html,
       /class="[^"]*needs-you[^"]*" data-project="launch-notes"[\s\S]*Cards or ledger for the first scan\?/,
     );
+  }
+
+  model.moveAsk("ask-1", "cockpit");
+  const returned = model.snapshot();
+  assert.deepEqual(
+    plain(returned.map(project => [project.id, project.needsYou])),
+    [["cockpit", true], ["launch-notes", false]],
+  );
+});
+
+test("ask project comes from the ask envelope while its session stays put", () => {
+  const model = createModel(new MemoryStorage(), FIXTURE);
+  model.moveAsk("ask-1", "launch-notes");
+  const projects = model.snapshot();
+  const cockpit = projects.find(project => project.id === "cockpit");
+  const launch = projects.find(project => project.id === "launch-notes");
+  assert.ok(cockpit.sessions.some(session => session.id === "codex:8f21"));
+  assert.ok(!launch.sessions.some(session => session.id === "codex:8f21"));
+  assert.equal(launch.asks[0].sessionId, "codex:8f21");
+  assert.equal(cockpit.asks.length, 0);
+
+  for (const shape of ["deck", "ledger"]) {
+    const html = renderShape(shape, projects);
+    const cockpitRegion = html.slice(
+      html.indexOf('data-project="cockpit"'),
+      html.indexOf('data-project="launch-notes"'),
+    );
+    const launchRegion = html.slice(html.indexOf('data-project="launch-notes"'));
+    assert.match(cockpitRegion, /Breadboard project overview/);
+    assert.doesNotMatch(cockpitRegion, /Cards or ledger for the first scan\?/);
+    assert.match(launchRegion, /Cards or ledger for the first scan\?/);
+    assert.match(launchRegion, /codex:8f21/);
+    assert.doesNotMatch(launchRegion, /Breadboard project overview/);
   }
 });
 
@@ -214,4 +252,32 @@ test("interaction control renders the selected result on the page", () => {
   page.elements["interaction-run"].fire("click");
   assert.match(page.elements["interaction-result"].innerHTML, /class="outcome rejected">rejected/);
   assert.match(page.elements["interaction-result"].innerHTML, /do not infer success/);
+});
+
+test("each live inventory probe catches a fixture-only replacement", () => {
+  const expected = {
+    "ask-reassignment-bidirectional": {
+      route: ["cockpit", "launch-notes", "cockpit"],
+      sessionOwner: "cockpit",
+    },
+    "operator-goal-roundtrip": {
+      cockpit: "Operator goal alpha",
+      launchNotes: "Operator goal beta",
+    },
+  };
+  assert.deepEqual(plain(exerciseLiveInventory(new MemoryStorage(), FIXTURE)), expected);
+
+  const mutations = [
+    ['ask.projectId = projectId;', 'ask.projectId = "launch-notes";'],
+    [
+      'storage.setItem(goalKey(projectId), normalized);',
+      'storage.setItem(goalKey(projectId), "fixture goal");',
+    ],
+  ];
+  for (const [live, fixtureConstant] of mutations) {
+    assert.match(script, new RegExp(live.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    const mutant = loadLibrary(script.replace(live, fixtureConstant));
+    const result = plain(mutant.exerciseLiveInventory(new MemoryStorage(), mutant.FIXTURE));
+    assert.notDeepEqual(result, expected, `fixture mutation survived: ${fixtureConstant}`);
+  }
 });
