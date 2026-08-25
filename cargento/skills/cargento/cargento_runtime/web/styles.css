@@ -674,6 +674,13 @@
   .pc-mirror-state{display:flex;align-items:baseline;gap:10px;margin-top:12px}
   .pc-mirror-state strong{font-family:var(--mono);font-size:var(--fs-sm);color:var(--accent-ink)}
   .pc-mirror-state span{font-size:var(--fs-sm);color:var(--ink2)}
+  .pc-mirror-attention{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;gap:3px 10px;margin-top:13px;padding:10px 12px;border:1px solid var(--line2);border-radius:8px;background:var(--panel)}
+  .pc-mirror-attention .pc-kicker{grid-column:1/-1;margin:0}
+  .pc-mirror-attention strong{font-size:var(--fs-xs);color:var(--ink2)}
+  .pc-mirror-attention span:not(.pc-kicker){font-size:var(--fs-xs);color:var(--ink3)}
+  .pc-mirror-attention code{grid-column:1/-1;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .pc-mirror-attention.attention{border-color:color-mix(in oklab,var(--alert) 45%,var(--line2));background:color-mix(in oklab,var(--alert) 5%,var(--panel))}
+  .pc-mirror-attention.attention strong{color:var(--alert)}
   .pc-mirror-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
   .pc-mirror-meta>*{border:1px solid var(--line2);border-radius:99px;padding:3px 7px}
   .pc-observer{padding:14px 20px;border-bottom:1px solid var(--line2);background:color-mix(in oklab,var(--panel) 92%,var(--sunk))}

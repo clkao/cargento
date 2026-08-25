@@ -179,6 +179,39 @@ console.log(JSON.stringify({
         self.assertTrue(out["observerScoped"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_focused_mirror_distinguishes_no_signal_from_unblocked(self) -> None:
+        checks = """
+const d = payload([
+  mk({project: "repo/proj", harness: "codex", sid: "focus-1", active: true,
+    state: "working", needs_you: null}),
+  mk({project: "repo/proj", harness: "claude", sid: "around-1", active: true})
+]);
+Object.assign(d, {ask: true, asks: [liveAsk({session_id: "around-1"})]});
+render(d);
+const clear = __els.app.innerHTML;
+d.asks = [liveAsk({harness: "codex", session_id: "focus-1"})];
+render(d);
+const asked = __els.app.innerHTML;
+console.log(JSON.stringify({
+  clear: clear.includes("Needs captain") && clear.includes("No live needs-captain signal") &&
+    clear.includes("not proof that the session is unblocked") &&
+    clear.includes('data-needs-captain="clear"'),
+  exactOnly: !clear.includes("Attention requested") && asked.includes("Attention requested") &&
+    asked.includes("1 live registered question") &&
+    asked.includes('data-needs-captain="requested"'),
+  source: asked.includes("session overlay + AskRegistry")
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["clear"])
+        self.assertTrue(out["exactOnly"])
+        self.assertTrue(out["source"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_activity_reuses_causal_log_shape_without_mocked_history(self) -> None:
         checks = """
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {

@@ -236,7 +236,33 @@ function projectSessionRow(sess){
     `<code>${esc(key)}</code></button>`;
 }
 
-function projectSessionMirror(sess, group){
+function projectMirrorAttention(d, sess, group){
+  const exactAsks = d.ask && Array.isArray(group.asks)
+    ? group.asks.filter(ask => String(ask && ask.harness || "") === String(sess.harness || "") &&
+      String(ask && ask.session_id || "") === String(sess.sid || ""))
+    : [];
+  const overlayNeeds = sess.state === "needs_input" || sess.needs_you === true;
+  const liveNeeds = overlayNeeds || exactAsks.length > 0;
+  let reading;
+  if(liveNeeds){
+    const reason = sess.needs_reason || (exactAsks.length
+      ? `${exactAsks.length} live registered question${exactAsks.length === 1 ? "" : "s"}`
+      : "live session needs-input state");
+    reading = `<strong>Attention requested</strong><span>${esc(reason)}</span>`;
+  }else if(!d.ask){
+    reading = `<strong>Registry unavailable</strong>` +
+      `<span>session overlay has no live needs-input signal</span>`;
+  }else{
+    reading = `<strong>No live needs-captain signal</strong>` +
+      `<span>this is not proof that the session is unblocked</span>`;
+  }
+  return `<div class="pc-mirror-attention ${liveNeeds ? "attention" : ""}"` +
+    ` data-needs-captain="${liveNeeds ? "requested" : "clear"}">` +
+    `<span class="pc-kicker">Needs captain</span>${reading}` +
+    `<code>session overlay + AskRegistry</code></div>`;
+}
+
+function projectSessionMirror(d, sess, group){
   if(!sess){
     if(!projectQuerySession) return "";
     return `<section class="pc-mirror unavailable">` +
@@ -254,6 +280,7 @@ function projectSessionMirror(sess, group){
     `<button type="button" class="quiet" data-calm="project-session-link-copy"` +
     ` data-arg="${esc(key)}">copy session link</button></div>` +
     `<div class="pc-mirror-state"><strong>${esc(state)}</strong><span>${esc(detail)}</span></div>` +
+    projectMirrorAttention(d, sess, group) +
     `<div class="pc-mirror-meta"><code>${esc(key)}</code>` +
     `<span>project · ${esc(group.label)}</span>` +
     `<span>model · ${esc(sess.model || "unavailable")}</span>` +
@@ -413,7 +440,7 @@ function projectView(d, draft){
     `<button type="button" class="quiet" data-calm="project-goal-clear"` +
     ` data-arg="${esc(group.label)}">clear</button>${note}</div>` +
     `<div class="pc-key">provisional exact-label key · ${esc(goalKey)} · observer text never overwrites this field</div></div>` +
-    `${projectSessionMirror(focus, group)}` +
+    `${projectSessionMirror(d, focus, group)}` +
     `<div class="pc-observer"><div class="pc-subhead"><h3>Observer context</h3>` +
     `<span>derived · subordinate</span><button type="button" class="quiet"` +
     ` data-calm="project-context-refresh" data-arg="${esc(group.label)}">refresh</button></div>` +

@@ -55,3 +55,21 @@ rendering and source inspection, not screenshots or visual polish.
 - **Personal liking: 3/5. Would I want this as my own mirror?** Yes, cautiously: the recent steering
   finally feels like my memory, but a four-item log below a separate goal panel still makes me scan
   for the answer to “what needs me now?”
+
+## Round 4 — state the attention boundary
+
+- **Finding:** An empty project-wide “Needs you” column did not answer whether this focused session
+  needed the captain. Worse, treating an absent signal as “unblocked” would overclaim what Codex and
+  AskRegistry actually know.
+- **Exact change:** Added a focused “Needs captain” reading inside the primary mirror. It matches
+  only the exact harness and sid against real AskRegistry entries and the live session needs-input
+  overlay. With no signal it says so explicitly, adds “not proof that the session is unblocked,” and
+  names both sources; registry unavailability has its own state.
+- **Live falsification:** The exact live API contained one matching session, a readable AskRegistry,
+  zero exact registered asks, no `needs_input` state, and no true `needs_you` overlay. The executable
+  DOM therefore rendered `data-needs-captain="clear"`, the uncertainty warning, and no requested
+  state. A unit counterexample with one exact registered ask flips it to `requested`; an ask for a
+  sibling session does not.
+- **Personal liking: 4/5. Would I want this as my own mirror?** Yes: I can now glance at it without
+  mistaking silence for safety, though the goal, current motion, attention, and steering still read
+  as separate dashboard modules rather than one coherent present-tense self.
