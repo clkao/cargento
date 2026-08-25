@@ -1138,6 +1138,7 @@ class RuntimeImportGraphTest(unittest.TestCase):
             "cargento_runtime.notifications",
             "cargento_runtime.observation",
             "cargento_runtime.observer",
+            "cargento_runtime.project_context",
             "cargento_runtime.quota",
             "cargento_runtime.records",
             "cargento_runtime.snapshot",
@@ -1160,6 +1161,16 @@ class RuntimeImportGraphTest(unittest.TestCase):
         },
         "cargento_runtime.io": {
             "cargento_runtime.config",
+            "cargento_runtime.state",
+        },
+        # Read-only project composition sits above the bounded observer,
+        # Spacedock, and record readers. The HTTP route is its only caller.
+        "cargento_runtime.project_context": {
+            "cargento_runtime.config",
+            "cargento_runtime.io",
+            "cargento_runtime.observer",
+            "cargento_runtime.records",
+            "cargento_runtime.spacedock",
             "cargento_runtime.state",
         },
         # The coarse store probe: stat only, no globbing and no reads. Imports
