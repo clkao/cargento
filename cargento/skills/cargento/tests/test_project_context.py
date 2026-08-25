@@ -141,6 +141,32 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual([], empty["events"])
         self.assertEqual(0, empty["sources"]["steer"]["live"])
 
+    def test_bound_omissions_are_not_reported_as_unreadable_transcripts(self) -> None:
+        state = build_runtime_state(self.config, started=self.NOW)
+        sessions = [
+            {
+                "project": "repo/proj",
+                "harness": "pi",
+                "sid": f"missing-{index}",
+                "last_activity": self.NOW - index,
+                "active": True,
+            }
+            for index in range(project_context.MAX_PROJECT_OBSERVERS + 1)
+        ]
+
+        result = project_context.collect(
+            self.config,
+            state,
+            sessions,
+            "repo/proj",
+            now=self.NOW,
+        )
+
+        self.assertEqual(
+            project_context.MAX_PROJECT_OBSERVERS, len(result["sources"]["observer"]["unavailable"])
+        )
+        self.assertEqual(1, len(result["sources"]["observer"]["omitted"]))
+
 
 if __name__ == "__main__":
     unittest.main()

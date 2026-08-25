@@ -301,6 +301,14 @@ def collect(
     unavailable: list[dict[str, str]] = []
     briefings = 0
     omitted = selected[MAX_PROJECT_OBSERVERS:]
+    omitted_rows = [
+        {
+            "harness": str(session.get("harness") or ""),
+            "sid": str(session.get("sid") or ""),
+            "reason": f"bounded to {MAX_PROJECT_OBSERVERS} newest active sessions",
+        }
+        for session in omitted
+    ]
     for session in selected[:MAX_PROJECT_OBSERVERS]:
         harness = str(session.get("harness") or "")
         sid = str(session.get("sid") or "")
@@ -323,14 +331,6 @@ def collect(
         gate_rows, prepared = _gate_context(config, state, transcript_path, harness, sid)
         events.extend(gate_rows)
         briefings += prepared
-    unavailable.extend(
-        {
-            "harness": str(session.get("harness") or ""),
-            "sid": str(session.get("sid") or ""),
-            "reason": f"bounded to {MAX_PROJECT_OBSERVERS} newest active sessions",
-        }
-        for session in omitted
-    )
 
     deduped: dict[tuple[object, ...], dict[str, Any]] = {}
     for event in events:
@@ -351,12 +351,20 @@ def collect(
         "observers": observers,
         "events": timeline,
         "sources": {
-            "observer": {"live": len(observers), "unavailable": unavailable},
+            "observer": {
+                "live": len(observers),
+                "unavailable": unavailable,
+                "omitted": omitted_rows,
+            },
             "gate": {
                 "live": gate_count,
                 "untimestamped_prepare": briefings,
                 "status_history": "unavailable",
             },
-            "steer": {"live": steer_count, "unavailable": unavailable},
+            "steer": {
+                "live": steer_count,
+                "unavailable": unavailable,
+                "omitted": omitted_rows,
+            },
         },
     }

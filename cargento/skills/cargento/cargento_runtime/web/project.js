@@ -295,10 +295,12 @@ function projectHistoryBoundary(sources){
   const gate = sources && sources.gate || {};
   const steer = sources && sources.steer || {};
   const missing = Array.isArray(steer.unavailable) ? steer.unavailable.length : 0;
+  const omitted = Array.isArray(steer.omitted) ? steer.omitted.length : 0;
   return `<div class="pc-history-boundary">` +
     `live · ${Number(gate.live) || 0} gate decisions · ${Number(steer.live) || 0} captain instructions · ` +
     `${Number(gate.untimestamped_prepare) || 0} gate preparations lack timestamps · ` +
-    `status-transition history unavailable · ${missing} session transcript readers unavailable</div>`;
+    `status-transition history unavailable · ${missing} session transcript readers unavailable · ` +
+    `${omitted} sessions omitted by the three-session bound</div>`;
 }
 
 function projectView(d, draft){
