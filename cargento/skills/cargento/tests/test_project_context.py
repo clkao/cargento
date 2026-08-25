@@ -516,11 +516,11 @@ class ProjectContextTest(unittest.TestCase):
 
         self.assertEqual(1, len(model["work_items"]))
         self.assertEqual("workflow_item", model["work_items"][0]["kind"])
-        self.assertEqual("search", model["work_items"][0]["label"])
+        self.assertEqual("search · review", model["work_items"][0]["label"])
         self.assertEqual("outcome", model["projections"]["trail_heads"][0]["status"])
         summaries = {fact["summary"] for fact in model["facts"]}
-        self.assertIn("search work requested", summaries)
-        self.assertIn("search result returned", summaries)
+        self.assertIn("search · review dispatched", summaries)
+        self.assertIn("search · review result returned", summaries)
         self.assertFalse(any("/tmp/spacedock-dispatch" in str(value) for value in summaries))
 
     def test_dispatch_artifact_binding_rejects_ambiguous_or_similar_labels(self) -> None:
@@ -561,7 +561,60 @@ class ProjectContextTest(unittest.TestCase):
         model = project_context._semantic_model(events, [])
 
         self.assertEqual(4, len(model["work_items"]))
-        self.assertEqual(2, sum(item["kind"] == "one_off" for item in model["work_items"]))
+        self.assertEqual(1, sum(item["kind"] == "one_off" for item in model["work_items"]))
+
+    def test_async_dispatch_ack_is_birth_only_and_artifact_supplies_identity(self) -> None:
+        artifact = "/tmp/spacedock-dispatch/spacedock-ensign-search-review.md"
+        events = project_context._subagent_events(
+            {"task": f"Read {artifact} and treat its content as your assignment."},
+            call_key="chatcmpl-tool-b27704648c9029bc",
+            at=2.0,
+            result={
+                "succeeded": True,
+                "at": 3.0,
+                "text": "Async: worker [...] The async run is detached and running in the background.",
+            },
+            harness="pi",
+            sid=self.SID,
+        )
+
+        self.assertEqual(["task_started"], [event["kind"] for event in events])
+        model = project_context._semantic_model(events, [])
+        work_item = model["work_items"][0]
+        self.assertEqual("workflow_item", work_item["kind"])
+        self.assertEqual("search · review", work_item["label"])
+        self.assertIn(
+            {"source": "structured Spacedock dispatch artifact", "value": artifact},
+            work_item["source_bindings"],
+        )
+        self.assertEqual("requested", model["projections"]["trail_heads"][0]["status"])
+        self.assertFalse(any(fact["type"] == "work_result" for fact in model["facts"]))
+
+    def test_subagent_result_category_uses_directive_and_rejects_unavailable_review(self) -> None:
+        succeeded = {"succeeded": True, "text": "A substantive result was returned."}
+        unavailable = {
+            "succeeded": True,
+            "text": "Acceptance cannot be requested explicitly; no reviewer result was supplied.",
+        }
+
+        self.assertEqual(
+            "Implementation pass completed",
+            project_context._subagent_result_title(
+                ["Implement the reviewed design after reading its corrections."], succeeded
+            ),
+        )
+        self.assertEqual(
+            "Implementation review completed",
+            project_context._subagent_result_title(
+                ["Review the implementation for correctness."], succeeded
+            ),
+        )
+        self.assertEqual(
+            "",
+            project_context._subagent_result_title(
+                ["Review the implementation for correctness."], unavailable
+            ),
+        )
 
     def test_only_context_sufficient_user_rows_become_intent_projections(self) -> None:
         rows = [

@@ -284,6 +284,18 @@ def _dispatch_artifact(text: str) -> str:
     return match.group(0) if match is not None else ""
 
 
+def _dispatch_artifact_identity(artifact: str) -> tuple[str, str] | None:
+    if not artifact.startswith(_DISPATCH_FILE_PREFIX) or not artifact.endswith(".md"):
+        return None
+    name = artifact[len(_DISPATCH_FILE_PREFIX) : -len(".md")]
+    slug, separator, stage = name.rpartition("-")
+    if not separator or not spacedock.SD_STAGE_RE.fullmatch(slug):
+        return None
+    if not spacedock.SD_STAGE_RE.fullmatch(stage):
+        return None
+    return slug, stage
+
+
 def _subagent_specs(arguments: dict[str, Any]) -> list[tuple[str, str, str, str]]:
     specs: list[tuple[str, str, str, str]] = []
     task = arguments.get("task")
@@ -424,15 +436,17 @@ def _validation_event(
 
 
 def _subagent_category(combined: str) -> str:
-    if "implement" in combined and "review" in combined:
-        return "Implementation review completed"
-    if "review" in combined or "inspect" in combined:
-        return "Technical review completed"
-    if "design" in combined:
-        return "Design result produced"
-    if "implement" in combined:
+    if re.match(r"^(?:review|inspect)\b", combined):
+        return (
+            "Implementation review completed"
+            if "implementation" in combined
+            else "Technical review completed"
+        )
+    if re.match(r"^implement\b", combined):
         return "Implementation pass completed"
-    if "acceptance" in combined:
+    if re.match(r"^(?:design|write\b.*\bdesign)\b", combined):
+        return "Design result produced"
+    if re.match(r"^(?:perform\s+)?(?:independent\s+)?acceptance\b", combined):
         return "Independent acceptance completed"
     return ""
 
@@ -446,8 +460,13 @@ def _subagent_result_counts(text: str, tasks: list[str]) -> tuple[int, int]:
 
 
 def _subagent_result_title(tasks: list[str], result: dict[str, Any]) -> str:
+    if _subagent_result_pending(result):
+        return ""
     text = str(result.get("text", ""))
-    if any(marker in text.casefold() for marker in ("detached", "running in the background")):
+    lowered = text.casefold()
+    if "acceptance cannot be requested explicitly" in lowered or (
+        "cannot supply" in lowered and "reviewer result" in lowered
+    ):
         return ""
     combined = " ".join(tasks).casefold()
     if result.get("succeeded") is not True:
@@ -463,6 +482,11 @@ def _subagent_result_title(tasks: list[str], result: dict[str, Any]) -> str:
         if failures != 1:
             title += "s"
     return title
+
+
+def _subagent_result_pending(result: dict[str, Any]) -> bool:
+    text = str(result.get("text", "")).casefold()
+    return any(marker in text for marker in ("detached", "running in the background"))
 
 
 def _subagent_events(
@@ -499,7 +523,7 @@ def _subagent_events(
                 "stage": "started",
             }
         )
-    if result is None:
+    if result is None or _subagent_result_pending(result):
         return rows
     result_title = _subagent_result_title(tasks, result)
     result_at = result.get("at")
@@ -600,10 +624,7 @@ def _tool_support(
     support["subagent_calls"] = 1
     call_id = block.get("id")
     pair = results.get(call_id) if isinstance(call_id, str) else None
-    pending = pair is None or any(
-        marker in str(pair.get("text", "")).casefold()
-        for marker in ("detached", "running in the background")
-    )
+    pending = pair is None or _subagent_result_pending(pair)
     support["pending_subagents"] = int(pending)
     return support
 
@@ -847,8 +868,7 @@ def _gate_context(
     return events, briefings
 
 
-def _bind_dispatch_artifacts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Bind a consumed dispatch file only to its exact prepared artifact."""
+def _prepared_dispatches(events: list[dict[str, Any]]) -> list[tuple[str, str, str, str, str]]:
     prepared: list[tuple[str, str, str, str, str]] = []
     for event in events:
         if event.get("kind") != "prepared_dispatch":
@@ -860,21 +880,50 @@ def _bind_dispatch_artifacts(events: list[dict[str, Any]]) -> list[dict[str, Any
         stage = str(event.get("stage") or "")
         if workflow and entity and (artifact or prefix):
             prepared.append((artifact, prefix, workflow, entity, stage))
+    return prepared
+
+
+def _artifact_bindings(
+    artifact: str, prepared: list[tuple[str, str, str, str, str]]
+) -> set[tuple[str, str, str]]:
+    bindings: set[tuple[str, str, str]] = set()
+    for exact, prefix, workflow, entity, prepared_stage in prepared:
+        if exact and artifact == exact:
+            bindings.add((workflow, entity, prepared_stage))
+            continue
+        if not artifact.startswith(prefix) or not artifact.endswith(".md"):
+            continue
+        stage = artifact[len(prefix) : -len(".md")]
+        if stage and spacedock.SD_STAGE_RE.fullmatch(stage):
+            bindings.add((workflow, entity, stage))
+    return bindings
+
+
+def _bind_dispatch_artifacts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bind a consumed dispatch file only to its exact prepared artifact."""
+    prepared = _prepared_dispatches(events)
 
     normalized: list[dict[str, Any]] = []
     for source_event in events:
         event = dict(source_event)
         artifact = str(event.get("dispatch_artifact") or "")
-        bindings: set[tuple[str, str, str]] = set()
-        for exact, prefix, workflow, entity, prepared_stage in prepared:
-            if exact and artifact == exact:
-                bindings.add((workflow, entity, prepared_stage))
-                continue
-            if not artifact.startswith(prefix) or not artifact.endswith(".md"):
-                continue
-            stage = artifact[len(prefix) : -len(".md")]
-            if stage and spacedock.SD_STAGE_RE.fullmatch(stage):
-                bindings.add((workflow, entity, stage))
+        identity = _dispatch_artifact_identity(artifact)
+        if event.get("kind") in {"task_started", "task_result"} and identity is not None:
+            entity, stage = identity
+            event.update(
+                {
+                    "entity": entity,
+                    "stage": stage,
+                    "title": (
+                        f"{entity} · {stage} result returned"
+                        if event.get("kind") == "task_result"
+                        else f"{entity} · {stage} dispatched"
+                    ),
+                    "source": str(event.get("source") or "")
+                    + " and structured dispatch artifact path",
+                }
+            )
+        bindings = _artifact_bindings(artifact, prepared)
         if event.get("kind") in {"task_started", "task_result"} and len(bindings) == 1:
             workflow, entity, stage = next(iter(bindings))
             event.update(
@@ -883,11 +932,11 @@ def _bind_dispatch_artifacts(events: list[dict[str, Any]]) -> list[dict[str, Any
                     "entity": entity,
                     "stage": stage,
                     "title": (
-                        f"{entity} result returned"
+                        f"{entity} · {stage} result returned"
                         if event.get("kind") == "task_result"
-                        else f"{entity} work requested"
+                        else f"{entity} · {stage} dispatched"
                     ),
-                    "source": str(event.get("source") or "") + " and exact dispatch artifact match",
+                    "source": str(event.get("source") or "") + " and exact prepared-dispatch match",
                 }
             )
         normalized.append(event)
@@ -898,12 +947,19 @@ def _semantic_work_identity(
     source_event: dict[str, Any], raw_kind: str
 ) -> tuple[str, str, str, str]:
     binding = str(source_event.get("work_item_binding") or "")
-    if raw_kind in {
-        "prepared_dispatch",
-        "task_started",
-        "task_result",
-        "gate",
-    } and source_event.get("entity"):
+    if raw_kind in {"task_started", "task_result"} and source_event.get("entity"):
+        workflow_binding = str(source_event.get("workflow_binding") or "")
+        artifact = str(source_event.get("dispatch_artifact") or "")
+        work_item_id = (
+            _semantic_id("workflow-item", workflow_binding, source_event["entity"])
+            if workflow_binding
+            else _semantic_id("workflow-item-artifact", artifact)
+        )
+        label = str(source_event["entity"])
+        if source_event.get("stage"):
+            label += f" · {source_event['stage']}"
+        return work_item_id, "workflow_item", label, binding
+    if raw_kind in {"prepared_dispatch", "gate"} and source_event.get("entity"):
         workflow_binding = str(source_event.get("workflow_binding") or "unbound-workflow")
         return (
             _semantic_id("workflow-item", workflow_binding, source_event["entity"]),
@@ -991,6 +1047,11 @@ def _semantic_source_binding(
 ) -> dict[str, str]:
     if binding:
         return {"source": "explicit task binding", "value": binding}
+    if source_event.get("dispatch_artifact"):
+        return {
+            "source": "structured Spacedock dispatch artifact",
+            "value": str(source_event["dispatch_artifact"]),
+        }
     if work_item_kind != "workflow_item":
         return {"source": "Pi subagent call", "value": str(source_event.get("lineage") or "")}
     value = (
@@ -1120,6 +1181,8 @@ def _semantic_model(
                 "contributor_refs": [],
             },
         )
+        if raw_kind in {"task_started", "task_result"} and source_event.get("dispatch_artifact"):
+            work_item["label"] = work_item_label
         source_binding = _semantic_source_binding(source_event, work_item_kind, binding)
         if source_binding not in work_item["source_bindings"]:
             work_item["source_bindings"].append(source_binding)
