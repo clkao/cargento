@@ -11,6 +11,7 @@ import unittest
 import urllib.request
 from pathlib import Path
 from typing import ClassVar
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import serve_operator_cockpit as cockpit
@@ -143,6 +144,7 @@ class BranchCheckoutTest(unittest.TestCase):
 
 class FakeBackend(http.server.BaseHTTPRequestHandler):
     posted: ClassVar[bytes] = b""
+    health_pid: ClassVar[int] = 999
 
     def do_GET(self) -> None:
         if self.path == "/":
@@ -150,6 +152,13 @@ class FakeBackend(http.server.BaseHTTPRequestHandler):
             return
         if self.path == "/api/data":
             self._send(200, b'{"sessions":[],"ask":true,"asks":[]}', "application/json")
+            return
+        if self.path == "/api/health":
+            self._send(
+                200,
+                json.dumps({"ok": True, "pid": type(self).health_pid}).encode(),
+                "application/json",
+            )
             return
         if self.path == "/api/stream":
             self._send(200, b"id: 1\ndata: revision\n\n", "text/event-stream")
@@ -246,6 +255,41 @@ class StableProxyTest(unittest.TestCase):
         # optimized into a no-op by a future tearDown rewrite.
         with contextlib.nullcontext():
             self.assertTrue(self.proxy_thread.is_alive())
+
+
+class BackendOwnershipTest(unittest.TestCase):
+    def test_health_from_an_existing_dashboard_does_not_admit_the_new_child(self) -> None:
+        server = http.server.ThreadingHTTPServer((cockpit.LOOPBACK, 0), FakeBackend)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        class Candidate:
+            pid = FakeBackend.health_pid + 1
+            returncode = None
+
+            @staticmethod
+            def poll() -> None:
+                return None
+
+        published = cockpit.PublishedBackend()
+        pool = cockpit.BackendPool(published, Path(sys.executable), (1, 2), Path("."))
+        backend = cockpit.BackendProcess(
+            Path("."),
+            "checkpoint",
+            server.server_port,
+            Candidate(),  # type: ignore[arg-type]
+            object(),
+        )
+        try:
+            with (
+                mock.patch.object(cockpit, "BACKEND_START_TIMEOUT_SEC", 0.15),
+                self.assertRaisesRegex(cockpit.IntegrationError, "did not become healthy"),
+            ):
+                pool._wait_healthy(backend)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 if __name__ == "__main__":

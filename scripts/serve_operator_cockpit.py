@@ -35,6 +35,7 @@ HOP_HEADERS = {
     "upgrade",
 }
 MAX_REQUEST_BYTES = 4 << 20
+BACKEND_START_TIMEOUT_SEC = 20
 
 
 class IntegrationError(RuntimeError):
@@ -212,20 +213,27 @@ class BackendPool:
             self._stop_one(previous)
 
     def _wait_healthy(self, backend: BackendProcess) -> None:
-        deadline = time.monotonic() + 20
+        deadline = time.monotonic() + BACKEND_START_TIMEOUT_SEC
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        url = f"http://{LOOPBACK}:{backend.port}/api/data"
+        root = f"http://{LOOPBACK}:{backend.port}"
         while time.monotonic() < deadline:
             if backend.process.poll() is not None:
                 raise IntegrationError(f"backend exited with {backend.process.returncode}")
             try:
-                with opener.open(url, timeout=2) as response:
+                with opener.open(root + "/api/health", timeout=2) as response:
+                    health = json.loads(response.read(4096))
+                if not isinstance(health, dict) or health.get("pid") != backend.process.pid:
+                    time.sleep(0.1)
+                    continue
+                with opener.open(root + "/api/data", timeout=2) as response:
                     payload = json.loads(response.read(MAX_REQUEST_BYTES))
                 if isinstance(payload, dict) and isinstance(payload.get("sessions"), list):
                     return
             except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError):
                 time.sleep(0.1)
-        raise IntegrationError(f"backend on port {backend.port} did not become healthy")
+        raise IntegrationError(
+            f"backend child {backend.process.pid} on port {backend.port} did not become healthy"
+        )
 
     @staticmethod
     def _stop_one(backend: BackendProcess) -> None:
