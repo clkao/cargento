@@ -109,37 +109,52 @@ fixed hypothesis.
 
 ### `breadboard`
 
-A probe is in breadboard while an ensign maps the space and exercises the riskiest unknowns
-with the cheapest concrete mechanisms available.
+A probe is in breadboard while an ensign maps the data and mechanisms that actually exist and
+exercises the riskiest unknowns with the cheapest concrete mechanisms available. This stage
+proves the substrate for a later prototype; it does not ask the captain to react to a UI.
 
 - **Inputs:** The approved backlog framing, the exact rolling integration baseline, relevant
   Cargento runtime and UI seams, and any prior prototype named by the probe.
-- **Outputs:** A bounded mechanism survey; one or more cheap falsifying spikes; observed
-  failure modes; small artifacts a captain can inspect; and an updated account of which
-  choices still matter.
-- **Good:** The riskiest assumption is exercised end to end before visual polish or durable
-  machinery is added. A failed spike narrows the space and is useful evidence.
-- **Bad:** Building production-quality code, treating a mocked interaction as behavioral
-  evidence, silently choosing a direction because it was easiest to implement, or merging
-  speculative bytes into `main`.
+- **Outputs:** An inventory of every proposed datum and interaction mechanism, naming its
+  current source, availability, freshness, identity mapping, and trust boundary; one or more
+  cheap falsifying spikes against the real local mechanism; observed failure modes; and an
+  updated account of which choices still matter. Fixtures and mocks are labeled illustrations,
+  never availability evidence.
+- **Good:** The ensign proves what Cargento can read or deliver now, what needs a new mechanism,
+  and where live data becomes inferred or mocked before choosing a visual composition. A failed
+  spike narrows the space and is useful evidence.
+- **Bad:** Building a UI over fixture data and calling it a mechanism survey, treating a mocked
+  interaction as behavioral evidence, polishing a prototype before its inputs are proven,
+  silently choosing a direction because it was easiest to implement, or merging speculative
+  bytes into `main`.
 
 ### `shaping`
 
-A probe is in shaping while an ensign compares viable variants, records the decision
-criterion that emerged from the evidence, and makes the useful composition visible on the
-rolling prototype branch.
+A probe is in shaping while an ensign turns the proven breadboard mechanisms into an
+interactive prototype, serves it locally, and iterates with the captain before integrating the
+accepted composition on the rolling prototype branch.
 
-- **Inputs:** Breadboard evidence, concrete variants, the current `proto/operator-cockpit`
-  head, and direct captain feedback already recorded through an approved channel.
-- **Outputs:** The emerged decision criterion; a side-by-side comparison of viable variants;
-  costs and tradeoffs; the selected prototype checkpoint integrated by the single-writer
-  lane; and the exact integration commit with a reproducible viewing procedure.
-- **Good:** A captain can experience or falsify the recommendation. The comparison explains
-  why the selected variant better serves the operator value, not merely why its code is
-  cleaner.
-- **Bad:** Allowing parallel writers on the rolling branch, overwriting an operator-authored
-  goal with inferred text, recording an integration commit that was not actually exercised,
-  or declaring certainty because the implementation happens to exist.
+- **Inputs:** The breadboard's real-data and mechanism inventory, concrete variants built only
+  on demonstrated inputs, the current `proto/operator-cockpit` head, and each round of captain
+  feedback recorded through an approved channel.
+- **Outputs:** A locally served interactive prototype wired to the demonstrated mechanisms;
+  the URL and exact isolated checkpoint shown to the captain; the captain's observations and
+  requested changes; the resulting decision criterion and variant tradeoffs; and, only after
+  the captain accepts the direction, the selected checkpoint integrated by the single-writer
+  lane with a reproducible viewing procedure.
+- **Good:** The ensign sends an `interview_request` when the server is ready, the first officer
+  presents the live URL, and the stage remains open while the captain manipulates the prototype
+  and the ensign iterates. The accepted checkpoint uses live sources where available and labels
+  every unavailable source or simulated outcome in the interface.
+- **Bad:** Completing shaping before the captain has interacted with the served prototype;
+  presenting a static mock as the shaped result; allowing fixtures to impersonate live state;
+  allowing parallel writers on the rolling branch; overwriting operator text with inference;
+  or integrating a checkpoint different from the one accepted and exercised.
+
+A shaping Stage Report is incomplete until it records the served checkpoint, the captain's
+feedback, the resulting change or explicit no-change decision, and the final interaction the
+captain accepted. Starting a server and reporting its URL is an intermediate request, not stage
+completion.
 
 ### `review`
 
@@ -148,18 +163,21 @@ exact rolling-integration checkpoint, then the captain decides whether the appro
 for development, needs revision, should be dropped, or should remain held.
 
 - **Inputs:** The complete probe body; every breadboard and shaping artifact; the isolated
-  probe branch; the exact integration checkpoint; the current workflow README; and the
-  proposed development seed when PASSED is recommended.
+  probe branch; the exact integration checkpoint the captain interacted with and accepted;
+  the recorded shaping feedback; the current workflow README; and the proposed development
+  seed when PASSED is recommended.
 - **Outputs:** Evidence for every acceptance criterion; the checks actually run; a comparison
   of the selected direction with the strongest rejected alternative; remaining unknowns
   classified as implementation detail or approach-changing risk; the fact that would reverse
-  the recommendation; and a PASSED or REJECTED recommendation.
+  the recommendation; a PASSED or REJECTED recommendation; and, for REJECTED, the canonical
+  `briefing.json` plus `briefing.review.jsonl` package required to record and route the round.
 - **Good:** The review can reject a visually compelling prototype for wrong-target delivery,
   fabricated state, lost persistence, security ambiguity, or failure to improve the operator's
   decision. A PASSED recommendation leaves development with execution work, not research.
-- **Bad:** Trusting a shaping report without reproducing its decisive path, treating suite-green
-  as proof of operator value, accepting mocked data as a working channel, or asking development
-  to settle a product or architecture choice the probe left open.
+- **Bad:** Reviewing a checkpoint the captain did not interact with, trusting a shaping report
+  without reproducing its decisive path, treating suite-green as proof of operator value,
+  accepting mocked data as a working channel, rejecting without the canonical correction-round
+  package, or asking development to settle a product or architecture choice the probe left open.
 - **Gate content:** Lead with the recommended captain decision; show the integrated experience,
   evidence against the decision criterion, costs, approach-changing unknowns, reversal fact,
   and the exact proposed development handoff.
