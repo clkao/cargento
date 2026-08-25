@@ -123,3 +123,16 @@ Shaping selects a registered long-poll mailbox because application acknowledgeme
 ### Summary
 
 REJECTED despite AC-1 through AC-3 passing against the real disposable tmux receiver at the exact checkpoint. The evidence is strong enough to retain the registered-mailbox hypothesis, but not to hand it to development until a real mailbox path is exercised and the captain fixes and accepts authentication, payload power, and consent lifetime.
+
+## Stage Report: breadboard (cycle 2)
+
+- DONE: Inventory current session identity, registration, polling, ask, acknowledgement, tmux, HTTP, and event-stream mechanisms, naming availability, ownership, freshness, and trust boundaries.
+  Commit `07bcb5b` records the survey of `origin/main` commit `825746a` in `docs/plans/session-interaction-origin-mechanism-inventory.md`. It distinguishes collected `(harness, sid)` identity, event normalization and capabilities, MCP ask attribution, ask and SSE one-slot registries, browser polling, HTTP admission, and the absent operator-to-session origin and receipt owners.
+- DONE: Exercise the smallest real disposable registration-to-delivery-to-receipt path; if a mailbox mechanism is absent, prove the exact gap with a bounded transport spike rather than a mocked UI.
+  `docs/plans/session-interaction-mailbox-breadboard.py` starts a real loopback HTTP server and disposable client threads, then exercises register, poll, deliver, receipt, and outcome routes. Its committed result proves intact acknowledged and rejected delivery, token refusal, strict locator refusal, literal metacharacters, stale and unregistered refusal, and honest unknown outcomes; its self-asserted session claim proves the remaining ownership gap.
+- DONE: Separate demonstrated mechanism choices from captain-owned authentication, payload, and consent decisions, and identify the smallest substrate shaping can expose interactively.
+  The inventory separates server-minted names, one-slot bounds, long polling, fixed receipts, strict request shapes, and no false success from the captain-owned authentication, payload-power, and consent-lifetime choices. It limits later shaping to a real origin record, authenticated poll and receipt, same-origin delivery, and outcome read; claim state remains `unverified`, and no send control is valid before those choices are accepted.
+
+### Summary
+
+The correction exercised the proposed mailbox sequence over real loopback HTTP without steering a real session, reading private content, or changing the cockpit prototype. The spike proves the transport and receipt mechanics while deliberately failing session-ownership proof, so authentication, payload power, and consent lifetime remain explicit captain decisions.
