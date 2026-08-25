@@ -28,6 +28,71 @@
 
     <section id="cockpit" aria-live="polite"></section>
 
+    <section class="interaction-lab" aria-labelledby="interaction-title">
+      <div class="interaction-head">
+        <div>
+          <p class="eyebrow">Session interaction origin</p>
+          <h2 id="interaction-title">Intervene without guessing the terminal.</h2>
+          <p class="interaction-dek">The session registers. The operator chooses. The client acknowledges.</p>
+        </div>
+        <span class="prototype-badge">selected shape · registered mailbox</span>
+      </div>
+
+      <div class="variant-grid" aria-label="Interaction transport comparison">
+        <article class="variant measured">
+          <div class="variant-title"><span>Registered tmux adapter</span><b>measured bridge</b></div>
+          <p>Exact bytes reach one registered receiver. A pane write alone cannot prove application acceptance.</p>
+          <ul>
+            <li>Requires tmux, a stable pane, and a receiver shim.</li>
+            <li>Returns unknown when the receiver does not acknowledge.</li>
+          </ul>
+        </article>
+        <article class="variant selected">
+          <div class="variant-title"><span>Registered long-poll mailbox</span><b>selected contract</b></div>
+          <p>The client owns message handling. The browser receives no pane, socket, or shell target.</p>
+          <ul>
+            <li>Fits the bounded poll and one-slot outcome primitives already in Cargento.</li>
+            <li>Makes application acknowledgement part of the transport contract.</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="origin-grid" aria-label="Candidate interaction origins">
+        <article class="origin registered-origin">
+          <span class="origin-state">registered · connected</span>
+          <strong>Breadboard project overview</strong>
+          <span>codex:8f21 · opaque origin `origin-a`</span>
+        </article>
+        <article class="origin">
+          <span class="origin-state muted-state">not registered</span>
+          <strong>Audit observer seams</strong>
+          <span>claude:22ab · no addressable origin</span>
+        </article>
+      </div>
+
+      <div class="interaction-console">
+        <label class="interaction-input">
+          <span>Bounded operator input</span>
+          <textarea id="interaction-input" rows="3">Keep the literal text: $(touch /tmp/not-run); &amp;&amp; `echo nope`</textarea>
+        </label>
+        <label>
+          <span>Exercise outcome</span>
+          <select id="interaction-case">
+            <option value="acknowledged">Acknowledged</option>
+            <option value="rejected">Rejected by session</option>
+            <option value="receipt-timeout">Receipt path absent</option>
+            <option value="stale">Stale registration</option>
+            <option value="disconnected">Client disconnected</option>
+            <option value="unregistered">Unregistered target</option>
+            <option value="locator-attack">Browser supplies tmux locator</option>
+          </select>
+        </label>
+        <button type="button" id="interaction-run">Exercise delivery</button>
+      </div>
+      <div id="interaction-result" class="interaction-result" aria-live="polite"></div>
+      <p class="fixture-warning">Interactive contract model · no real session receives bytes from this page</p>
+    </section>
+
     <section class="exercise" aria-labelledby="exercise-title">
       <div>
         <p class="eyebrow">Falsifying controls</p>
@@ -42,7 +107,7 @@
     </section>
 
     <details class="inventory">
-      <summary>Evidence inventory: what is live, derived, or mocked</summary>
+      <summary>Evidence inventory: what is live, measured, derived, or mocked</summary>
       <div id="inventory"></div>
     </details>
   </main>

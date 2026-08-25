@@ -8,7 +8,15 @@ const script = fs.readFileSync(path.join(__dirname, "app.js"), "utf8");
 const libraryContext = { window: {} };
 vm.createContext(libraryContext);
 vm.runInContext(script, libraryContext);
-const { FIXTURE, SOURCE_INVENTORY, createModel, inventoryAudit, renderShape } = libraryContext.window.CockpitBreadboard;
+const {
+  FIXTURE,
+  SOURCE_INVENTORY,
+  createInteractionModel,
+  createModel,
+  interactionMarkup,
+  inventoryAudit,
+  renderShape,
+} = libraryContext.window.CockpitBreadboard;
 const plain = value => JSON.parse(JSON.stringify(value));
 
 class MemoryStorage {
@@ -36,6 +44,10 @@ function createPage(storage) {
     "exercise-log": element(),
     "active-count": element(),
     "attention-count": element(),
+    "interaction-case": element({ value: "acknowledged" }),
+    "interaction-input": element({ value: "literal input" }),
+    "interaction-result": element(),
+    "interaction-run": element(),
     "move-ask": element(),
     "publish-conflict": element(),
     "reset-demo": element(),
@@ -122,4 +134,84 @@ test("inventory refuses a fixture-only source labeled live", () => {
     mechanism: "fixture-only constant",
   });
   assert.match(inventoryAudit(dishonest).join("\n"), /fixture-only source cannot be called live/);
+});
+
+test("registered interaction resolves one exact target and preserves literal text", () => {
+  const model = createInteractionModel();
+  const text = "literal; $(touch /tmp/not-run); `echo nope` && <tag>";
+  const acknowledged = model.exercise("acknowledged", text);
+  assert.deepEqual(plain(acknowledged), {
+    state: "acknowledged",
+    reason: "application-receipt",
+    deliveredBytes: 52,
+    messageId: "m1",
+    receivedText: text,
+  });
+  assert.equal(model.inbox.length, 1);
+  assert.equal(model.inbox[0].text, text);
+
+  const unregistered = model.exercise("unregistered", "must not arrive");
+  assert.deepEqual(plain(unregistered), {
+    state: "refused",
+    reason: "unregistered-origin",
+    deliveredBytes: 0,
+  });
+  assert.equal(model.inbox.length, 1);
+
+  const locator = model.exercise("locator-attack", text);
+  assert.deepEqual(plain(locator), {
+    state: "refused",
+    reason: "malformed-request",
+    deliveredBytes: 0,
+  });
+  assert.equal(model.inbox.length, 1);
+  assert.doesNotMatch(interactionMarkup(acknowledged), /<tag>/);
+  assert.match(interactionMarkup(acknowledged), /&lt;tag&gt;/);
+});
+
+test("interaction outcomes never promote missing evidence to success", () => {
+  const cases = Object.fromEntries([
+    "acknowledged",
+    "rejected",
+    "receipt-timeout",
+    "stale",
+    "disconnected",
+  ].map(name => [name, createInteractionModel().exercise(name, "payload")]));
+
+  assert.equal(cases.acknowledged.state, "acknowledged");
+  assert.equal(cases.rejected.state, "rejected");
+  assert.deepEqual(
+    plain([cases["receipt-timeout"].state, cases["receipt-timeout"].reason]),
+    ["unknown", "receipt-timeout"],
+  );
+  assert.deepEqual(plain([cases.stale.state, cases.stale.deliveredBytes]), ["refused", 0]);
+  assert.deepEqual(
+    plain([cases.disconnected.state, cases.disconnected.deliveredBytes]),
+    ["unknown", 0],
+  );
+});
+
+test("one pending mailbox entry causes a hard refusal and no automatic retry", () => {
+  const model = createInteractionModel();
+  const request = { channelId: "origin-a", text: "deliver once" };
+  const queued = model.deliver(request, "pending", 50);
+  assert.deepEqual(plain([queued.state, queued.reason]), ["queued", "awaiting-application-receipt"]);
+  assert.equal(model.inbox.length, 1);
+
+  const second = model.deliver(request, "acknowledged", 50);
+  assert.deepEqual(plain(second), {
+    state: "refused",
+    reason: "mailbox-busy",
+    deliveredBytes: 0,
+  });
+  assert.equal(model.inbox.length, 1);
+});
+
+test("interaction control renders the selected result on the page", () => {
+  const page = createPage(new MemoryStorage());
+  page.elements["interaction-case"].value = "rejected";
+  page.elements["interaction-input"].value = "do not infer success";
+  page.elements["interaction-run"].fire("click");
+  assert.match(page.elements["interaction-result"].innerHTML, /class="outcome rejected">rejected/);
+  assert.match(page.elements["interaction-result"].innerHTML, /do not infer success/);
 });

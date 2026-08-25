@@ -35,10 +35,33 @@
     { source: "Observer goal publication", kind: "mocked", mechanism: "Button simulates a newly published observer payload" },
     { source: "Needs-you project signal", kind: "derived", mechanism: "Reduced from outstanding asks on every render" },
     { source: "Session mirror, memory, causal log, consistency", kind: "mocked", mechanism: "Not rendered; baseline prototype remains drill-down evidence only" },
+    { source: "Disposable tmux delivery", kind: "measured", mechanism: "Committed runner result from two isolated candidate sessions; one registered" },
+    { source: "Interaction outcome controls", kind: "mocked", mechanism: "Live contract reducer over operator-selected client-state fixtures; no session transport" },
   ];
+
+  const INTERACTION_FIXTURE = {
+    registration: {
+      channelId: "origin-a",
+      sessionId: "codex:8f21",
+      expiresAt: 100,
+    },
+    unregisteredChannelId: "candidate-two",
+  };
 
   const clone = value => JSON.parse(JSON.stringify(value));
   const goalKey = projectId => `cargento.breadboard.project-goal.${projectId}`;
+
+  function utf8Length(value) {
+    let bytes = 0;
+    for (const char of value) {
+      const point = char.codePointAt(0);
+      if (point <= 0x7f) bytes += 1;
+      else if (point <= 0x7ff) bytes += 2;
+      else if (point <= 0xffff) bytes += 3;
+      else bytes += 4;
+    }
+    return bytes;
+  }
 
   function createModel(storage, fixture) {
     const state = clone(fixture || FIXTURE);
@@ -100,9 +123,72 @@
     return { goalFor, moveAsk, publishObserverGoal, rememberGoal, reset, snapshot };
   }
 
+  function createInteractionModel(fixture) {
+    const state = clone(fixture || INTERACTION_FIXTURE);
+    const inbox = [];
+    let sequence = 0;
+    let pendingMessage = null;
+
+    function outcome(name, reason, details) {
+      return { state: name, reason, deliveredBytes: 0, ...details };
+    }
+
+    function deliver(request, clientState, now) {
+      const keys = Object.keys(request).sort();
+      if (keys.join(",") !== "channelId,text") {
+        return outcome("refused", "malformed-request", {});
+      }
+      if (typeof request.channelId !== "string" || typeof request.text !== "string") {
+        return outcome("refused", "malformed-request", {});
+      }
+      if (request.text.length > 500) return outcome("refused", "text-too-large", {});
+      if (request.channelId !== state.registration.channelId) {
+        return outcome("refused", "unregistered-origin", {});
+      }
+      if (now >= state.registration.expiresAt) {
+        return outcome("refused", "stale-registration", {});
+      }
+      if (pendingMessage) return outcome("refused", "mailbox-busy", {});
+      sequence += 1;
+      const messageId = `m${sequence}`;
+      if (clientState === "disconnected") {
+        return outcome("unknown", "transport-disconnected", { messageId });
+      }
+      inbox.push({ messageId, text: request.text });
+      const details = {
+        deliveredBytes: utf8Length(request.text),
+        messageId,
+        receivedText: request.text,
+      };
+      if (clientState === "pending") {
+        pendingMessage = details;
+        return outcome("queued", "awaiting-application-receipt", details);
+      }
+      if (clientState === "rejected") return outcome("rejected", "application-receipt", details);
+      if (clientState === "receipt-timeout") return outcome("unknown", "receipt-timeout", details);
+      return outcome("acknowledged", "application-receipt", details);
+    }
+
+    function exercise(caseName, text) {
+      if (caseName === "locator-attack") {
+        return deliver({ channelId: state.registration.channelId, text, target: "other:0.0; touch /tmp/no" }, "acknowledged", 50);
+      }
+      const channelId = caseName === "unregistered"
+        ? state.unregisteredChannelId
+        : state.registration.channelId;
+      const now = caseName === "stale" ? state.registration.expiresAt : 50;
+      const clientState = ["rejected", "receipt-timeout", "disconnected"].includes(caseName)
+        ? caseName
+        : "acknowledged";
+      return deliver({ channelId, text }, clientState, now);
+    }
+
+    return { deliver, exercise, inbox };
+  }
+
   function inventoryAudit(inventory) {
     const rows = inventory || SOURCE_INVENTORY;
-    const allowed = new Set(["live", "mocked", "derived"]);
+    const allowed = new Set(["live", "measured", "mocked", "derived"]);
     const errors = [];
     rows.forEach(row => {
       if (!allowed.has(row.kind)) errors.push(`${row.source}: unknown kind`);
@@ -165,17 +251,33 @@
     return shape === "ledger" ? ledgerMarkup(projects) : deckMarkup(projects);
   }
 
+  function interactionMarkup(result) {
+    if (!result) {
+      return `<span class="outcome waiting">not exercised</span>` +
+        `<p>Choose a failure shape. The result must distinguish refusal, rejection, and unknown.</p>`;
+    }
+    const received = result.deliveredBytes
+      ? `<div><span>application received</span><code>${esc(result.receivedText)}</code></div>`
+      : `<div><span>application received</span><code>zero bytes</code></div>`;
+    return `<span class="outcome ${esc(result.state)}">${esc(result.state)}</span>` +
+      `<div class="receipt-grid"><div><span>reason</span><code>${esc(result.reason)}</code></div>` +
+      `<div><span>message</span><code>${esc(result.messageId || "not created")}</code></div>${received}</div>`;
+  }
+
   global.CockpitBreadboard = {
-    FIXTURE, SOURCE_INVENTORY, createModel, goalKey, inventoryAudit, renderShape,
+    FIXTURE, INTERACTION_FIXTURE, SOURCE_INVENTORY, createInteractionModel, createModel,
+    goalKey, interactionMarkup, inventoryAudit, renderShape,
   };
 
   if (!global.document || !global.localStorage) return;
 
   const document = global.document;
   const model = createModel(global.localStorage, FIXTURE);
+  const interaction = createInteractionModel(INTERACTION_FIXTURE);
   let shape = "deck";
   const cockpit = document.getElementById("cockpit");
   const log = document.getElementById("exercise-log");
+  const interactionResult = document.getElementById("interaction-result");
 
   function bindEditors() {
     document.querySelectorAll(".goal-editor").forEach(form => form.addEventListener("submit", event => {
@@ -224,10 +326,17 @@
     render();
   });
 
+  document.getElementById("interaction-run").addEventListener("click", () => {
+    const caseName = document.getElementById("interaction-case").value;
+    const text = document.getElementById("interaction-input").value;
+    interactionResult.innerHTML = interactionMarkup(interaction.exercise(caseName, text));
+  });
+
   const audit = inventoryAudit(SOURCE_INVENTORY);
   document.getElementById("inventory").innerHTML = `<table class="inventory-table"><thead><tr><th>Source</th><th>Status</th><th>Mechanism / boundary</th></tr></thead><tbody>` +
     SOURCE_INVENTORY.map(row => `<tr><td>${esc(row.source)}</td><td><span class="kind ${esc(row.kind)}">${esc(row.kind)}</span></td><td>${esc(row.mechanism)}</td></tr>`).join("") +
     `</tbody></table><p>${audit.length ? esc(audit.join(" · ")) : "Inventory audit: every source is classified; no fixture-only source is labeled live."}</p>`;
 
+  interactionResult.innerHTML = interactionMarkup(null);
   render();
 }(typeof window === "undefined" ? globalThis : window));

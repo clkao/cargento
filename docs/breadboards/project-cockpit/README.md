@@ -46,6 +46,74 @@ Select the **project deck as the default cockpit** and retain the attention ledg
 
 The recommendation is falsified if representative operators recover the four facts faster and with fewer wrong joins in the ledger, or if realistic project counts make card scanning materially slower before a decision is reached.
 
+## Session interaction composition
+
+The cockpit now includes a session-interaction lab. It compares a registered tmux adapter with a registered long-poll mailbox.
+
+The decision criterion comes from the disposable tmux evidence. A viable channel must meet all of these conditions:
+
+1. The session registers its interaction origin before the page can address it.
+2. The page supplies only an opaque channel ID and bounded content. It supplies no transport locator.
+3. The intended client receives the content without a text change. An unregistered client receives zero bytes.
+4. Only an application receipt produces `acknowledged` or `rejected`.
+5. A stale origin produces `refused`. A lost receipt or disconnected transport produces `unknown`.
+6. The operator starts each delivery. The session explicitly starts and renews its registration.
+
+If both variants meet these conditions, prefer the variant that avoids foreground-mode risk and works without a terminal-specific dependency.
+
+The registered mailbox wins this comparison. Application acknowledgement is part of its contract, and the client owns content handling. The tmux variant needs a receiver shim to gain the same property. Without that shim, a pane write proves only that tmux accepted bytes.
+
+| Cost or tradeoff | Registered tmux adapter | Registered long-poll mailbox |
+|---|---|---|
+| Target resolution | The server stores a tmux socket generation and pane ID. | The server stores an opaque channel and client generation. |
+| Application receipt | A receiver shim must add it. | The contract requires it. |
+| Foreground state | A different foreground program can change text meaning. | The registered client owns message handling. |
+| Platform cost | Requires tmux and a stable pane. | Requires loopback HTTP and a small client. |
+| Failure report | A tmux error or missing shim receipt becomes `unknown`. | A missing client receipt becomes `unknown`. |
+| Useful role | Optional adapter behind a receiver protocol. | Selected transport-neutral prototype direction. |
+
+### Choice classification
+
+| Choice | Shaping result | Reason |
+|---|---|---|
+| Authentication | Security boundary. Captain decision required. | The prototype uses an opaque fixture ID and makes no authentication claim. |
+| Payload power | Security boundary. Captain decision required. | Bounded text is useful, but it is more powerful than the ask lane's index response. |
+| Consent lifetime | Consent boundary. Captain decision required. | A short renewable lease tied to client and server generations is the recommendation. |
+| Queueing | Resolved for the recommendation: one outstanding message, then hard refusal. | A queue can hide operator intent and make stale work arrive late. |
+| Retry | Resolved for the recommendation: no automatic retry. | A second attempt needs another operator action. Future retry support also needs stable IDs and client deduplication. |
+
+The interaction lab does not steer a session. Its result reducer is live browser code over selected fixture states. The evidence inventory labels that boundary as mocked.
+
+## Reproduce the interaction evidence
+
+Run the static prototype:
+
+```bash
+python3 -m http.server 8765 --directory docs/breadboards/project-cockpit
+```
+
+Open `http://127.0.0.1:8765/`. In **Session interaction origin**, select and exercise each outcome.
+
+- `Acknowledged` and `Rejected by session` show the exact input as application data.
+- `Receipt path absent` and `Client disconnected` show `unknown`, never success.
+- `Stale registration`, `Unregistered target`, and the locator attack show `refused` with zero application bytes.
+- The default shell-metacharacter text remains literal in the result.
+
+Run the browser contract checks:
+
+```bash
+node --test docs/breadboards/project-cockpit/app.test.js
+```
+
+Run the disposable tmux exercise and compare it with the committed result:
+
+```bash
+python3 docs/plans/session-interaction-origin-breadboard.py \
+  | diff -u docs/plans/session-interaction-origin-breadboard-results.json -
+```
+
+This command starts two sessions on a new isolated tmux server. Only one session registers. The script stops that server on every exit path.
+
 ## Observed failure modes
 
 - A project-level badge alone was insufficient after reassignment: the question became detached from its original session row. Both shapes now render the outstanding ask independently of session membership, so the reason for attention follows the signal.
