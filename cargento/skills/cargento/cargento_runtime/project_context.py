@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -12,7 +13,7 @@ from . import io as runtime_io
 from . import observer, records, spacedock
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from .config import RuntimeConfig
     from .state import RuntimeState
@@ -31,6 +32,18 @@ _DIRECTIVE_TAGS = (
     ("answered", ("answer to", "answered")),
     ("generated", ("new acceptance", "add a new", "create a new")),
 )
+_SEMANTIC_FACT_TYPES = {
+    "steer": "user_message",
+    "prepared_dispatch": "prepared_dispatch",
+    "task_started": "work_birth",
+    "task_result": "work_result",
+    "outcome": "result",
+    "gate": "gate_decision",
+    "checkpoint": "result",
+    "decision": "decision",
+    "test_result": "result",
+    "ask_resolution": "decision",
+}
 _DISPATCH_BUILD_RE = re.compile(r"^\s*spacedock\s+dispatch\s+build(?:\s+(.*))?$", re.IGNORECASE)
 _DISPATCH_VALUE_OPTIONS = {
     "--checklist-file",
@@ -39,6 +52,11 @@ _DISPATCH_VALUE_OPTIONS = {
     "--stamp",
     "--workflow-dir",
 }
+
+
+def _semantic_id(prefix: str, *parts: object) -> str:
+    payload = "\x1f".join(str(part) for part in parts).encode("utf-8", "replace")
+    return f"{prefix}:{hashlib.sha256(payload).hexdigest()[:16]}"
 
 
 def _transcript_signature(transcript_path: str) -> dict[str, int] | None:
@@ -58,57 +76,41 @@ def _observe_session(
     *,
     now: float,
     refresh: bool,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     signature = _transcript_signature(transcript_path)
     cached = observer.read_sidecar(config, harness, sid)
     cached_payload = cached if isinstance(cached, dict) else {}
     raw_cached_model = cached_payload.get("model")
     cached_model = raw_cached_model if isinstance(raw_cached_model, dict) else {}
-    expected_model = {
-        "provider": "codex-cli",
-        "model": observer.OBSERVER_MODEL,
-        "reasoning_effort": observer.OBSERVER_MODEL_REASONING_EFFORT,
-    }
-    reuse = (
-        not refresh
-        and signature is not None
-        and cached_payload.get("transcript") == signature
-        and cached_model
-        and all(cached_model.get(key) == value for key, value in expected_model.items())
-    )
-    model: observer.ModelCaller | Callable[[str, str], str | None] | None
-    caller: observer.CodexGoalModel | None = None
-    if (
-        reuse
-        and cached_model.get("status") in {"used", "cached"}
-        and isinstance(cached_payload.get("goal"), str)
-    ):
-        cached_goal = str(cached_payload["goal"])
-
-        def cached_caller(_recent: str, _stage: str) -> str:
-            return cached_goal
-
-        model = cached_caller
+    if not refresh:
+        observed_at = cached_payload.get("observed_at")
+        goal = cached_payload.get("goal")
+        if not isinstance(observed_at, (int, float)) or not isinstance(goal, str):
+            return None
         model_metadata = dict(cached_model)
-        model_metadata["status"] = "cached"
-    elif reuse:
-        model = None
-        model_metadata = dict(cached_model)
-        model_metadata["status"] = "cached-fallback"
-    else:
-        caller = observer.CodexGoalModel(config)
-        model = caller
-        model_metadata = caller.metadata()
+        model_metadata["status"] = (
+            "cached" if cached_payload.get("transcript") == signature else "cached-stale"
+        )
+        return {
+            "goal": goal,
+            "stage": cached_payload.get("stage"),
+            "block": cached_payload.get("block"),
+            "reason": cached_payload.get("reason"),
+            "model": model_metadata,
+            "observed_at": observed_at,
+            "snapshot_status": model_metadata["status"],
+        }
+
+    caller = observer.CodexGoalModel(config)
     result = observer.analyze(
         config,
         state,
         transcript_path,
         now=now,
         window_sec=config.window_hours * 3600,
-        model=model,
+        model=caller,
     )
-    if caller is not None:
-        model_metadata = caller.metadata()
+    model_metadata = caller.metadata()
     sidecar = {
         **result,
         "model": model_metadata,
@@ -116,7 +118,12 @@ def _observe_session(
         "observed_at": now,
     }
     observer.write_sidecar(config, harness, sid, sidecar)
-    return {**result, "model": model_metadata, "observed_at": now}
+    return {
+        **result,
+        "model": model_metadata,
+        "observed_at": now,
+        "snapshot_status": "refreshed",
+    }
 
 
 def _instruction_event(
@@ -181,7 +188,7 @@ def _record_timestamp(record: dict[str, Any]) -> float | None:
     return records.parse_ts(record.get("timestamp") or message_ts or "")
 
 
-def _dispatch_identity(command_line: str) -> tuple[str, str] | None:
+def _dispatch_identity(command_line: str) -> tuple[str, str, str] | None:
     match = _DISPATCH_BUILD_RE.match(command_line)
     if match is None:
         return None
@@ -191,6 +198,7 @@ def _dispatch_identity(command_line: str) -> tuple[str, str] | None:
         return None
     slug = ""
     stage = ""
+    workflow_binding = ""
     index = 0
     while index < len(tokens):
         part = tokens[index]
@@ -200,6 +208,8 @@ def _dispatch_identity(command_line: str) -> tuple[str, str] | None:
             value = tokens[index + 1] if index + 1 < len(tokens) else ""
             if part == "--stage" and spacedock.SD_STAGE_RE.fullmatch(value):
                 stage = value
+            elif part == "--workflow-dir":
+                workflow_binding = value
             index += 2
             continue
         if part.startswith("-"):
@@ -208,7 +218,7 @@ def _dispatch_identity(command_line: str) -> tuple[str, str] | None:
         if not slug and spacedock.SD_STAGE_RE.fullmatch(part):
             slug = part
         index += 1
-    return (slug, stage) if slug else None
+    return (workflow_binding, slug, stage) if slug else None
 
 
 def _subagent_tasks(arguments: dict[str, Any]) -> list[str]:
@@ -225,6 +235,27 @@ def _subagent_tasks(arguments: dict[str, Any]) -> list[str]:
             if isinstance(value, str) and value.strip():
                 tasks.append(value)
     return tasks
+
+
+def _subagent_specs(arguments: dict[str, Any]) -> list[tuple[str, str, str]]:
+    specs: list[tuple[str, str, str]] = []
+    task = arguments.get("task")
+    if isinstance(task, str) and task.strip():
+        contributor = arguments.get("agent") or arguments.get("name") or ""
+        binding = arguments.get("work_item") or arguments.get("task_id") or ""
+        specs.append((task, str(contributor), str(binding)))
+    batch = arguments.get("tasks")
+    if isinstance(batch, list):
+        for item in batch:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("task")
+            if not isinstance(value, str) or not value.strip():
+                continue
+            contributor = item.get("agent") or item.get("name") or ""
+            binding = item.get("work_item") or item.get("task_id") or ""
+            specs.append((value, str(contributor), str(binding)))
+    return specs
 
 
 def _work_records(config: RuntimeConfig, transcript_path: str) -> list[dict[str, Any]]:
@@ -249,23 +280,46 @@ def _work_records(config: RuntimeConfig, transcript_path: str) -> list[dict[str,
     return transcript
 
 
-def _paired_results(transcript: list[dict[str, Any]]) -> dict[str, bool]:
-    results: dict[str, bool] = {}
+def _result_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return records.safe_text(content, 16_000)
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+    return records.safe_text("\n".join(parts), 16_000)
+
+
+def _paired_results(transcript: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    results: dict[str, dict[str, Any]] = {}
     for record in transcript:
         message = record.get("message")
         if not isinstance(message, dict) or message.get("role") != "toolResult":
             continue
         call_id = message.get("toolCallId")
         if isinstance(call_id, str):
-            results[call_id] = message.get("isError") is not True
+            results[call_id] = {
+                "succeeded": message.get("isError") is not True,
+                "text": _result_text(message),
+                "at": _record_timestamp(record),
+            }
     return results
+
+
+def _dispatch_count(command: str) -> int:
+    return sum(_dispatch_identity(line) is not None for line in command.splitlines())
 
 
 def _dispatch_events(
     command: str,
     *,
     at: float,
-    succeeded: bool | None,
+    result: dict[str, Any] | None,
     harness: str,
     sid: str,
 ) -> list[dict[str, Any]]:
@@ -274,69 +328,177 @@ def _dispatch_events(
         identity = _dispatch_identity(command_line)
         if identity is None:
             continue
-        slug, stage = identity
-        action = "Built" if succeeded is True else "Attempted"
-        title = f"{action} dispatch package · {slug}"
-        if stage:
-            title += f" · {stage}"
+        workflow_binding, slug, stage = identity
+        title = slug + (f" → {stage}" if stage else " dispatched")
         events.append(
             {
                 "at": at,
-                "kind": "work",
-                "phase": "Spacedock dispatch build",
+                "kind": "prepared_dispatch",
+                "phase": "Spacedock dispatch preparation",
                 "title": title,
                 "source": "Pi bash tool call"
-                + (" and paired result" if succeeded is not None else ""),
+                + (" and paired result" if result is not None else ""),
                 "harness": harness,
                 "sid": sid,
                 "entity": slug,
+                "workflow_binding": workflow_binding,
+                "stage": stage,
+                "succeeded": result.get("succeeded") if result is not None else None,
             }
         )
     return events
 
 
-def _subagent_event(
-    arguments: dict[str, Any],
+def _validation_event(
+    result: dict[str, Any] | None,
     *,
     at: float,
-    succeeded: bool | None,
     harness: str,
     sid: str,
 ) -> dict[str, Any] | None:
-    tasks = _subagent_tasks(arguments)
-    if not tasks:
+    if not result or result.get("succeeded") is not True:
         return None
-    if len(tasks) > 1:
-        title = f"{len(tasks)} background tasks contributed"
-    else:
-        task = _semantic_line(tasks[0], MAX_SEMANTIC_LINE)
-        if not task:
-            return None
-        if succeeded is None:
-            title = f"Background task started · {task}"
-        elif succeeded:
-            title = f"Background task returned · {task}"
-        else:
-            title = f"Background task failed · {task}"
+    match = re.search(r"(?<!\d)(\d+)\s+passed(?:\s+in\s+[\d.]+s)?", str(result.get("text", "")))
+    if match is None:
+        return None
+    count = int(match.group(1))
     return {
         "at": at,
-        "kind": "outcome" if succeeded is not None else "work",
-        "phase": "ordinary subagent task and paired result"
-        if succeeded is not None
-        else "ordinary subagent task",
-        "title": title,
-        "source": "Pi subagent tool call" + (" and paired result" if succeeded is not None else ""),
+        "kind": "outcome",
+        "phase": "validation result",
+        "title": f"{count} validation checks passed",
+        "source": "Pi bash tool call and paired successful result",
         "harness": harness,
         "sid": sid,
-        "contributors": len(tasks),
+        "checks_passed": count,
     }
+
+
+def _subagent_category(combined: str) -> str:
+    if "implement" in combined and "review" in combined:
+        return "Implementation review completed"
+    if "review" in combined or "inspect" in combined:
+        return "Technical review completed"
+    if "design" in combined:
+        return "Design result produced"
+    if "implement" in combined:
+        return "Implementation pass completed"
+    if "acceptance" in combined:
+        return "Independent acceptance completed"
+    return ""
+
+
+def _subagent_result_counts(text: str, tasks: list[str]) -> tuple[int, int]:
+    completed = re.search(r"(?:children|tasks?):\s*(\d+)\s+completed", text, re.IGNORECASE)
+    failed = re.search(r"(\d+)\s+failed", text, re.IGNORECASE)
+    completed_count = int(completed.group(1)) if completed else len(tasks)
+    failed_count = int(failed.group(1)) if failed else 0
+    return completed_count, failed_count
+
+
+def _subagent_result_title(tasks: list[str], result: dict[str, Any]) -> str:
+    text = str(result.get("text", ""))
+    if any(marker in text.casefold() for marker in ("detached", "running in the background")):
+        return ""
+    combined = " ".join(tasks).casefold()
+    if result.get("succeeded") is not True:
+        return "Independent acceptance was unavailable" if "acceptance" in combined else ""
+    title = _subagent_category(combined)
+    if not title:
+        return ""
+    contributors, failures = _subagent_result_counts(text, tasks)
+    if contributors > 1:
+        title += f" by {contributors} contributors"
+    if failures:
+        title += f" with {failures} contributor failure"
+        if failures != 1:
+            title += "s"
+    return title
+
+
+def _subagent_events(
+    arguments: dict[str, Any],
+    *,
+    call_key: str,
+    at: float,
+    result: dict[str, Any] | None,
+    harness: str,
+    sid: str,
+) -> list[dict[str, Any]]:
+    specs = _subagent_specs(arguments)
+    tasks = [spec[0] for spec in specs]
+    if not specs:
+        return []
+    rows: list[dict[str, Any]] = []
+    for index, (task, contributor, binding) in enumerate(specs):
+        title = _semantic_line(task, MAX_SEMANTIC_LINE)
+        if not title:
+            continue
+        rows.append(
+            {
+                "at": at,
+                "kind": "task_started",
+                "phase": "ordinary subagent task",
+                "title": title,
+                "source": "Pi subagent task label",
+                "harness": harness,
+                "sid": sid,
+                "lineage": f"{call_key}:{index}",
+                "work_item_binding": binding,
+                "contributor_ref": contributor,
+                "stage": "started",
+            }
+        )
+    if result is None:
+        return rows
+    result_title = _subagent_result_title(tasks, result)
+    if not result_title:
+        return rows
+    result_at = result.get("at")
+    outcome_at = float(result_at) if isinstance(result_at, (int, float)) else at
+    text = str(result.get("text", ""))
+    completed = re.search(r"(?:children|tasks?):\s*(\d+)\s+completed", text, re.IGNORECASE)
+    failed = re.search(r"(\d+)\s+failed", text, re.IGNORECASE)
+    complete_count = int(completed.group(1)) if completed else len(tasks)
+    failure_count = int(failed.group(1)) if failed else 0
+    if len(tasks) == 1 or (complete_count == len(tasks) and failure_count == 0):
+        for index, (_task, contributor, binding) in enumerate(specs):
+            rows.append(
+                {
+                    "at": outcome_at,
+                    "kind": "task_result",
+                    "phase": "ordinary subagent result",
+                    "title": result_title,
+                    "source": "Pi subagent task label and paired result",
+                    "harness": harness,
+                    "sid": sid,
+                    "lineage": f"{call_key}:{index}",
+                    "work_item_binding": binding,
+                    "contributor_ref": contributor,
+                    "stage": "completed",
+                }
+            )
+    else:
+        rows.append(
+            {
+                "at": outcome_at,
+                "kind": "outcome",
+                "phase": "ordinary subagent batch result",
+                "title": result_title,
+                "source": "Pi subagent batch call and paired result",
+                "harness": harness,
+                "sid": sid,
+                "contributors": len(tasks),
+            }
+        )
+    return rows
 
 
 def _tool_call_events(
     block: dict[str, Any],
     *,
     at: float,
-    results: dict[str, bool],
+    results: dict[str, dict[str, Any]],
     harness: str,
     sid: str,
 ) -> list[dict[str, Any]]:
@@ -344,27 +506,110 @@ def _tool_call_events(
     call_key = call_id if isinstance(call_id, str) else ""
     arguments = block.get("arguments")
     args = arguments if isinstance(arguments, dict) else {}
+    result = results.get(call_key)
     if block.get("name") == "bash":
         command = args.get("command")
-        if not isinstance(command, str):
-            return []
-        return _dispatch_events(
-            command,
+        dispatches = _dispatch_events(
+            command if isinstance(command, str) else "",
             at=at,
-            succeeded=results.get(call_key),
+            result=result,
             harness=harness,
             sid=sid,
         )
+        validation = _validation_event(result, at=at, harness=harness, sid=sid)
+        return dispatches + ([validation] if validation is not None else [])
     if block.get("name") != "subagent":
         return []
-    event = _subagent_event(
+    return _subagent_events(
         args,
+        call_key=call_key,
         at=at,
-        succeeded=results.get(call_key),
+        result=result,
         harness=harness,
         sid=sid,
     )
-    return [event] if event is not None else []
+
+
+def _tool_support(
+    block: dict[str, Any], results: dict[str, dict[str, Any]]
+) -> dict[str, int] | None:
+    name = block.get("name")
+    if name not in {"bash", "subagent"}:
+        return None
+    support = {"tool_calls": 1, "dispatch_builds": 0, "subagent_calls": 0, "pending_subagents": 0}
+    arguments = block.get("arguments")
+    args = arguments if isinstance(arguments, dict) else {}
+    if name == "bash" and isinstance(args.get("command"), str):
+        support["dispatch_builds"] = _dispatch_count(args["command"])
+    if name != "subagent" or not _subagent_tasks(args):
+        return support
+    support["subagent_calls"] = 1
+    call_id = block.get("id")
+    pair = results.get(call_id) if isinstance(call_id, str) else None
+    pending = pair is None or any(
+        marker in str(pair.get("text", "")).casefold()
+        for marker in ("detached", "running in the background")
+    )
+    support["pending_subagents"] = int(pending)
+    return support
+
+
+def _assistant_tool_calls(
+    transcript: list[dict[str, Any]],
+) -> Iterator[tuple[float, dict[str, Any]]]:
+    for record in transcript:
+        message = record.get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        at = _record_timestamp(record)
+        if not isinstance(content, list) or at is None:
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "toolCall":
+                yield at, block
+
+
+def _work_evidence(
+    config: RuntimeConfig,
+    transcript_path: str,
+    harness: str,
+    sid: str,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Demonstrated Pi results plus counts for suppressed supporting telemetry."""
+    stats = {
+        "tool_calls": 0,
+        "dispatch_builds": 0,
+        "subagent_calls": 0,
+        "pending_subagents": 0,
+        "suppressed_tool_calls": 0,
+        "collapsed_contributors": 0,
+    }
+    if harness != "pi":
+        return [], stats
+    transcript = _work_records(config, transcript_path)
+    results = _paired_results(transcript)
+
+    events: list[dict[str, Any]] = []
+    for at, block in _assistant_tool_calls(transcript):
+        support = _tool_support(block, results)
+        if support is None:
+            continue
+        for key, value in support.items():
+            stats[key] += value
+        found = _tool_call_events(
+            block,
+            at=at,
+            results=results,
+            harness=harness,
+            sid=sid,
+        )
+        events.extend(found)
+        if not found:
+            stats["suppressed_tool_calls"] += 1
+        for event in found:
+            stats["collapsed_contributors"] += max(0, int(event.get("contributors", 1)) - 1)
+    return events, stats
 
 
 def work_events(
@@ -373,36 +618,8 @@ def work_events(
     harness: str,
     sid: str,
 ) -> list[dict[str, Any]]:
-    """Meaningful Pi tool work; lifecycle/status-only calls stay suppressed."""
-    if harness != "pi":
-        return []
-    transcript = _work_records(config, transcript_path)
-    results = _paired_results(transcript)
-
-    events: list[dict[str, Any]] = []
-    for record in transcript:
-        message = record.get("message")
-        if not isinstance(message, dict) or message.get("role") != "assistant":
-            continue
-        content = message.get("content")
-        if not isinstance(content, list):
-            continue
-        at = _record_timestamp(record)
-        if at is None:
-            continue
-        for block in content:
-            if not isinstance(block, dict) or block.get("type") != "toolCall":
-                continue
-            events.extend(
-                _tool_call_events(
-                    block,
-                    at=at,
-                    results=results,
-                    harness=harness,
-                    sid=sid,
-                )
-            )
-    return events
+    """Demonstrated Pi results; supporting tool and lifecycle facts stay suppressed."""
+    return _work_evidence(config, transcript_path, harness, sid)[0]
 
 
 def instruction_events(
@@ -437,6 +654,7 @@ def _gate_event(
     current: dict[str, str],
     slug: str,
     workflow: str,
+    workflow_binding: str,
     harness: str,
     sid: str,
 ) -> dict[str, Any] | None:
@@ -461,7 +679,11 @@ def _gate_event(
         "harness": harness,
         "sid": sid,
         "workflow": workflow,
+        "workflow_binding": workflow_binding,
         "entity": slug,
+        "decision": decision,
+        "by": current.get("by", ""),
+        "target_stage": current.get("target_stage", ""),
     }
 
 
@@ -476,6 +698,8 @@ def _gate_field(body: str, block: str, current: dict[str, str], gate_stage: str)
                 break
     elif block == "application" and body.startswith("state:"):
         current["application"] = body[len("state:") :].strip().strip("\"'")
+    elif block == "application" and body.startswith("target-stage:"):
+        current["target_stage"] = body[len("target-stage:") :].strip().strip("\"'")
     return gate_stage
 
 
@@ -486,6 +710,8 @@ def gate_events(
     workflow: str,
     harness: str,
     sid: str,
+    *,
+    workflow_binding: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """All timestamped gate decisions and the untimestamped briefing count."""
     events: list[dict[str, Any]] = []
@@ -495,7 +721,15 @@ def gate_events(
     briefings = 0
 
     def flush() -> None:
-        event = _gate_event(config, current, slug, workflow, harness, sid)
+        event = _gate_event(
+            config,
+            current,
+            slug,
+            workflow,
+            workflow_binding or workflow,
+            harness,
+            sid,
+        )
         if event is not None:
             events.append(event)
 
@@ -545,10 +779,284 @@ def _gate_context(
                 )
             except spacedock.SdMismatchError:
                 continue
-            found, prepared = gate_events(config, lines, slug, str(workflow["name"]), harness, sid)
+            found, prepared = gate_events(
+                config,
+                lines,
+                slug,
+                str(workflow["name"]),
+                harness,
+                sid,
+                workflow_binding=str(workflow_dir),
+            )
             events.extend(found)
             briefings += prepared
     return events, briefings
+
+
+def _semantic_work_identity(
+    source_event: dict[str, Any], raw_kind: str
+) -> tuple[str, str, str, str]:
+    binding = str(source_event.get("work_item_binding") or "")
+    if raw_kind in {"prepared_dispatch", "gate"} and source_event.get("entity"):
+        workflow_binding = str(source_event.get("workflow_binding") or "unbound-workflow")
+        return (
+            _semantic_id("workflow-item", workflow_binding, source_event["entity"]),
+            "workflow_item",
+            str(source_event["entity"]),
+            binding,
+        )
+    if raw_kind not in {"task_started", "task_result"} or not source_event.get("lineage"):
+        return "", "unknown", "", binding
+    work_item_id = (
+        _semantic_id("work-item", "bound", binding)
+        if binding
+        else _semantic_id("work-item", "one-off", source_event["lineage"])
+    )
+    return (
+        work_item_id,
+        "unknown" if binding else "one_off",
+        str(source_event.get("title") or "one-off work"),
+        binding,
+    )
+
+
+def _semantic_actor_claim(source_event: dict[str, Any], raw_kind: str) -> str:
+    if raw_kind == "steer":
+        return "timestamped non-meta user-role record"
+    if raw_kind in {"prepared_dispatch", "task_started", "task_result", "outcome"}:
+        return "session assistant/tool exchange"
+    if raw_kind == "gate":
+        return str(source_event.get("by") or "decision author unavailable")
+    return ""
+
+
+def _semantic_fact_from_event(
+    source_event: dict[str, Any], raw_kind: str, fact_type: str, work_item_id: str
+) -> dict[str, Any]:
+    fact_id = _semantic_id(
+        "fact",
+        raw_kind,
+        source_event.get("harness"),
+        source_event.get("sid"),
+        source_event.get("at"),
+        source_event.get("workflow_binding"),
+        source_event.get("entity"),
+        source_event.get("lineage"),
+        source_event.get("title"),
+    )
+    fact: dict[str, Any] = {
+        "fact_id": fact_id,
+        "at": source_event.get("at"),
+        "type": fact_type,
+        "summary": source_event.get("title"),
+        "scope": "workflow" if raw_kind == "gate" else "session",
+        "actor_claim": _semantic_actor_claim(source_event, raw_kind),
+        "work_item_id": work_item_id or None,
+        "evidence": {"source": source_event.get("source"), "confidence": "exact"},
+    }
+    for key in ("stage", "decision", "by", "target_stage"):
+        if source_event.get(key) not in (None, ""):
+            fact[key] = source_event[key]
+    return fact
+
+
+def _semantic_intent(fact: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    projection_id = _semantic_id("intent", fact["fact_id"])
+    projection = {
+        "projection_id": projection_id,
+        "at": fact["at"],
+        "kind": "operator_intent",
+        "summary": fact["summary"],
+        "derived_from": fact["fact_id"],
+        "confidence": "derived-deterministic",
+    }
+    relation = {
+        "from": projection_id,
+        "to": fact["fact_id"],
+        "type": "derived_from",
+        "confidence": "exact",
+        "provenance": "bounded semantic-line extraction",
+    }
+    return projection, relation
+
+
+def _semantic_source_binding(
+    source_event: dict[str, Any], work_item_kind: str, binding: str
+) -> dict[str, str]:
+    if binding:
+        return {"source": "explicit task binding", "value": binding}
+    if work_item_kind != "workflow_item":
+        return {"source": "Pi subagent call", "value": str(source_event.get("lineage") or "")}
+    value = (
+        str(source_event.get("workflow_binding") or "unbound-workflow")
+        + ":"
+        + str(source_event.get("entity") or "")
+    )
+    return {"source": "Spacedock entity slug", "value": value}
+
+
+def _semantic_work_relation(
+    source_event: dict[str, Any], raw_kind: str, fact_id: str, work_item_id: str
+) -> dict[str, Any] | None:
+    relation_type = {
+        "prepared_dispatch": "binds_to",
+        "task_started": "binds_to",
+        "task_result": "progresses",
+        "gate": "decides",
+    }.get(raw_kind)
+    if relation_type is None:
+        return None
+    return {
+        "from": fact_id,
+        "to": work_item_id,
+        "type": relation_type,
+        "confidence": "structural" if raw_kind in {"prepared_dispatch", "gate"} else "exact",
+        "provenance": source_event.get("source"),
+    }
+
+
+def _semantic_observer_facts(observers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    facts: list[dict[str, Any]] = []
+    for observer_row in observers:
+        observed_at = observer_row.get("observed_at")
+        goal = observer_row.get("goal")
+        if not isinstance(observed_at, (int, float)) or not isinstance(goal, str):
+            continue
+        facts.append(
+            {
+                "fact_id": _semantic_id(
+                    "observer",
+                    observer_row.get("harness"),
+                    observer_row.get("sid"),
+                    observed_at,
+                    goal,
+                ),
+                "at": observed_at,
+                "type": "observer_snapshot",
+                "summary": goal,
+                "scope": "session",
+                "actor_claim": "model-derived observer snapshot",
+                "work_item_id": None,
+                "evidence": {
+                    "source": observer_row.get("source"),
+                    "confidence": "derived",
+                    "snapshot_status": observer_row.get("snapshot_status"),
+                },
+            }
+        )
+    return facts
+
+
+def _semantic_trail_heads(
+    fact_by_work_item: dict[str, list[dict[str, Any]]], facts: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    heads: list[dict[str, Any]] = []
+    for work_item_id, item_facts in fact_by_work_item.items():
+        newest = max(item_facts, key=lambda fact: float(fact.get("at") or 0))
+        status = {
+            "prepared_dispatch": "prepared",
+            "work_birth": "started",
+            "work_result": "outcome",
+            "gate_decision": "decision",
+        }.get(str(newest.get("type")), "latest")
+        heads.append(
+            {
+                "work_item_id": work_item_id,
+                "status": status,
+                "latest_meaningful_event": newest["fact_id"],
+            }
+        )
+    at_by_id = {fact["fact_id"]: float(fact.get("at") or 0) for fact in facts}
+    return sorted(
+        heads,
+        key=lambda head: at_by_id.get(str(head["latest_meaningful_event"]), 0),
+        reverse=True,
+    )
+
+
+def _semantic_model(
+    events: list[dict[str, Any]], observers: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Immutable source facts, explicit relations, and replaceable projections."""
+    ordered = sorted(events, key=lambda event: float(event.get("at") or 0))
+    facts: list[dict[str, Any]] = []
+    work_items: dict[str, dict[str, Any]] = {}
+    contributors: dict[str, dict[str, Any]] = {}
+    relations: list[dict[str, Any]] = []
+    intent_projections: list[dict[str, Any]] = []
+    fact_by_work_item: dict[str, list[dict[str, Any]]] = {}
+    for source_event in ordered:
+        raw_kind = str(source_event.get("kind") or "")
+        fact_type = _SEMANTIC_FACT_TYPES.get(raw_kind)
+        if fact_type is None:
+            continue
+        work_item_id, work_item_kind, work_item_label, binding = _semantic_work_identity(
+            source_event, raw_kind
+        )
+        fact = _semantic_fact_from_event(source_event, raw_kind, fact_type, work_item_id)
+        fact_id = str(fact["fact_id"])
+        facts.append(fact)
+        if raw_kind == "steer":
+            projection, relation = _semantic_intent(fact)
+            intent_projections.append(projection)
+            relations.append(relation)
+        if not work_item_id:
+            continue
+        work_item = work_items.setdefault(
+            work_item_id,
+            {
+                "work_item_id": work_item_id,
+                "label": work_item_label,
+                "kind": work_item_kind,
+                "source_bindings": [],
+                "contributor_refs": [],
+            },
+        )
+        source_binding = _semantic_source_binding(source_event, work_item_kind, binding)
+        if source_binding not in work_item["source_bindings"]:
+            work_item["source_bindings"].append(source_binding)
+        fact_by_work_item.setdefault(work_item_id, []).append(fact)
+        work_relation = _semantic_work_relation(source_event, raw_kind, fact_id, work_item_id)
+        if work_relation is not None:
+            relations.append(work_relation)
+        contributor_ref = str(source_event.get("contributor_ref") or "")
+        if contributor_ref:
+            contributor_id = _semantic_id("contributor", contributor_ref)
+            contributors.setdefault(
+                contributor_id,
+                {
+                    "contributor_id": contributor_id,
+                    "source_label": contributor_ref,
+                    "identity_status": "unverified source label",
+                },
+            )
+            if contributor_id not in work_item["contributor_refs"]:
+                work_item["contributor_refs"].append(contributor_id)
+            relations.append(
+                {
+                    "from": contributor_id,
+                    "to": work_item_id,
+                    "type": "contributes_to",
+                    "confidence": "source-labeled",
+                    "provenance": source_event.get("source"),
+                }
+            )
+
+    facts.extend(_semantic_observer_facts(observers))
+    facts.sort(key=lambda fact: float(fact.get("at") or 0), reverse=True)
+    trail_heads = _semantic_trail_heads(fact_by_work_item, facts)
+    return {
+        "facts": facts,
+        "work_items": list(work_items.values()),
+        "contributors": list(contributors.values()),
+        "relations": relations,
+        "projections": {
+            "operator_intents": intent_projections,
+            "trail_heads": trail_heads,
+            "steering_episodes": [],
+            "candidate_goal_shifts": [],
+        },
+    }
 
 
 def collect(
@@ -590,6 +1098,14 @@ def collect(
     events: list[dict[str, Any]] = []
     unavailable: list[dict[str, str]] = []
     briefings = 0
+    support_totals = {
+        "tool_calls": 0,
+        "dispatch_builds": 0,
+        "subagent_calls": 0,
+        "pending_subagents": 0,
+        "suppressed_tool_calls": 0,
+        "collapsed_contributors": 0,
+    }
     omitted_rows = [
         {
             "harness": str(session.get("harness") or ""),
@@ -613,11 +1129,23 @@ def collect(
             harness,
             sid,
             now=now,
-            refresh=refresh,
+            refresh=refresh and focus is not None,
         )
-        observers.append({**identity, **result, "source": "bounded transcript and entity state"})
+        if result is not None:
+            observers.append(
+                {
+                    **identity,
+                    **result,
+                    "source": "cached observer snapshot"
+                    if str(result.get("snapshot_status", "")).startswith("cached")
+                    else "bounded transcript and entity state",
+                }
+            )
         events.extend(instruction_events(config, transcript_path, harness, sid))
-        events.extend(work_events(config, transcript_path, harness, sid))
+        work_rows, work_support = _work_evidence(config, transcript_path, harness, sid)
+        events.extend(work_rows)
+        for support_key in support_totals:
+            support_totals[support_key] += work_support[support_key]
         gate_rows, prepared = _gate_context(config, state, transcript_path, harness, sid)
         events.extend(gate_rows)
         briefings += prepared
@@ -630,13 +1158,19 @@ def collect(
             event.get("title"),
             event.get("workflow"),
             event.get("entity"),
+            event.get("lineage"),
+            event.get("work_item_binding"),
         )
         deduped.setdefault(key, event)
     timeline = sorted(deduped.values(), key=lambda event: float(event["at"]), reverse=True)
     timeline = timeline[:MAX_PROJECT_EVENTS]
     gate_count = sum(1 for event in timeline if event["kind"] == "gate")
     steer_count = sum(1 for event in timeline if event["kind"] == "steer")
-    work_count = sum(1 for event in timeline if event["kind"] in {"work", "outcome"})
+    work_count = sum(
+        1
+        for event in timeline
+        if event["kind"] in {"prepared_dispatch", "task_started", "task_result", "outcome"}
+    )
     return {
         "project": project,
         "focus": {
@@ -650,6 +1184,7 @@ def collect(
         else None,
         "observers": observers,
         "events": timeline,
+        "semantic": _semantic_model(timeline, observers),
         "sources": {
             "scope": scope,
             "surrounding_active": surrounding_active,
@@ -670,6 +1205,7 @@ def collect(
             },
             "work": {
                 "live": work_count,
+                "support": support_totals,
                 "unavailable": unavailable,
                 "omitted": omitted_rows,
             },

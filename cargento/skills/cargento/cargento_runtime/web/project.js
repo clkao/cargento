@@ -9,12 +9,9 @@
    contract. The page states the collision and rename failure beside the value. */
 const PROJECT_COCKPIT_KEY = "cargento.projectCockpitProject";
 const PROJECT_GOAL_PREFIX = "cargento.projectGoal.v1:";
-const PROJECT_STEERING_NODE_LIMIT = 3;
-const PROJECT_OUTCOME_NODE_LIMIT = 4;
-const PROJECT_SOURCE_LANE_WINDOW = 6;
-const PROJECT_OUTCOME_KINDS = new Set([
-  "gate", "checkpoint", "decision", "test_result", "ask_resolution", "outcome", "work"
-]);
+const PROJECT_VISIBLE_TRAIL_HEADS = 5;
+const PROJECT_VISIBLE_INTENTS = 2;
+const PROJECT_VISIBLE_STANDALONE = 2;
 let projectCockpitLabel = null;
 let projectQueryLabel = null;
 let projectQuerySession = null;
@@ -371,32 +368,12 @@ function projectLoadContext(d, refresh){
     if(refresh) projectGoalNote = "context refreshed";
     if(lastData) render(lastData);
   }).catch(() => {
-    projectContextByLabel[cacheKey] = {state: "error", data: null, generated: d.generated};
+    projectContextByLabel[cacheKey] = {
+      state: "error", data: old && old.data || null, generated: d.generated
+    };
     if(refresh) projectGoalNote = "context refresh failed";
     if(lastData) render(lastData);
   });
-}
-
-function projectTimelineEvents(focus, sourceEvents){
-  const exact = row => !focus ||
-    (row.harness === focus.harness && row.sid === focus.sid);
-  const events = sourceEvents.filter(exact).map(row => Object.assign({}, row));
-  const semantic = events.filter(event => Number(event.at) && event.source &&
-    (event.kind === "steer" || PROJECT_OUTCOME_KINDS.has(event.kind)))
-    .sort((a, b) => a.at - b.at);
-  const steering = semantic.filter(event => event.kind === "steer")
-    .slice(-PROJECT_SOURCE_LANE_WINDOW);
-  const work = semantic.filter(event => PROJECT_OUTCOME_KINDS.has(event.kind));
-  const selectedWork = work.slice(-PROJECT_SOURCE_LANE_WINDOW);
-  const preserveNewest = phase => {
-    const candidate = work.filter(event => event.phase === phase).slice(-1)[0];
-    if(!candidate || selectedWork.some(event => event.phase === phase)) return;
-    if(selectedWork.length >= PROJECT_SOURCE_LANE_WINDOW) selectedWork.shift();
-    selectedWork.push(candidate);
-  };
-  preserveNewest("Spacedock dispatch build");
-  preserveNewest("ordinary subagent task and paired result");
-  return steering.concat(selectedWork).sort((a, b) => a.at - b.at);
 }
 
 function projectLifecycleEvidence(focus){
@@ -410,119 +387,124 @@ function projectLifecycleEvidence(focus){
     `they do not enter What happened.</li>`;
 }
 
-function projectRelationTarget(event, steering){
-  if(!event.related_to || !event.relation_source) return null;
-  return steering.find(item => item.id && item.id === event.related_to) || null;
-}
-
-function projectSemanticNode(d, event, kind, steering, visible){
-  const ago = event.at
-    ? fmtDur(Math.max(0, (Number(d.generated) || 0) - event.at)) + " ago"
-    : "time unavailable";
-  const iso = event.at ? new Date(Number(event.at) * 1000).toISOString() : "";
-  const steeringTag = kind === "steer" && event.steering_tag && event.tag_source
-    ? `<span class="pc-intent">${esc(event.steering_tag)}</span>` : "";
-  const relation = kind === "outcome" && projectRelationTarget(event, steering)
-    ? `<span class="pc-relation" data-causal-link="supported">linked by ${esc(event.relation_source)}</span>`
-    : "";
-  return `<article class="pc-semantic-node ${kind}" data-visible-node="${visible}">` +
-    `<div class="pc-event-title">${esc(event.title)}</div>${steeringTag}${relation}` +
-    `<details class="pc-event-evidence"><summary>evidence</summary>` +
-    `<div>${esc(ago)} · ${esc(event.phase || event.kind)} · ${esc(event.source || "source unavailable")}` +
+function projectFactEvidence(fact){
+  const evidence = fact.evidence || {};
+  const iso = Number(fact.at) ? new Date(Number(fact.at) * 1000).toISOString() : "";
+  return `<details class="pc-event-evidence"><summary>evidence</summary><div>` +
+    `${esc(evidence.source || "source unavailable")}` +
+    (evidence.confidence ? ` · ${esc(evidence.confidence)}` : "") +
     (iso ? ` · <time datetime="${esc(iso)}">${esc(iso)}</time>` : "") +
-    (event.detail ? ` · ${esc(event.detail)}` : "") + `</div></details></article>`;
+    `</div></details>`;
 }
 
-function projectSemanticLane(d, title, kind, events, steering){
-  const empty = kind === "steer"
-    ? "No timestamped non-meta user-role instruction found."
-    : "No demonstrated outcome found for this session.";
-  const newest = events.slice().reverse();
-  const limit = kind === "steer" ? PROJECT_STEERING_NODE_LIMIT : PROJECT_OUTCOME_NODE_LIMIT;
-  const visible = newest.slice(0, limit);
-  const overflow = newest.slice(limit);
-  return `<section class="pc-semantic-lane" data-order="newest-first"` +
-    ` data-semantic-lane="${kind === "steer" ? "steering" : "outcome"}">` +
-    `<h4>${esc(title)}</h4>` + (visible.length
-      ? visible.map(event => projectSemanticNode(d, event, kind, steering, true)).join("")
-      : `<div class="pc-semantic-empty">${empty}</div>`) +
-    (overflow.length ? `<details class="pc-semantic-overflow"><summary>${overflow.length} older ` +
-      `${kind === "steer" ? "instructions" : "work records"}</summary>` +
-      overflow.map(event => projectSemanticNode(d, event, kind, steering, false)).join("") +
-      `</details>` : "") + `</section>`;
+function projectTrailRow(d, head, model){
+  const facts = Array.isArray(model.facts) ? model.facts : [];
+  const items = Array.isArray(model.work_items) ? model.work_items : [];
+  const item = items.find(candidate => candidate.work_item_id === head.work_item_id) || {};
+  const latest = facts.find(fact => fact.fact_id === head.latest_meaningful_event) || {};
+  const history = facts.filter(fact => fact.work_item_id === head.work_item_id)
+    .sort((a, b) => Number(b.at) - Number(a.at));
+  const status = head.status === "started" ? "started · current state unverified" : head.status;
+  const age = latest.at ? fmtDur(Math.max(0, Number(d.generated) - Number(latest.at))) + " ago" : "";
+  return `<article class="pc-trail" data-trail-head="${esc(head.status || "latest")}">` +
+    `<span class="pc-trail-dot ${esc(head.status || "latest")}"></span><div class="pc-trail-body">` +
+    `<div class="pc-trail-top"><strong>${esc(item.label || latest.summary || "Work item")}</strong>` +
+    `<span>${esc(status)}${age ? ` · ${esc(age)}` : ""}</span></div>` +
+    `<div class="pc-trail-result">${esc(latest.summary || "Latest state")}</div>` +
+    `<details class="pc-trail-history"><summary>${history.length} sourced event${history.length === 1 ? "" : "s"}</summary>` +
+    history.map(fact => `<div class="pc-trail-event"><span>${esc(fact.summary || fact.type)}</span>` +
+      projectFactEvidence(fact) + `</div>`).join("") + `</details></div></article>`;
 }
 
-function projectDerivedContext(d, observers, focus){
-  const rows = observers.filter(row => {
-    if(!Number(row.observed_at) || !row.goal || row.goal === "no goal derived") return false;
-    return !focus || (row.harness === focus.harness && row.sid === focus.sid);
+function projectIntentRow(d, intent, model){
+  const facts = Array.isArray(model.facts) ? model.facts : [];
+  const fact = facts.find(candidate => candidate.fact_id === intent.derived_from) || {};
+  const age = intent.at ? fmtDur(Math.max(0, Number(d.generated) - Number(intent.at))) + " ago" : "";
+  return `<article class="pc-trail intent" data-steering-state="unpaired">` +
+    `<span class="pc-trail-dot intent"></span><div class="pc-trail-body">` +
+    `<div class="pc-trail-top"><strong>Operator intent</strong><span>${esc(age)}</span></div>` +
+    `<div class="pc-trail-result">${esc(intent.summary || "Intent summary unavailable")}</div>` +
+    `<div class="pc-trail-quiet">No demonstrated reaction linked</div>` +
+    projectFactEvidence(fact) + `</div></article>`;
+}
+
+function projectEpisodeRow(d, episode, model){
+  const facts = Array.isArray(model.facts) ? model.facts : [];
+  const intent = (model.projections.operator_intents || []).find(candidate =>
+    candidate.projection_id === episode.intent_id) || {};
+  const adaptation = facts.find(candidate => candidate.fact_id === episode.adaptation_fact) || {};
+  const age = adaptation.at ? fmtDur(Math.max(0, Number(d.generated) - Number(adaptation.at))) + " ago" : "";
+  return `<article class="pc-trail episode" data-steering-state="paired">` +
+    `<span class="pc-trail-dot intent"></span><div class="pc-trail-body">` +
+    `<div class="pc-trail-top"><strong>Course adapted</strong><span>${esc(age)}</span></div>` +
+    `<div class="pc-trail-result"><span>${esc(intent.summary || "Operator intent")}</span>` +
+    `<b aria-label="responded to"> → </b><span>${esc(adaptation.summary || "Demonstrated reaction")}</span></div>` +
+    `<div class="pc-trail-quiet">source-linked reaction · ${esc(episode.confidence || "supported")}</div>` +
+    projectFactEvidence(adaptation) + `</div></article>`;
+}
+
+function projectStandaloneFact(d, fact){
+  const age = fact.at ? fmtDur(Math.max(0, Number(d.generated) - Number(fact.at))) + " ago" : "";
+  const label = fact.type === "observer_snapshot" ? "Derived snapshot" : "Result";
+  return `<article class="pc-trail ${esc(fact.type)}"><span class="pc-trail-dot"></span>` +
+    `<div class="pc-trail-body"><div class="pc-trail-top"><strong>${esc(label)}</strong>` +
+    `<span>${esc(age)}</span></div><div class="pc-trail-result">${esc(fact.summary || label)}</div>` +
+    projectFactEvidence(fact) + `</div></article>`;
+}
+
+function projectSemanticTimeline(d, model){
+  const projections = model.projections || {};
+  const facts = Array.isArray(model.facts) ? model.facts : [];
+  const heads = Array.isArray(projections.trail_heads) ? projections.trail_heads : [];
+  const intents = Array.isArray(projections.operator_intents) ? projections.operator_intents : [];
+  const episodes = Array.isArray(projections.steering_episodes)
+    ? projections.steering_episodes : [];
+  const pairedIntents = new Set(episodes.map(episode => episode.intent_id));
+  const allHeadRows = heads.map(head => {
+    const fact = facts.find(candidate => candidate.fact_id === head.latest_meaningful_event) || {};
+    return {at:Number(fact.at), html:projectTrailRow(d, head, model)};
   });
+  const allIntentRows = intents.filter(intent => !pairedIntents.has(intent.projection_id))
+    .sort((a, b) => Number(b.at) - Number(a.at)).map(intent => ({
+    at:Number(intent.at), html:projectIntentRow(d, intent, model)
+  }));
+  const allStandalone = facts.filter(fact => !fact.work_item_id &&
+    ["result", "decision", "observer_snapshot"].includes(fact.type)).map(fact => ({
+    at:Number(fact.at), html:projectStandaloneFact(d, fact)
+  }));
+  const episodeRows = episodes.map(episode => {
+    const fact = facts.find(candidate => candidate.fact_id === episode.adaptation_fact) || {};
+    return {at:Number(fact.at), html:projectEpisodeRow(d, episode, model)};
+  });
+  const visible = allHeadRows.slice(0, PROJECT_VISIBLE_TRAIL_HEADS)
+    .concat(allIntentRows.slice(0, PROJECT_VISIBLE_INTENTS),
+      allStandalone.slice(0, PROJECT_VISIBLE_STANDALONE), episodeRows)
+    .sort((a, b) => b.at - a.at);
+  const overflow = allHeadRows.slice(PROJECT_VISIBLE_TRAIL_HEADS)
+    .concat(allIntentRows.slice(PROJECT_VISIBLE_INTENTS),
+      allStandalone.slice(PROJECT_VISIBLE_STANDALONE))
+    .sort((a, b) => b.at - a.at);
+  const rows = visible.concat(overflow);
   if(!rows.length) return "";
-  return `<section class="pc-derived-context"><h4>Derived context snapshot</h4>` +
-    rows.slice().sort((a, b) => b.observed_at - a.observed_at).map(row => {
-      const ago = fmtDur(Math.max(0, (Number(d.generated) || 0) - Number(row.observed_at))) + " ago";
-      const iso = new Date(Number(row.observed_at) * 1000).toISOString();
-      const model = row.model || {};
-      const modelLine = model.model
-        ? `${model.model} · reasoning ${model.reasoning_effort || "not reported"} · ${model.status || "not reported"}`
-        : "deterministic observer fallback";
-      return `<article class="pc-semantic-node context" data-visible-node="true"><span class="pc-context-kind">derived · subordinate</span>` +
-        `<div class="pc-event-title">${esc(row.goal)}</div>` +
-        `<details class="pc-event-evidence"><summary>evidence</summary>` +
-        `<div>${esc(ago)} · ${esc(row.source || "bounded transcript observation")} · ${esc(modelLine)} · ` +
-        `<time datetime="${esc(iso)}">${esc(iso)}</time></div></details></article>`;
-    }).join("") + `</section>`;
+  return `<section class="pc-semantic-timeline" data-order="newest-first" data-model="fact-projection">` +
+    visible.map(row => row.html).join("") +
+    (overflow.length ? `<details class="pc-semantic-overflow"><summary>${overflow.length} older trail heads and context</summary>` +
+      overflow.map(row => row.html).join("") + `</details>` : "") + `</section>`;
 }
 
-function projectWorkIntervals(steering, outcomes){
-  const rows = [];
-  for(const outcome of outcomes){
-    const linked = projectRelationTarget(outcome, steering);
-    if(!linked) continue;
-    rows.push({start:linked, outcome:outcome, linked:true});
-  }
-  return rows.slice(-2);
-}
-
-function projectWorkIntervalRows(intervals){
-  if(!intervals.length) return "";
-  return `<section class="pc-work-intervals"><h4>Work intervals</h4>` + intervals.map(row => {
-    const elapsed = fmtDur(Math.max(0, Number(row.outcome.at) - Number(row.start.at)));
-    const relation = row.linked ? "source-linked interval" : "chronology only";
-    return `<div class="pc-work-interval" data-interval-relation="${row.linked ? "supported" : "unverified"}">` +
-      `<strong>Work interval · ${esc(elapsed)}</strong><span>${relation}</span></div>`;
-  }).join("") + `</section>`;
-}
-
-/* One source-honest sequence for the focused session. Each event keeps the
-   identity its producer can actually prove; generic user-role rows never gain
-   captain authorship here. */
-function projectActivity(d, group, focus){
+function projectActivity(d, group){
   const entry = projectContextEntry(group.label);
-  const contextEvents = entry && entry.data && Array.isArray(entry.data.events)
-    ? entry.data.events : [];
-  const observers = entry && entry.data && Array.isArray(entry.data.observers)
-    ? entry.data.observers : [];
-  const events = projectTimelineEvents(
-    focus,
-    contextEvents
-  );
-  const steering = events.filter(event => event.kind === "steer");
-  const outcomes = events.filter(event => PROJECT_OUTCOME_KINDS.has(event.kind));
-  if(!steering.length && !outcomes.length && !observers.length){
+  const model = entry && entry.data && entry.data.semantic;
+  if(!model || !Array.isArray(model.facts) || !model.facts.length){
     const reading = !entry || entry.state === "loading"
-      ? "Reading the gate and instruction sources…"
+      ? "Reading deterministic session evidence…"
       : (entry.state === "error" || !entry.data
-        ? "Gate and instruction sources are unavailable."
-        : "No timestamped exact-session change was found.");
-    return `<div class="pc-empty${entry && entry.state === "error" ? " unavailable" : ""}">` +
-      `${reading}</div>`;
+        ? "Session evidence is unavailable."
+        : "No meaningful exact-session event was found.");
+    return `<div class="pc-empty${entry && entry.state === "error" ? " unavailable" : ""}">${reading}</div>`;
   }
-  return `<div class="pc-semantic-graph" data-causal-model="source-only">` +
-    projectSemanticLane(d, "What you asked", "steer", steering, steering) +
-    projectSemanticLane(d, "What happened", "outcome", outcomes, steering) +
-    projectDerivedContext(d, observers, focus) +
-    projectWorkIntervalRows(projectWorkIntervals(steering, outcomes)) + `</div>`;
+  return `<div class="pc-semantic-graph" data-causal-model="explicit-relations-only">` +
+    projectSemanticTimeline(d, model) + `</div>`;
 }
 
 function projectEvidenceLimits(group, focus){
@@ -532,14 +514,16 @@ function projectEvidenceLimits(group, focus){
   const steer = sources.steer || {};
   const observer = sources.observer || {};
   const work = sources.work || {};
+  const support = work.support || {};
   return `<ul class="pc-limit-list">` +
     `<li><b>Operator note:</b> Operator note overrides derived context. It is browser-only, keyed by the exact project label, and is not durable project authority. <code>${esc(projectGoalKey(group.label))}</code></li>` +
     `<li><b>Requests:</b> Absence of an exact AskRegistry or live needs-input signal does not prove unblocked.</li>` +
-    `<li><b>Meaning:</b> “What you asked” means timestamped non-meta user-role text, not verified captain authorship. Chronological proximity does not imply causality; only a source-named relation is linked.</li>` +
-    `<li><b>Derived context:</b> Bounded transcript observation stays subordinate. Stage and block are omitted when absent.</li>` +
+    `<li><b>Meaning:</b> Intent is derived from timestamped non-meta user-role text, not verified captain authorship. A reaction is linked only when both ends have evidence; chronology alone is not causality.</li>` +
+    `<li><b>Derived context:</b> The cached snapshot stays subordinate and may lag; its timestamp reports its age. Only explicit focused refresh runs model derivation. Stage and block are omitted when absent.</li>` +
+    `<li><b>Work identity:</b> Dispatch builds are preparation, not proof that a worker started. Contributor argument labels remain unverified identities.</li>` +
     `<li><b>Observed sources:</b> ${Number(steer.live) || 0} steering records · ` +
     `${Number(gate.live) || 0} gate decisions · ${Number(work.live) || 0} work records · ` +
-    `${Number(observer.live) || 0} derived snapshots. ` +
+    `${Number(observer.live) || 0} derived snapshots · ${Number(support.suppressed_tool_calls) || 0} supporting tool calls suppressed. ` +
     `Status-transition history is omitted.</li>${projectLifecycleEvidence(focus)}</ul>`;
 }
 
@@ -598,8 +582,7 @@ function projectView(d, draft){
     `</div>` +
     `${mirror}` +
     `<div class="pc-activity"><div class="pc-active-head"><h3>What changed</h3>` +
-    `<span>newest first · verified sources only</span>` +
-    `${projectQuerySession ? "" : projectRefreshControl(group.label, true)}</div>` +
+    `<span>newest first · verified sources only</span></div>` +
     `${projectActivity(d, group, focus)}</div>` +
     `<div class="pc-other"><div class="pc-active-head"><h3>Other project sessions</h3>` +
     `<span>lightweight surrounding context</span></div>${sessions}</div>` +

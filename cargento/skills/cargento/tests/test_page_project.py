@@ -185,7 +185,7 @@ console.log(JSON.stringify({
     settled.includes("context refreshed")
 }));
 """
-        out = self.run_project(checks)
+        out = self.run_project(checks, query_project="repo/proj", query_session="claude:aaa1")
         self.assertTrue(out["busy"])
         self.assertTrue(out["focus"])
         self.assertTrue(out["live"])
@@ -225,7 +225,12 @@ console.log(JSON.stringify({
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [{harness: "claude", sid: "aaa1", goal: "Derived session goal",
     stage: "shaping", block: "waiting for captain", observed_at: 99990,
-    source: "bounded transcript and entity state"}], events: [],
+    source: "bounded transcript and entity state"}], events: [], semantic: {
+    facts: [{fact_id: "observer-1", at: 99990, type: "observer_snapshot",
+      summary: "Derived session goal", work_item_id: null,
+      evidence: {source: "cached observer snapshot", confidence: "derived"}}],
+    work_items: [], relations: [], projections: {operator_intents: [], trail_heads: [],
+      steering_episodes: [], candidate_goal_shifts: []}},
   sources: {gate: {}, steer: {unavailable: []}}
 }};
 render(projectBoard());
@@ -233,7 +238,7 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   operator: h.includes("Operator note <em>remembered in this browser · precedes inference</em>"),
   observed: h.includes("Derived session goal"),
-  scoped: h.includes("Derived context snapshot") && h.includes("derived · subordinate"),
+  scoped: h.includes("Derived snapshot") && h.includes("cached observer snapshot"),
   separate: h.indexOf("Operator note") < h.indexOf("Derived session goal"),
   noOverwrite: h.includes("Operator note overrides derived context"),
   once: h.split("Derived session goal").length - 1 === 1 &&
@@ -333,6 +338,17 @@ projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   events: [{at: 99990, kind: "steer", phase: "user-role transcript message",
     title: "Keep the project as context", detail: "codex:focus-1",
     source: "transcript user-role message", harness: "codex", sid: "focus-1"}],
+  semantic: {facts: [
+    {fact_id: "observer-1", at: 99995, type: "observer_snapshot",
+      summary: "Shape the focused mirror", work_item_id: null,
+      evidence: {source: "cached observer snapshot", confidence: "derived"}},
+    {fact_id: "fact-1", at: 99990, type: "user_message",
+      summary: "Keep the project as context", work_item_id: null,
+      evidence: {source: "timestamped non-meta user-role record", confidence: "exact"}}
+  ], work_items: [], relations: [], projections: {
+    operator_intents: [{projection_id: "intent-1", at: 99990, kind: "operator_intent",
+      summary: "Keep the project as context", derived_from: "fact-1"}],
+    trail_heads: [], steering_episodes: [], candidate_goal_shifts: []}},
   sources: {scope: "focused session", gate: {}, steer: {live: 1, unavailable: []}}
 }};
 const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
@@ -345,19 +361,19 @@ console.log(JSON.stringify({
     h.indexOf("Right now") < h.indexOf("What changed") &&
     h.indexOf("What changed") < h.indexOf("Shape the focused mirror"),
   motion: h.includes("working now") && h.includes("running exec"),
-  purpose: h.includes("Derived context snapshot") && h.includes("Shape the focused mirror") &&
-    h.includes("gpt-5.6-luna") && h.includes("reasoning max") &&
+  purpose: h.includes("Derived snapshot") && h.includes("Shape the focused mirror") &&
+    !h.includes("reasoning max") &&
     h.split("Shape the focused mirror").length - 1 === 1,
   workflowBoundary: !h.includes("workflow stage unavailable") &&
     !h.includes("open-block reading unavailable") &&
     h.includes("Stage and block are omitted when absent"),
   attention: h.includes("No request detected") && !h.includes("Needs captain"),
-  steering: !h.includes("Most recent user-role message") && h.includes("Keep the project as context") &&
-    h.includes("transcript user-role message") && h.includes("1970-01-02T03:46:30.000Z"),
+  steering: h.includes("Operator intent") && h.includes("Keep the project as context") &&
+    h.includes("timestamped non-meta user-role record") && h.includes("1970-01-02T03:46:30.000Z"),
   identity: h.includes("codex:focus-1"),
   operatorPrecedence: h.includes("Operator note overrides derived context"),
   noDuplicateObserver: !h.includes('class="pc-observer"') &&
-    h.split("Derived context snapshot").length - 1 === 1
+    h.split("Derived snapshot").length - 1 === 1
 }));
 """
         out = self.run_project(
@@ -390,27 +406,41 @@ projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
     {at: 99985, kind: "activity", phase: "unrelated activity",
       title: "unrelated read", detail: "claude:aaa1",
       source: "activity source", harness: "claude", sid: "aaa1"}
-  ], sources: {gate: {live: 1, untimestamped_prepare: 2, status_history: "unavailable"},
+  ], semantic: {facts: [
+    {fact_id: "fact-gate", at: 99990, type: "gate_decision",
+      summary: "project-cockpit · shaping · approve", work_item_id: "workflow:project-cockpit",
+      evidence: {source: "Spacedock entity gate frontmatter", confidence: "exact"}},
+    {fact_id: "fact-intent", at: 99980, type: "user_message",
+      summary: "Prepare release path", work_item_id: null,
+      evidence: {source: "timestamped non-meta user-role record", confidence: "exact"}}
+  ], work_items: [{work_item_id: "workflow:project-cockpit", label: "project-cockpit",
+    kind: "workflow_item", source_bindings: [], contributor_refs: []}],
+  relations: [{from: "fact-gate", to: "workflow:project-cockpit", type: "decides",
+    confidence: "structural"}], projections: {
+    operator_intents: [{projection_id: "intent-1", at: 99980, kind: "operator_intent",
+      summary: "Prepare release path", derived_from: "fact-intent"}],
+    trail_heads: [{work_item_id: "workflow:project-cockpit", status: "decision",
+      latest_meaningful_event: "fact-gate"}], steering_episodes: [], candidate_goal_shifts: []}},
+  sources: {gate: {live: 1, untimestamped_prepare: 2, status_history: "unavailable"},
     steer: {live: 1, unavailable: []}}
 }};
 render(projectBoard());
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  graph: h.includes("What you asked") && h.includes("What happened") &&
-    h.includes('data-semantic-lane="steering"') && h.includes('data-semantic-lane="outcome"'),
-  instruction: h.slice(h.indexOf("What you asked"), h.indexOf("What happened")).includes("Prepare release path") &&
-    h.includes("transcript user-role message") && !h.includes("captain instruction"),
-  decision: h.slice(h.indexOf("What happened")).includes("application consumed") &&
-    h.includes("shaping · approve"),
+  graph: h.includes('data-model="fact-projection"') && !h.includes("What you asked") &&
+    !h.includes("What happened"),
+  instruction: h.includes("Operator intent") && h.includes("Prepare release path") &&
+    h.includes("timestamped non-meta user-role record") && !h.includes("captain instruction"),
+  decision: h.includes('data-trail-head="decision"') && h.includes("shaping · approve"),
   unrelated: !h.includes("unrelated read") && !h.includes("caused") &&
     !h.includes('data-causal-link="supported"') && !h.includes("Work interval") &&
-    h.includes("Chronological proximity does not imply causality"),
+    h.includes("chronology alone is not causality"),
   boundary: h.indexOf("Status-transition history is omitted") >
     h.indexOf("Evidence / limits"),
   noMockTags: !h.includes("generated</span>") && !h.includes("consistency")
 }));
 """
-        out = self.run_project(checks)
+        out = self.run_project(checks, query_project="repo/proj", query_session="claude:aaa1")
         self.assertTrue(out["graph"])
         self.assertTrue(out["instruction"])
         self.assertTrue(out["decision"])
@@ -436,7 +466,22 @@ projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
       title: "Checkpoint recorded", detail: "verified checkpoint",
       source: "checkpoint manifest", harness: "codex", sid: "focus-1",
       related_to: "instruction:1", relation_source: "checkpoint manifest relation"}
-  ], sources: {gate: {}, steer: {live: 1, unavailable: []}}
+  ], semantic: {facts: [
+    {fact_id: "fact-adapt", at: 99990, type: "result", summary: "Checkpoint recorded",
+      work_item_id: null, evidence: {source: "checkpoint manifest", confidence: "exact"}},
+    {fact_id: "fact-new", at: 99970, type: "user_message", summary: "Prepare checkpoint",
+      work_item_id: null, evidence: {source: "timestamped non-meta user-role record", confidence: "exact"}},
+    {fact_id: "fact-old", at: 99960, type: "user_message", summary: "Earlier instruction",
+      work_item_id: null, evidence: {source: "timestamped non-meta user-role record", confidence: "exact"}}
+  ], work_items: [], relations: [
+    {from: "fact-adapt", to: "intent-new", type: "responds_to", confidence: "exact",
+      provenance: "checkpoint manifest relation"}
+  ], projections: {operator_intents: [
+    {projection_id: "intent-new", at: 99970, summary: "Prepare checkpoint", derived_from: "fact-new"},
+    {projection_id: "intent-old", at: 99960, summary: "Earlier instruction", derived_from: "fact-old"}
+  ], trail_heads: [], steering_episodes: [
+    {intent_id: "intent-new", adaptation_fact: "fact-adapt", confidence: "exact"}
+  ], candidate_goal_shifts: []}}, sources: {gate: {}, steer: {live: 1, unavailable: []}}
 }};
 const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
   active: true, state: "working"})]);
@@ -444,14 +489,13 @@ Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  linked: h.includes('data-causal-link="supported"') &&
-    h.includes("linked by checkpoint manifest relation"),
-  interval: h.includes("Work interval") && h.includes("source-linked interval") &&
-    h.includes("20s"),
+  linked: h.includes('data-steering-state="paired"') &&
+    h.includes("source-linked reaction") && h.includes("Checkpoint recorded"),
+  interval: !h.includes("Work interval") && h.includes("Prepare checkpoint") &&
+    h.includes("Checkpoint recorded"),
   newest: h.indexOf("Prepare checkpoint") < h.indexOf("Earlier instruction") &&
     h.includes('data-order="newest-first"'),
-  intentBoundary: h.includes(">generated</span>") &&
-    !h.includes("unsupported guess</span>"),
+  intentBoundary: !h.includes("unsupported guess</span>"),
   noAutonomyClaim: !h.includes("autonomous") && !h.includes("autonomy phase"),
   unrelatedHidden: !h.includes("Unrelated activity")
 }));
@@ -500,6 +544,30 @@ projectContextByLabel[projectContextKey("git/asr")] = {state: "ready", generated
       harness: "pi", sid: "asr-root", source: "Pi subagent tool call and paired result"}
   ], sources: {gate: {}, work: {live: 6}, steer: {live: 5, unavailable: []},
     observer: {live: 1}}}};
+projectContextByLabel[projectContextKey("git/asr")].data.semantic = {
+  facts: [
+    {fact_id: "observer", at: 99999, type: "observer_snapshot", summary: "Resume the ASR work",
+      work_item_id: null, evidence: {source: "cached observer snapshot", confidence: "derived"}},
+    {fact_id: "intent-new", at: 99998, type: "user_message", summary: "Correct the session grouping",
+      work_item_id: null, evidence: {source: "timestamped non-meta user-role record", confidence: "exact"}},
+    {fact_id: "intent-old", at: 99920, type: "user_message", summary: "Use mixed work as evidence",
+      work_item_id: null, evidence: {source: "timestamped non-meta user-role record", confidence: "exact"}},
+    ...Array.from({length: 7}, (_, i) => ({fact_id: `result-${i}`, at: 99990 - i,
+      type: i === 6 ? "prepared_dispatch" : "work_result",
+      summary: i === 6 ? "task-one → shaping" : `Meaningful result ${i + 1}`,
+      work_item_id: `work-${i}`, evidence: {source: "paired task evidence", confidence: "exact"}}))
+  ],
+  work_items: Array.from({length: 7}, (_, i) => ({work_item_id: `work-${i}`,
+    label: i === 6 ? "task-one" : `Work item ${i + 1}`,
+    kind: i === 6 ? "workflow_item" : "one_off", source_bindings: [], contributor_refs: []})),
+  contributors: [], relations: [], projections: {
+    operator_intents: [
+      {projection_id: "intent-proj-new", at: 99998, summary: "Correct the session grouping", derived_from: "intent-new"},
+      {projection_id: "intent-proj-old", at: 99920, summary: "Use mixed work as evidence", derived_from: "intent-old"}
+    ], trail_heads: Array.from({length: 7}, (_, i) => ({work_item_id: `work-${i}`,
+      status: i === 6 ? "prepared" : "outcome", latest_meaningful_event: `result-${i}`})),
+    steering_episodes: [], candidate_goal_shifts: []}
+};
 const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
   active: true, state: "working", subagent_events: [
     {kind: "task_started", source: "raw lifecycle"},
@@ -509,19 +577,21 @@ Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("What changed"), h.indexOf("Other project sessions"));
-const visibleText = Array.from(graph.matchAll(
-  /<article[^>]*data-visible-node="true"[^>]*>([\\s\\S]*?)<details/g
+const visibleText = graph.split('<details class="pc-semantic-overflow">')[0];
+const primaryText = Array.from(visibleText.matchAll(
+  /<article class="pc-trail[^>]*>([\\s\\S]*?)<details/g
 )).map(match => match[1]).join("");
 console.log(JSON.stringify({
-  bounded: (graph.match(/data-visible-node="true"/g) || []).length === 8 &&
-    graph.includes("older instructions") && graph.includes("older work records"),
-  separated: graph.includes("What you asked") && graph.includes("What happened"),
-  mixed: graph.includes("Built dispatch package") && graph.includes("background tasks contributed"),
-  quietPrimary: !visibleText.includes("asr-root") && !visibleText.includes("pi:") &&
-    !visibleText.includes("gpt-5.6-luna") && !visibleText.includes("reasoning") &&
-    !visibleText.includes("transcript message") && !visibleText.includes("source"),
-  supportedTagOnly: visibleText.includes("corrected</span>") &&
-    !visibleText.includes("generated</span>"),
+  bounded: (visibleText.match(/<article class="pc-trail/g) || []).length === 8 &&
+    graph.includes("older trail heads and context"),
+  separated: graph.includes('data-model="fact-projection"') &&
+    !graph.includes("What you asked") && !graph.includes("What happened"),
+  mixed: graph.includes("task-one → shaping") && graph.includes("Meaningful result"),
+  quietPrimary: !primaryText.includes("asr-root") && !primaryText.includes("pi:") &&
+    !primaryText.includes("gpt-5.6-luna") && !primaryText.includes("reasoning") &&
+    !primaryText.includes("transcript message") && !primaryText.includes("source"),
+  supportedTagOnly: primaryText.includes("Correct the session grouping") &&
+    !primaryText.includes("generated</span>"),
   noCausalGuess: !graph.includes('data-causal-link="supported"'),
   lifecycleSuppressed: !graph.includes("task_started") && !graph.includes("task_complete") &&
     !graph.includes("raw lifecycle")
@@ -563,7 +633,7 @@ console.log(JSON.stringify({
   limitsOnce: count("Operator note overrides derived context") === 1 &&
     count("No request detected") === 1 &&
     count("does not prove unblocked") === 1 &&
-    count("Chronological proximity does not imply causality") === 1 &&
+    count("chronology alone is not causality") === 1 &&
     count("Stage and block are omitted when absent") === 1,
   oneEvidence: count("Evidence / limits") === 1
 }));
@@ -798,7 +868,7 @@ console.log(JSON.stringify({
   refreshControl: __els.app.innerHTML.includes('data-calm="project-context-refresh"')
 }));
 """
-        out = self.run_project(checks)
+        out = self.run_project(checks, query_project="repo/proj", query_session="claude:aaa1")
         self.assertEqual(2, len(out["calls"]))
         self.assertNotIn("refresh=1", out["calls"][0])
         self.assertIn("refresh=1", out["calls"][1])

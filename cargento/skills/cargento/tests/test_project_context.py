@@ -111,7 +111,7 @@ class ProjectContextTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def collect(self) -> dict[str, Any]:
+    def collect(self, *, refresh: bool = True) -> dict[str, Any]:
         state = build_runtime_state(self.config, started=self.NOW)
         sessions = [
             {
@@ -122,7 +122,15 @@ class ProjectContextTest(unittest.TestCase):
                 "active": True,
             }
         ]
-        return project_context.collect(self.config, state, sessions, "repo/proj", now=self.NOW)
+        return project_context.collect(
+            self.config,
+            state,
+            sessions,
+            "repo/proj",
+            now=self.NOW,
+            refresh=refresh,
+            focus=("pi", self.SID),
+        )
 
     def test_real_transcript_and_gate_frontmatter_supply_the_context(self) -> None:
         result = self.collect()
@@ -203,6 +211,7 @@ class ProjectContextTest(unittest.TestCase):
             sessions,
             "repo/proj",
             now=self.NOW,
+            refresh=True,
             focus=("pi", self.SID),
         )
 
@@ -214,6 +223,31 @@ class ProjectContextTest(unittest.TestCase):
             project_context.MAX_PROJECT_OBSERVERS,
             result["sources"]["surrounding_active"],
         )
+
+    def test_automatic_context_uses_stale_cache_without_model_wait(self) -> None:
+        refreshed = self.collect()
+        observed_at = refreshed["observers"][0]["observed_at"]
+        self._write_transcript("A newer steering record", "2026-08-24T20:20:00Z")
+
+        with mock.patch.object(observer.CodexGoalModel, "__call__") as model:
+            automatic = self.collect(refresh=False)
+
+        model.assert_not_called()
+        self.assertEqual(observed_at, automatic["observers"][0]["observed_at"])
+        self.assertEqual("cached-stale", automatic["observers"][0]["snapshot_status"])
+        self.assertEqual("A newer steering record", automatic["events"][0]["title"])
+
+    def test_automatic_context_without_cache_returns_timeline_only(self) -> None:
+        path = observer.sidecar_path(self.config, "pi", self.SID)
+        if path is not None:
+            Path(path).unlink(missing_ok=True)
+
+        with mock.patch.object(observer.CodexGoalModel, "__call__") as model:
+            automatic = self.collect(refresh=False)
+
+        model.assert_not_called()
+        self.assertEqual([], automatic["observers"])
+        self.assertEqual(["gate", "steer"], [event["kind"] for event in automatic["events"]])
 
     def test_codex_response_item_is_a_timestamped_instruction(self) -> None:
         event = project_context._instruction_event(
@@ -320,12 +354,147 @@ class ProjectContextTest(unittest.TestCase):
 
         events = project_context.work_events(self.config, str(self.transcript), "pi", self.SID)
 
-        self.assertEqual(["work", "outcome", "work"], [event["kind"] for event in events])
-        self.assertIn("Built dispatch package · task-one · shaping", events[0]["title"])
-        self.assertEqual("2 background tasks contributed", events[1]["title"])
-        self.assertIn("Background task started", events[2]["title"])
+        self.assertEqual(
+            [
+                "prepared_dispatch",
+                "task_started",
+                "task_started",
+                "task_result",
+                "task_result",
+                "task_started",
+            ],
+            [event["kind"] for event in events],
+        )
+        self.assertEqual("task-one → shaping", events[0]["title"])
+        self.assertEqual("Inspect architecture", events[1]["title"])
+        self.assertEqual("Technical review completed by 2 contributors", events[3]["title"])
         self.assertNotIn("raw-status-id", json.dumps(events))
         self.assertNotIn("preparing", json.dumps(events))
+
+    def test_semantic_layers_keep_work_items_distinct_from_contributors(self) -> None:
+        events = [
+            {
+                "at": 1.0,
+                "kind": "steer",
+                "title": "Change course",
+                "source": "user row",
+            },
+            {
+                "at": 2.0,
+                "kind": "prepared_dispatch",
+                "title": "workflow-task → shaping",
+                "source": "build call",
+                "entity": "workflow-task",
+                "stage": "shaping",
+            },
+            {
+                "at": 3.0,
+                "kind": "task_started",
+                "title": "Shared implementation",
+                "source": "subagent call",
+                "lineage": "call-one:0",
+                "work_item_binding": "shared-work",
+                "contributor_ref": "worker-a",
+            },
+            {
+                "at": 4.0,
+                "kind": "task_started",
+                "title": "Shared implementation handoff",
+                "source": "subagent call",
+                "lineage": "call-two:0",
+                "work_item_binding": "shared-work",
+                "contributor_ref": "worker-b",
+            },
+            {
+                "at": 5.0,
+                "kind": "task_started",
+                "title": "One-off investigation",
+                "source": "subagent call",
+                "lineage": "call-three:0",
+                "contributor_ref": "worker-a",
+            },
+        ]
+
+        model = project_context._semantic_model(events, [])
+        shared = next(
+            item
+            for item in model["work_items"]
+            if {"source": "explicit task binding", "value": "shared-work"}
+            in item["source_bindings"]
+        )
+        one_off = next(
+            item for item in model["work_items"] if item["label"] == "One-off investigation"
+        )
+        prepared = next(item for item in model["work_items"] if item["label"] == "workflow-task")
+        contributors = {item["source_label"]: item for item in model["contributors"]}
+
+        self.assertEqual(
+            [
+                contributors["worker-a"]["contributor_id"],
+                contributors["worker-b"]["contributor_id"],
+            ],
+            shared["contributor_refs"],
+        )
+        self.assertEqual("one_off", one_off["kind"])
+        self.assertNotIn("head_event", shared)
+        self.assertFalse(
+            any(
+                fact["type"] == "work_birth" and fact["work_item_id"] == prepared["work_item_id"]
+                for fact in model["facts"]
+            )
+        )
+        worker_a_links = [
+            relation
+            for relation in model["relations"]
+            if relation["from"] == contributors["worker-a"]["contributor_id"]
+            and relation["type"] == "contributes_to"
+        ]
+        self.assertEqual(2, len(worker_a_links))
+        self.assertTrue(all(link["confidence"] == "source-labeled" for link in worker_a_links))
+        self.assertEqual("unverified source label", contributors["worker-a"]["identity_status"])
+        self.assertEqual([], model["projections"]["steering_episodes"])
+        self.assertEqual([], model["projections"]["candidate_goal_shifts"])
+
+    def test_semantic_ids_include_workflow_and_survive_order_changes(self) -> None:
+        first = {
+            "at": 2.0,
+            "kind": "gate",
+            "title": "shared · review · approve",
+            "source": "entity record",
+            "workflow_binding": "/workflows/one",
+            "entity": "shared",
+            "decision": "approve",
+        }
+        second = {
+            "at": 3.0,
+            "kind": "gate",
+            "title": "shared · review · revise",
+            "source": "entity record",
+            "workflow_binding": "/workflows/two",
+            "entity": "shared",
+            "decision": "revise",
+        }
+        model = project_context._semantic_model([first, second], [])
+        reordered = project_context._semantic_model(
+            [second, {"at": 1.0, "kind": "steer", "title": "Earlier", "source": "row"}, first],
+            [],
+        )
+
+        self.assertEqual(2, len(model["work_items"]))
+        self.assertTrue(all(fact["scope"] == "workflow" for fact in model["facts"]))
+        fact_ids = {fact["fact_id"] for fact in model["facts"]}
+        reordered_ids = {fact["fact_id"] for fact in reordered["facts"]}
+        self.assertTrue(fact_ids.issubset(reordered_ids))
+        node_ids = fact_ids | {item["work_item_id"] for item in model["work_items"]}
+        node_ids |= {item["contributor_id"] for item in model["contributors"]}
+        projections = model["projections"]
+        node_ids |= {item["projection_id"] for item in projections["operator_intents"]}
+        self.assertTrue(
+            all(
+                relation["from"] in node_ids and relation["to"] in node_ids
+                for relation in model["relations"]
+            )
+        )
 
     def test_environment_context_is_not_steering(self) -> None:
         event = project_context._instruction_event(

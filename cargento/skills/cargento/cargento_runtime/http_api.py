@@ -456,14 +456,19 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 self.send_error(400, "a bounded harness:session identity is required")
                 return
             focus = (harness, sid)
-        collected = application.collect(show_all=False)
+        refresh = parse_qs(url.query).get("refresh", ["0"])[0] == "1"
+        if refresh and focus is None:
+            self.send_error(400, "observer refresh requires an exact focused session")
+            return
+        _revision, body = application.collect_json(show_all=False)
+        collected = json.loads(body)
         result = runtime_project_context.collect(
             application.config,
             application.state,
             collected["sessions"],
             project,
             now=application.clock(),
-            refresh=parse_qs(url.query).get("refresh", ["0"])[0] == "1",
+            refresh=refresh,
             focus=focus,
         )
         self._send(
