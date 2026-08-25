@@ -1,6 +1,6 @@
 ---
 title: Project cockpit and remembered goal
-status: backlog
+status: breadboard
 source: commission seed
 started:
 completed:
@@ -37,7 +37,7 @@ gates:
                 reason: Captain approved the bounded project-cockpit probe direction and learning spend.
               application:
                 target-stage: breadboard
-                state: pending
+                state: consumed
 ---
 
 Discover the by-project cockpit that restores operator context before an active session asks for attention.
