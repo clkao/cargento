@@ -203,7 +203,8 @@ console.log(JSON.stringify({
   chosen: h.includes("Project context</span><h2>repo/proj</h2>"),
   active: h.includes("1</b> recent"),
   identity: h.includes("claude:aaa1"),
-  goalFirst: h.indexOf("Goal · derived") < h.indexOf("Work & steering"),
+  goalFirst: h.indexOf("add focus") < h.indexOf("Work & steering") &&
+    !h.includes("Observed goal") && !h.includes("Goal · derived"),
   mirrorDrilldown: h.includes('data-calm="project-session-focus" data-arg="claude:aaa1"'),
   secondary: h.indexOf("Evidence / limits") > h.indexOf("Other project sessions")
 }));
@@ -225,7 +226,7 @@ console.log(JSON.stringify({
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [{harness: "claude", sid: "aaa1", goal: "Derived session goal",
     stage: "shaping", block: "waiting for captain", observed_at: 99990,
-    source: "bounded transcript and entity state"}], events: [], semantic: {
+    snapshot_status: "cached-stale", source: "bounded transcript and entity state"}], events: [], semantic: {
     facts: [{fact_id: "observer-1", at: 99990, type: "observer_snapshot",
       summary: "Derived session goal", work_item_id: null,
       evidence: {source: "cached observer snapshot", confidence: "derived"}}],
@@ -236,13 +237,13 @@ projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
 render(projectBoard());
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  operator: h.includes("<b>Goal</b> — Operator-owned goal"),
+  operator: h.includes("<b>Focus</b> — Operator-owned goal"),
   observed: h.includes("Derived session goal"),
   scoped: h.includes("Derived snapshot") && h.includes("cached observer snapshot"),
-  separate: h.indexOf("<b>Goal</b>") < h.indexOf("Derived — Derived session goal"),
-  noOverwrite: h.includes("Operator note overrides derived context"),
+  separate: h.indexOf("<b>Focus</b>") < h.indexOf("Observed goal · stale</b> — Derived session goal"),
+  noOverwrite: h.includes("Browser focus is operator-authored"),
   once: h.split("Derived session goal").length - 1 === 2 &&
-    !h.includes('class="pc-observer"')
+    !h.includes('class="pc-observer"') && !h.includes("Goal · derived")
 }));
 """
         out = self.run_project(checks, goal="Operator-owned goal")
@@ -254,7 +255,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["once"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
-    def test_derived_goal_is_one_compact_line_before_the_mirror(self) -> None:
+    def test_observed_goal_and_operator_focus_have_distinct_ownership(self) -> None:
         checks = """
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [{harness: "codex", sid: "focus-1", goal: "Keep the exact work visible",
@@ -267,13 +268,14 @@ render(projectBoard());
 const h = __els.app.innerHTML;
 const primary = h.slice(0, h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
-  oneLine: primary.split("Goal · derived").length - 1 === 1 &&
-    primary.includes("Goal · derived</b> — Keep the exact work visible"),
-  sourceLabel: !primary.includes("<b>Goal</b>") && primary.includes("Goal · derived"),
-  placed: primary.indexOf("Goal · derived") < primary.indexOf("Right now"),
+  oneLine: primary.split("Observed goal").length - 1 === 1 &&
+    primary.includes("Observed goal</b> — Keep the exact work visible"),
+  sourceLabel: !primary.includes("Goal · derived") && !primary.includes("<b>Focus</b>") &&
+    primary.includes("Observed goal"),
+  placed: primary.indexOf("Observed goal") < primary.indexOf("Right now"),
   hiddenEditor: !primary.includes('<textarea id="pc-goal"') &&
-    primary.includes('data-calm="project-goal-edit"'),
-  compact: !primary.includes("Operator note <em>")
+    primary.includes('>add focus</button>'),
+  compact: !primary.includes("Operator note <em>") && !primary.includes("not available")
 }));
 """
         out = self.run_project(checks, query_session="claude:aaa1")
@@ -297,7 +299,7 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   mirror: h.includes('data-session-mirror="codex:focus-1"') && h.includes("running exec"),
   identity: h.includes("codex:focus-1") && h.includes("model · gpt-5.6-sol"),
-  hierarchy: h.indexOf("Goal · derived") < h.indexOf("Right now"),
+  hierarchy: h.indexOf("add focus") < h.indexOf("Right now"),
   surrounding: h.includes("Other project sessions") && h.includes("claude:around-1"),
   noDuplicate: !h.slice(h.indexOf("Other project sessions"),
     h.indexOf("Evidence / limits")).includes("codex:focus-1"),
@@ -335,7 +337,9 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
       workflow_stage: "shaping"},
     {name: "Ampere", depth: 1, assignment: "Session interaction origin",
       assignment_status: "structured dispatch artifact",
-      workflow_entity: "session-interaction-origin", workflow_stage: "shaping"}
+      workflow_entity: "session-interaction-origin", workflow_stage: "shaping"},
+    {name: "James", depth: 1, assignment: "Review cockpit taxonomy",
+      assignment_status: "exact parent dispatch"}
   ]})]);
 Object.assign(d, {generated: 100000, ask: true, asks: []});
 render(d);
@@ -351,7 +355,12 @@ console.log(JSON.stringify({
     h.includes("Session interaction origin") && h.includes("structured dispatch artifact"),
   taskFirst: !h.includes("<strong>Einstein</strong>") && !h.includes("<strong>Ampere</strong>") &&
     h.indexOf("Project cockpit") < h.indexOf("Einstein") &&
-    h.indexOf("Session interaction origin") < h.indexOf("Ampere"),
+    h.indexOf("Session interaction origin") < h.indexOf("Ampere") &&
+    h.indexOf("Review cockpit taxonomy") < h.indexOf("James"),
+  oneTaxonomy: h.split('data-assignment-lane="current"').length - 1 === 3 &&
+    h.split('data-work-stage="shaping"').length - 1 === 2 &&
+    h.includes("Review cockpit taxonomy") && h.includes("current assignment") &&
+    !h.includes("Assignments</span>"),
   compact: h.split('data-work-item=').length - 1 === 2 &&
     h.includes('data-graph-layout="time-spine-work-lanes"') &&
     !h.includes('class="pc-work-item') && !h.includes("<details><summary>source</summary>"),
@@ -371,6 +380,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["toward"])
         self.assertTrue(out["assignments"])
         self.assertTrue(out["taskFirst"])
+        self.assertTrue(out["oneTaxonomy"])
         self.assertTrue(out["compact"])
         self.assertTrue(out["changed"])
         self.assertTrue(out["freshness"])
@@ -447,9 +457,9 @@ Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  hierarchy: h.indexOf("<b>Goal</b>") < h.indexOf("Right now") &&
+  hierarchy: h.indexOf("<b>Focus</b>") < h.indexOf("Right now") &&
     h.indexOf("Right now") < h.indexOf("Work & steering") &&
-    h.indexOf("Derived — Shape the focused mirror") < h.indexOf("Right now"),
+    h.indexOf("Observed goal</b> — Shape the focused mirror") < h.indexOf("Right now"),
   motion: h.includes("working now") && h.includes("running exec"),
   purpose: h.includes("Derived snapshot") && h.includes("Shape the focused mirror") &&
     !h.includes("reasoning max") &&
@@ -461,7 +471,7 @@ console.log(JSON.stringify({
   steering: h.includes("Operator intent") && h.includes("Keep the project as context") &&
     h.includes("timestamped non-meta user-role record") && h.includes("1970-01-02T03:46:30.000Z"),
   identity: h.includes("codex:focus-1"),
-  operatorPrecedence: h.includes("Operator note overrides derived context"),
+  operatorPrecedence: h.includes("Browser focus is operator-authored"),
   noDuplicateObserver: !h.includes('class="pc-observer"') &&
     h.split("Derived snapshot").length - 1 === 1
 }));
@@ -716,6 +726,49 @@ console.log(JSON.stringify({
         self.assertTrue(out["lifecycleSuppressed"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_recent_intent_selection_enters_graph(self) -> None:
+        checks = """
+projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generated: 100000,
+  data: {observers: [], events: [], semantic: {facts: [
+    {fact_id: "intent-1", at: 99997, type: "user_message", summary: "Show current intents",
+      work_item_id: null, evidence: {source: "user-role record", confidence: "exact"}},
+    {fact_id: "intent-2", at: 99998, type: "user_message", summary: "Keep the lane grammar",
+      work_item_id: null, evidence: {source: "user-role record", confidence: "exact"}}
+  ], work_items: [], contributors: [], relations: [], projections: {operator_intents: [
+    {projection_id: "projection-1", at: 99997, summary: "Show current intents",
+      derived_from: "intent-1"},
+    {projection_id: "projection-2", at: 99998, summary: "Keep the lane grammar",
+      derived_from: "intent-2"}
+  ], trail_heads: [], activity: {nodes: [], steering: [
+    {projection_id: "projection-2", at: 99998, summary: "Keep the lane grammar",
+      derived_from: "intent-2"},
+    {projection_id: "projection-1", at: 99997, summary: "Show current intents",
+      derived_from: "intent-1"}
+  ]}, steering_episodes: [],
+  candidate_goal_shifts: []}}, sources: {gate: {}, steer: {unavailable: []}}}};
+const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
+  active: true, state: "working"})]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Other project sessions"));
+console.log(JSON.stringify({
+  visible: graph.includes("Show current intents") && graph.includes("Keep the lane grammar"),
+  diamonds: (graph.match(/data-steering-state="unpaired"/g) || []).length === 2,
+  noEdges: (graph.match(/data-causal-edge="none"/g) || []).length === 2 &&
+    !graph.includes('data-causal-edge="solid"') && !graph.includes('data-causal-edge="derived"')
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["visible"])
+        self.assertTrue(out["diamonds"])
+        self.assertTrue(out["noEdges"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_primary_trails_demote_birth_only_and_unbound_validation_history(self) -> None:
         checks = """
 projectContextByLabel[projectContextKey("git/asr")] = {state: "ready", generated: 100000,
@@ -784,7 +837,7 @@ console.log(JSON.stringify({
     !primary.includes("open-block reading unavailable"),
   concisePrimary: primary.includes("No request detected") &&
     !primary.includes("not proof") && !primary.includes("source unavailable"),
-  limitsOnce: count("Operator note overrides derived context") === 1 &&
+  limitsOnce: count("Browser focus is operator-authored") === 1 &&
     count("No request detected") === 1 &&
     count("does not prove unblocked") === 1 &&
     count("chronology alone is not causality") === 1 &&
@@ -832,11 +885,13 @@ const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Other project sessions"));
 const evidence = h.slice(h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
-  tree: h.includes("Assignments") && h.includes("Working now") &&
+  tree: graph.split('data-assignment-lane="current"').length - 1 === 2 &&
     h.includes('data-subagent-depth="1"') && h.includes('data-subagent-depth="2"'),
-  nested: h.indexOf("Volta") < h.indexOf("Turing") && h.includes("child of Volta") &&
-    h.includes("Make assignments visible") && h.includes("assignment unavailable") &&
+  nested: graph.indexOf("Make assignments visible") < graph.indexOf("Volta") &&
+    graph.indexOf("assignment unavailable") < graph.indexOf("Turing") &&
+    graph.includes("child of Volta") &&
     !h.includes("gpt-5.6-sol"),
+  noRoster: !h.includes("Assignments</span>") && !h.includes('class="pc-assignment'),
   lifecycleHidden: !graph.includes("child task started") && !graph.includes("child completed") &&
     !graph.includes("Compile release") && !graph.includes("Codex child rollout lifecycle"),
   collapsed: evidence.includes("4 typed child lifecycle records") &&
@@ -852,6 +907,7 @@ console.log(JSON.stringify({
         )
         self.assertTrue(out["tree"])
         self.assertTrue(out["nested"])
+        self.assertTrue(out["noRoster"])
         self.assertTrue(out["lifecycleHidden"])
         self.assertTrue(out["collapsed"])
         self.assertTrue(out["labelWithoutOutcome"])
@@ -973,7 +1029,7 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const row = h.slice(h.indexOf('data-assignment-state="working"'), h.indexOf("</div></div></section>"));
+const row = h.slice(h.indexOf('data-assignment-lane="current"'), h.indexOf("Other project sessions"));
 console.log(JSON.stringify({
   visible: row.includes("Volta") && row.includes("Improve the assignment roster") &&
     row.includes("working now"),

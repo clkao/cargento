@@ -38,13 +38,14 @@ function projectGoal(label){
   catch(e){ return ""; }
 }
 
-function projectDerivedGoal(label){
+function projectObservedGoal(label){
   const entry = projectContextEntry(label);
   const observers = entry && entry.data && Array.isArray(entry.data.observers)
     ? entry.data.observers : [];
   const latest = observers.filter(row => row.goal && row.goal !== "no goal derived")
     .sort((a, b) => Number(b.observed_at) - Number(a.observed_at))[0];
-  return latest ? String(latest.goal) : "";
+  if(!latest) return null;
+  return {text:String(latest.goal), stale:latest.snapshot_status === "cached-stale"};
 }
 
 function projectContextKey(label){
@@ -200,15 +201,15 @@ function projectGoalAction(act, label){
       localStorage.removeItem(key);
       delete projectDraftByLabel[label];
       projectGoalEditingLabel = null;
-      projectGoalNote = "browser goal cleared";
+      projectGoalNote = "focus cleared";
     } else {
       const value = String(field && field.value || "").trim();
-      if(!value){ projectGoalNote = "write an outcome first"; }
+      if(!value){ projectGoalNote = "write a focus first"; }
       else {
         localStorage.setItem(key, value);
         projectDraftByLabel[label] = value;
         projectGoalEditingLabel = null;
-        projectGoalNote = "remembered in this browser";
+        projectGoalNote = "focus saved";
       }
     }
   }catch(e){ projectGoalNote = "browser storage unavailable"; }
@@ -313,63 +314,13 @@ function projectMirrorAttention(d, sess, group){
   return `<div class="pc-request-none" data-request-state="none">No request detected</div>`;
 }
 
-function projectLiveAssignments(sess, group){
+function projectDelegationLanes(sess, group){
+  if(!sess) return [];
   const reported = Array.isArray(sess.subagent_hierarchy)
     ? sess.subagent_hierarchy
     : (Array.isArray(sess.subagents) ? sess.subagents.map(agent => Object.assign({
       depth: 1, parent_name: null
     }, agent)) : []);
-  if(!reported.length) return "";
-  const entry = projectContextEntry(group.label);
-  const observed = entry && entry.data && Array.isArray(entry.data.child_assignments)
-    ? entry.data.child_assignments : [];
-  const rows = reported.filter(agent => {
-    const fallback = observed.find(row => row.observer_sid && row.observer_sid === agent.observer_sid) || {};
-    return !(agent.workflow_entity || fallback.workflow_entity) ||
-      !(agent.workflow_stage || fallback.workflow_stage);
-  }).sort((a, b) => (Number(a.depth) || 1) - (Number(b.depth) || 1));
-  if(!rows.length) return "";
-  const workflowTitle = entity => {
-    const words = String(entity || "").replace(/-/g, " ");
-    return words ? words.charAt(0).toUpperCase() + words.slice(1) : "";
-  };
-  return `<div class="pc-assignment-group" data-assignment-group="working">` +
-    `<div class="pc-assignment-head"><strong>Working now</strong><b>${rows.length}</b></div>` +
-    rows.map(agent => {
-      const depth = Math.max(1, Math.min(6, Number(agent.depth) || 1));
-      const relation = agent.parent_name ? `child of ${agent.parent_name}` : "direct child";
-      const fallback = observed.find(row => row.observer_sid && row.observer_sid === agent.observer_sid) || {};
-      const assignment = agent.assignment || fallback.assignment || "assignment unavailable";
-      const source = agent.assignment ? (agent.assignment_status || "exact parent dispatch") :
-        (fallback.assignment ? `${fallback.source || "child observer snapshot"} · ${fallback.snapshot_status || "derived"}` :
-          "no readable parent dispatch or cached child snapshot");
-      const observedAt = Number(fallback.observed_at)
-        ? ` · ${new Date(Number(fallback.observed_at) * 1000).toISOString()}` : "";
-      const entity = agent.workflow_entity || fallback.workflow_entity || "";
-      const stage = agent.workflow_stage || fallback.workflow_stage || "";
-      if(entity && stage){
-        return `<div class="pc-work-item depth-${depth}" data-subagent-depth="${depth}"` +
-          ` data-assignment-state="working" data-work-item="${esc(entity)}"` +
-          ` data-work-stage="${esc(stage)}"><span class="pc-child-node"></span>` +
-          `<div class="pc-work-copy"><strong>${esc(workflowTitle(entity))}` +
-          ` <b>· ${esc(stage)}</b></strong><span>${esc(assignment)}</span>` +
-          `<small>${esc(agent.name || "Ensign")} · ${esc(relation)} · ${esc(source + observedAt)}</small>` +
-          `</div><em>working now</em></div>`;
-      }
-      return `<div class="pc-assignment depth-${depth}" data-subagent-depth="${depth}"` +
-        ` data-assignment-state="working"><span class="pc-child-node"></span>` +
-        `<div class="pc-assignment-copy"><strong>${esc(agent.name || "Subagent")}</strong>` +
-        `<span>${esc(assignment)}</span><small>${esc(relation)}</small>` +
-        `<details><summary>source</summary>${esc(source + observedAt)}</details></div>` +
-        `<em>working now</em></div>`;
-    }).join("") + `</div>`;
-}
-
-function projectWorkflowLanes(sess, group){
-  if(!sess) return [];
-  const reported = Array.isArray(sess.subagent_hierarchy)
-    ? sess.subagent_hierarchy
-    : (Array.isArray(sess.subagents) ? sess.subagents : []);
   const entry = projectContextEntry(group.label);
   const observed = entry && entry.data && Array.isArray(entry.data.child_assignments)
     ? entry.data.child_assignments : [];
@@ -378,22 +329,15 @@ function projectWorkflowLanes(sess, group){
       row.observer_sid === agent.observer_sid) || {};
     const entity = agent.workflow_entity || fallback.workflow_entity || "";
     const stage = agent.workflow_stage || fallback.workflow_stage || "";
-    if(!entity || !stage) return null;
     return {entity, stage, worker:agent.name || fallback.name || "Ensign",
       assignment:agent.assignment || fallback.assignment || "assignment unavailable",
       source:agent.assignment ? (agent.assignment_status || "exact parent dispatch") :
-        (fallback.source || "structured workflow assignment"), at:Number(sess.last_activity) || 0};
-  }).filter(Boolean);
-}
-
-function projectAssignmentRoster(group, sess){
-  const entry = projectContextEntry(group.label);
-  const live = projectLiveAssignments(sess, group);
-  const loading = !entry || entry.state === "loading"
-    ? `<div class="pc-child-empty">Reading assignment evidence…</div>` : "";
-  if(!live && !loading) return "";
-  return `<div class="pc-assignment-roster"><span class="pc-kicker">Assignments</span>` +
-    live + loading + `</div>`;
+        (fallback.assignment ? `${fallback.source || "child observer snapshot"} · ${fallback.snapshot_status || "derived"}` :
+          "assignment source unavailable"),
+      relation:agent.parent_name ? `child of ${agent.parent_name}` : "direct child",
+      depth:Math.max(1, Math.min(6, Number(agent.depth) || 1)),
+      at:Number(sess.last_activity) || 0};
+  });
 }
 
 function projectSessionMirror(d, sess, group){
@@ -424,7 +368,7 @@ function projectSessionMirror(d, sess, group){
     `<span>${esc(freshness)}</span></div>` +
     `<div class="pc-now"><div class="pc-mirror-state"><strong>${esc(state)}</strong>` +
     `<span>${esc(detail)}</span></div>` + projectMirrorAttention(d, sess, group) +
-    projectAssignmentRoster(group, sess) + `</div></section>`;
+    `</div></section>`;
 }
 
 function projectLoadContext(d, refresh){
@@ -467,7 +411,7 @@ function projectLifecycleEvidence(focus){
     `${events.length} typed child lifecycle records · ` +
     `${count("subagent_task_started")} task starts · ${count("subagent_complete")} completions · ` +
     `${count("subagent_interrupted")} interruptions. Lifecycle labels without demonstrated results stay telemetry; ` +
-    `they do not enter What happened.</li>`;
+    `they do not enter the primary graph.</li>`;
 }
 
 function projectFactEvidence(fact){
@@ -561,12 +505,19 @@ function projectBurstRow(d, node, model, lane){
 
 function projectWorkflowLaneRow(d, row, lane){
   const title = String(row.entity || "").replace(/-/g, " ").replace(/^./, first => first.toUpperCase());
-  const body = `<div class="pc-trail-top"><strong>${esc(title)} · ${esc(row.stage)}</strong>` +
-    `<span>current stage</span></div><div class="pc-trail-result">${esc(row.assignment)}</div>` +
-    `<div class="pc-trail-quiet">${esc(row.worker)} · working now · ${esc(row.source)}</div>`;
-  return projectGraphRow(d, row.at, "stage", lane, body,
-    `data-work-item="${esc(row.entity)}" data-work-stage="${esc(row.stage)}"`,
-    `${title} · ${row.stage}`);
+  const workflow = title && row.stage;
+  const heading = workflow ? `${title} · ${row.stage}` : row.assignment;
+  const status = workflow ? "current stage" : "current assignment";
+  const kind = workflow ? "stage" : "work";
+  const body = `<div class="pc-trail-top"><strong>${esc(heading)}</strong>` +
+    `<span>${status}</span></div>` +
+    (workflow ? `<div class="pc-trail-result">${esc(row.assignment)}</div>` : "") +
+    `<div class="pc-trail-quiet">${esc(row.worker)} · working now · ${esc(row.relation)}</div>` +
+    `<details class="pc-trail-history"><summary>source</summary>${esc(row.source)}</details>`;
+  return projectGraphRow(d, row.at, kind, lane, body,
+    `data-assignment-lane="current" data-subagent-depth="${row.depth}"` +
+      (workflow ? ` data-work-item="${esc(row.entity)}" data-work-stage="${esc(row.stage)}"` : ""),
+    heading);
 }
 
 function projectSemanticTimeline(d, model, workflowLanes){
@@ -663,27 +614,29 @@ function projectSemanticEvidence(group){
 }
 
 function projectGoalBlock(group, goal, note){
-  const derived = projectDerivedGoal(group.label);
+  const observed = projectObservedGoal(group.label);
   const editing = projectGoalEditingLabel === group.label;
-  const primary = goal ? `<b>Goal</b> — ${esc(goal)}` :
-    `<b>Goal · derived</b> — ${esc(derived || "not available")}`;
-  const subordinate = goal && derived ? `<small>Derived — ${esc(derived)}</small>` : "";
   const editor = editing ? `<div class="pc-goal-editor"><textarea id="pc-goal"` +
     ` data-project="${esc(group.label)}" maxlength="500" rows="3"` +
-    ` placeholder="Project outcome">${esc(goal)}</textarea>` +
+    ` placeholder="Project focus">${esc(goal)}</textarea>` +
     `<div class="pc-goal-actions"><button type="button" data-calm="project-goal-save"` +
     ` data-arg="${esc(group.label)}">save</button>` +
     `<button type="button" class="quiet" data-calm="project-goal-clear"` +
     ` data-arg="${esc(group.label)}">clear</button></div></div>` : "";
-  return `<div class="pc-goal"><div class="pc-goal-line"><span>${primary}${subordinate}</span>` +
+  const focus = goal ? `<div class="pc-goal-line"><span><b>Focus</b> — ${esc(goal)}</span>` +
     `<button type="button" class="quiet" data-calm="project-goal-edit"` +
-    ` data-arg="${esc(group.label)}">edit</button>${note}</div>${editor}</div>`;
+    ` data-arg="${esc(group.label)}">edit</button></div>` :
+    (!editing ? `<button type="button" class="pc-focus-add" data-calm="project-goal-edit"` +
+      ` data-arg="${esc(group.label)}">add focus</button>` : "");
+  const observedLine = observed ? `<div class="pc-goal-observed"><b>Observed goal` +
+    `${observed.stale ? " · stale" : ""}</b> — ${esc(observed.text)}</div>` : "";
+  return `<div class="pc-goal">${focus}${observedLine}${editor}${note}</div>`;
 }
 
 function projectActivity(d, group, focus){
   const entry = projectContextEntry(group.label);
   const model = entry && entry.data && entry.data.semantic;
-  const workflowLanes = projectWorkflowLanes(focus, group);
+  const workflowLanes = projectDelegationLanes(focus, group);
   if((!model || !Array.isArray(model.facts) || !model.facts.length) && !workflowLanes.length){
     const reading = !entry || entry.state === "loading"
       ? "Reading deterministic session evidence…"
@@ -706,7 +659,7 @@ function projectEvidenceLimits(group, focus){
   const work = sources.work || {};
   const support = work.support || {};
   return `<ul class="pc-limit-list">` +
-    `<li><b>Operator note:</b> Operator note overrides derived context. It is browser-only, keyed by the exact project label, and is not durable project authority. <code>${esc(projectGoalKey(group.label))}</code></li>` +
+    `<li><b>Focus:</b> Browser focus is operator-authored, keyed by the exact project label, and is not durable project authority. <code>${esc(projectGoalKey(group.label))}</code></li>` +
     `<li><b>Requests:</b> Absence of an exact AskRegistry or live needs-input signal does not prove unblocked.</li>` +
     `<li><b>Meaning:</b> Intent is derived from timestamped non-meta user-role text, not verified captain authorship. A reaction is linked only when both ends have evidence; chronology alone is not causality.</li>` +
     `<li><b>Derived context:</b> The cached snapshot stays subordinate and may lag; its timestamp reports its age. Only explicit focused refresh runs model derivation. Stage and block are omitted when absent.</li>` +

@@ -559,8 +559,25 @@ class ProjectContextTest(unittest.TestCase):
 
         self.assertEqual(
             [
-                "redispatch the causal bug fix worker",
+                "please redispatch the causal bug fix worker again",
                 "before running benchmark, validate model size",
+            ],
+            [item["summary"] for item in steering],
+        )
+
+    def test_primary_steering_keeps_recent_meaningful_questions(self) -> None:
+        intents = [
+            {"at": 1.0, "summary": "how far are we?"},
+            {"at": 2.0, "summary": "why is there also audio alignment?"},
+            {"at": 3.0, "summary": "where is the attention head shipped?"},
+        ]
+
+        steering = project_context._recent_steering_nodes(intents)
+
+        self.assertEqual(
+            [
+                "where is the attention head shipped?",
+                "why is there also audio alignment?",
             ],
             [item["summary"] for item in steering],
         )

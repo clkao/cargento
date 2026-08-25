@@ -1391,16 +1391,15 @@ def _semantic_activity_projection(
 
 
 def _recent_steering_nodes(intents: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    directive = re.compile(
-        r"^(?:also\b|before\b|do not\b|don't\b|let's\b|no,?\s+that\b|"
-        r"redispatch\b|use\b|we\b.*\b(?:orient|resume|continue)\b)",
-        re.IGNORECASE,
+    low_signal = re.compile(
+        r"^(?:how far are we\b|is this a raw subagent\b|oh\b.*\b(?:i see|got it)\b|"
+        r"ok(?:ay)?\b|thanks?\b)",
+        flags=re.IGNORECASE,
     )
     candidates = [
         intent
         for intent in intents
-        if directive.match(str(intent.get("summary") or "").strip())
-        or _TASK_DIRECTIVE_RE.match(str(intent.get("summary") or "").strip())
+        if not low_signal.match(str(intent.get("summary") or "").strip())
     ]
     selected: list[dict[str, Any]] = []
     selected_tokens: list[tuple[float, list[str]]] = []
