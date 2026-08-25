@@ -90,4 +90,19 @@ The `/api/data` response had 13 active sessions, seven project labels, and zero 
 The `/api/stream` response had revision event `1787634817.4`.
 
 This record commit is the review-checkout update for the exercise.
-The next record update gives its exact checkpoint and the after-update measurements.
+Its exact checkpoint is `f664aea21c3cb78daa92ede3a817cafb63b780e4`.
+
+The watcher changed the backend port from 18766 to 18767.
+The stable proxy process stayed at process 3035.
+The API measurements stayed at 13 active sessions, seven project labels, and zero real asks.
+No collector reported an error before or after the update.
+The new SSE connection received revision events `1787634869.2` and `1787634869.3`.
+
+These commands supplied the measurements:
+
+```bash
+curl -fsS http://127.0.0.1:8766/__proto/checkpoint | jq .
+curl -fsS http://127.0.0.1:8766/api/data | jq \
+  '{sessions:(.sessions|length),active:([.sessions[]|select(.active)]|length),projects:([.sessions[].project]|unique|length),ask:.ask,asks:(.asks|length)}'
+curl -sSN --max-time 6 http://127.0.0.1:8766/api/stream
+```
