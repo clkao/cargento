@@ -7,7 +7,9 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import ClassVar
@@ -145,6 +147,7 @@ class BranchCheckoutTest(unittest.TestCase):
 class FakeBackend(http.server.BaseHTTPRequestHandler):
     posted: ClassVar[bytes] = b""
     health_pid: ClassVar[int] = 999
+    project_delay_sec: ClassVar[float] = 0
 
     def do_GET(self) -> None:
         if self.path == "/":
@@ -159,6 +162,10 @@ class FakeBackend(http.server.BaseHTTPRequestHandler):
                 json.dumps({"ok": True, "pid": type(self).health_pid}).encode(),
                 "application/json",
             )
+            return
+        if self.path == "/api/project-context":
+            time.sleep(type(self).project_delay_sec)
+            self._send(200, b'{"observers":[]}', "application/json")
             return
         if self.path == "/api/stream":
             self._send(200, b"id: 1\ndata: revision\n\n", "text/event-stream")
@@ -175,7 +182,8 @@ class FakeBackend(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(payload)
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            self.wfile.write(payload)
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
@@ -184,6 +192,8 @@ class FakeBackend(http.server.BaseHTTPRequestHandler):
 class StableProxyTest(unittest.TestCase):
     def setUp(self) -> None:
         FakeBackend.posted = b""
+        FakeBackend.project_delay_sec = 0
+        self.backend_timeout = cockpit.StableProxyHandler.backend_request_timeout_sec
         self.backend = http.server.ThreadingHTTPServer((cockpit.LOOPBACK, 0), FakeBackend)
         self.backend_thread = threading.Thread(target=self.backend.serve_forever, daemon=True)
         self.backend_thread.start()
@@ -202,6 +212,7 @@ class StableProxyTest(unittest.TestCase):
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def tearDown(self) -> None:
+        cockpit.StableProxyHandler.backend_request_timeout_sec = self.backend_timeout
         self.proxy.shutdown()
         self.proxy.server_close()
         self.backend.shutdown()
@@ -255,6 +266,18 @@ class StableProxyTest(unittest.TestCase):
         # optimized into a no-op by a future tearDown rewrite.
         with contextlib.nullcontext():
             self.assertTrue(self.proxy_thread.is_alive())
+
+    def test_backend_deadline_is_configurable_for_bounded_project_analysis(self) -> None:
+        FakeBackend.project_delay_sec = 0.05
+        cockpit.StableProxyHandler.backend_request_timeout_sec = 0.01
+        with self.assertRaises(urllib.error.HTTPError) as refused:
+            self.read("/api/project-context")
+        self.assertEqual(502, refused.exception.code)
+
+        cockpit.StableProxyHandler.backend_request_timeout_sec = 0.2
+        payload, content_type = self.read("/api/project-context")
+        self.assertEqual("application/json", content_type)
+        self.assertEqual({"observers": []}, json.loads(payload))
 
 
 class BackendOwnershipTest(unittest.TestCase):

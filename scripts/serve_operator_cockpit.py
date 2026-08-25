@@ -36,6 +36,10 @@ HOP_HEADERS = {
 }
 MAX_REQUEST_BYTES = 4 << 20
 BACKEND_START_TIMEOUT_SEC = 20
+# The selected-project endpoint owns at most three sequential model calls, each
+# capped at 60 seconds. The former generic 15-second proxy deadline returned a
+# 502 while a measured cold request continued normally and wrote all sidecars.
+BACKEND_REQUEST_TIMEOUT_SEC = (3 * 60) + 15
 
 
 class IntegrationError(RuntimeError):
@@ -270,6 +274,7 @@ class StableProxyHandler(http.server.BaseHTTPRequestHandler):
 
     published: ClassVar[PublishedBackend]
     server_pid: ClassVar[int | None] = None
+    backend_request_timeout_sec: ClassVar[float] = BACKEND_REQUEST_TIMEOUT_SEC
     protocol_version = "HTTP/1.1"
 
     def log_message(self, _format: str, *_args: object) -> None:
@@ -325,7 +330,11 @@ class StableProxyHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(413, str(exc))
             return
         headers = self._forward_headers(port, body)
-        connection = http.client.HTTPConnection(LOOPBACK, port, timeout=15)
+        connection = http.client.HTTPConnection(
+            LOOPBACK,
+            port,
+            timeout=self.backend_request_timeout_sec,
+        )
         try:
             connection.request(self.command, self.path, body=body, headers=headers)
             response = connection.getresponse()
