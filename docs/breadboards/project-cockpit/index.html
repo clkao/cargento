@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project cockpit breadboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">Cargento / mechanism breadboard</p>
+      <h1>Project cockpit</h1>
+      <p class="dek">Recover the goal, the work in motion, and the one interruption that matters.</p>
+    </div>
+    <div class="view-switch" role="group" aria-label="Overview shape">
+      <button type="button" data-shape="deck" aria-pressed="true">Project deck</button>
+      <button type="button" data-shape="ledger" aria-pressed="false">Attention ledger</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="status-rail" aria-label="Breadboard status">
+      <span><b id="active-count">0</b> active sessions</span>
+      <span><b id="attention-count">0</b> project needs you</span>
+      <span class="status-note">Fixture project/session payload · live browser interactions</span>
+    </section>
+
+    <section id="cockpit" aria-live="polite"></section>
+
+    <section class="exercise" aria-labelledby="exercise-title">
+      <div>
+        <p class="eyebrow">Falsifying controls</p>
+        <h2 id="exercise-title">Move the signal. Challenge the memory.</h2>
+      </div>
+      <div class="exercise-actions">
+        <button type="button" id="move-ask">Move ask to Launch notes</button>
+        <button type="button" id="publish-conflict">Publish conflicting observer goal</button>
+        <button type="button" id="reset-demo" class="quiet">Reset breadboard</button>
+      </div>
+      <p id="exercise-log" class="exercise-log">No exercise run yet.</p>
+    </section>
+
+    <details class="inventory">
+      <summary>Evidence inventory: what is live, derived, or mocked</summary>
+      <div id="inventory"></div>
+    </details>
+  </main>
+
+  <template id="goal-editor-template">
+    <form class="goal-editor">
+      <label>
+        <span>Operator goal</span>
+        <textarea rows="2" required></textarea>
+      </label>
+      <button type="submit">Remember goal</button>
+    </form>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
