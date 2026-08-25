@@ -27,6 +27,17 @@ gates:
                 digest: sha256:76c0e0637e107bd0c8abcc4d162a0f212c26c8fe2f6f901a8fd8409c6c2fa128
                 request-digest: sha256:5cf0904e646d1bfd47405c97004ebeca5cc33b758947a326015ba3ffb5a40ea0
                 room-ref: ./review/backlog/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:yehhw3jcrd6j7eb2zazad25s:backlog:1
+                briefing: briefing:yehhw3jcrd6j7eb2zazad25s:backlog:attempt-1:revision-1
+                by: person:captain
+                at: "2026-08-25T03:30:45.588978Z"
+                decision: approve
+                reason: Captain approved the bounded project-cockpit probe direction and learning spend.
+              application:
+                target-stage: breadboard
+                state: pending
 ---
 
 Discover the by-project cockpit that restores operator context before an active session asks for attention.
