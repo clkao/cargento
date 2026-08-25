@@ -1,0 +1,81 @@
+{
+  "artifact": "session interaction origin breadboard",
+  "candidate_sessions": 2,
+  "cases": [
+    {
+      "case": "acknowledged",
+      "outcome": {
+        "id": "m1",
+        "reason": "application-receipt",
+        "state": "acknowledged"
+      },
+      "registered_text_intact": true,
+      "unregistered_candidate_delivered_bytes": 0
+    },
+    {
+      "capture_unchanged": true,
+      "case": "unregistered target",
+      "outcome": {
+        "reason": "unregistered-origin",
+        "state": "refused"
+      },
+      "unregistered_candidate_delivered_bytes": 0
+    },
+    {
+      "case": "rejected",
+      "outcome": {
+        "id": "m2",
+        "reason": "application-receipt",
+        "state": "rejected"
+      },
+      "registered_text_intact": true
+    },
+    {
+      "case": "acknowledgement path removed",
+      "outcome": {
+        "id": "m3",
+        "reason": "receipt-timeout",
+        "state": "unknown"
+      },
+      "registered_text_intact": true
+    },
+    {
+      "case": "browser supplies a terminal locator",
+      "outcome": {
+        "reason": "malformed-request",
+        "state": "refused"
+      },
+      "registered_capture_delta": 0,
+      "shell_command_ran": false
+    },
+    {
+      "case": "shell metacharacters are literal application data",
+      "outcome": {
+        "id": "m4",
+        "reason": "application-receipt",
+        "state": "acknowledged"
+      },
+      "registered_text_intact": true,
+      "shell_command_ran": false
+    },
+    {
+      "case": "stale registration",
+      "outcome": {
+        "reason": "stale-registration",
+        "state": "refused"
+      },
+      "registered_capture_delta": 0
+    },
+    {
+      "case": "transport disconnected",
+      "outcome": {
+        "id": "m5",
+        "reason": "transport-disconnected",
+        "state": "unknown"
+      },
+      "registered_capture_delta": 0
+    }
+  ],
+  "registered_sessions": 1,
+  "tmux_version": "tmux 3.7b"
+}
