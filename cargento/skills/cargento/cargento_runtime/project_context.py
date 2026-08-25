@@ -1383,7 +1383,18 @@ def _semantic_activity_projection(
 
 
 def _recent_steering_nodes(intents: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(intents, key=lambda row: float(row.get("at") or 0), reverse=True)[
+    directive = re.compile(
+        r"^(?:also\b|before\b|do not\b|don't\b|let's\b|no,?\s+that\b|"
+        r"redispatch\b|use\b|we\b.*\b(?:orient|resume|continue)\b)",
+        re.IGNORECASE,
+    )
+    candidates = [
+        intent
+        for intent in intents
+        if directive.match(str(intent.get("summary") or "").strip())
+        or _TASK_DIRECTIVE_RE.match(str(intent.get("summary") or "").strip())
+    ]
+    return sorted(candidates, key=lambda row: float(row.get("at") or 0), reverse=True)[
         :MAX_PRIMARY_STEERING_NODES
     ]
 

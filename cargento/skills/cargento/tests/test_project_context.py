@@ -545,6 +545,24 @@ class ProjectContextTest(unittest.TestCase):
             )
         )
 
+    def test_primary_steering_prefers_directives_to_recent_questions(self) -> None:
+        intents = [
+            {"at": 1.0, "summary": "before running benchmark, validate model size"},
+            {"at": 2.0, "summary": "redispatch the causal bug fix worker"},
+            {"at": 3.0, "summary": "how far are we?"},
+            {"at": 4.0, "summary": "is this a raw subagent?"},
+        ]
+
+        steering = project_context._recent_steering_nodes(intents)
+
+        self.assertEqual(
+            [
+                "redispatch the causal bug fix worker",
+                "before running benchmark, validate model size",
+            ],
+            [item["summary"] for item in steering],
+        )
+
     def test_exact_dispatch_artifact_binds_spawn_and_result_to_workflow_item(self) -> None:
         artifact = "/tmp/spacedock-dispatch/spacedock-ensign-search-review.md"
         model = project_context._semantic_model(
