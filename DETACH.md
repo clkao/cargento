@@ -1,6 +1,6 @@
 # DETACH.md — why this workflow lives off Cargento's main branch
 
-This workflow is **detached**: its spec and state live in one repo
+These workflows are **detached**: their specs and state live in one repo
 (`.spacedock/repo/`) that is separate from the Cargento code repo, while
 dispatched code worktrees still land in Cargento. This file records why the
 layout is shaped the way it is — the two hard constraints are easy to forget
@@ -13,45 +13,46 @@ cargento/                                  ← git repo, branch main (the dashbo
 ├── .git/info/exclude                      ← contains: .spacedock/  and  .worktrees/
 ├── .worktrees/                            ← where dispatched worktrees land (excluded)
 └── .spacedock/                            ← excluded from cargento main; NOT a git repo
-    ├── dev/                               ← workflow dir; real dir, NOT a git repo
+    ├── dev/                               ← development workflow dir; real dir, NOT a git repo
     │   ├── README.md   → ../repo/README.md   (symlink)
     │   ├── _mods       → ../repo/_mods       (symlink)
     │   └── .spacedock-state/                ← git worktree of repo, branch spacedock-state/dev
-    │       └── *.md                         (entity files)
+    │       └── *.md                         (task files)
+    ├── explore/                           ← probing workflow dir; real dir, NOT a git repo
+    │   ├── README.md   → ../repo/explore/README.md
+    │   └── .spacedock-state/                ← repo worktree, branch explore-state
+    │       └── *.md                         (probe files)
     └── repo/                              ← THE one git repo
         ├── .git/
-        ├── README.md                        (on branch main — the spec)
+        ├── README.md                        (on branch main — the dev spec)
+        ├── explore/README.md                (on branch main — the explore spec)
         ├── _mods/pr-merge.md                 (on branch main)
         └── DETACH.md                         (on branch main — this file)
 ```
 
-One git repo (`.spacedock/repo/`), two branches, one object store:
-- **`main`** — the workflow spec: `README.md`, `_mods/`, `DETACH.md`.
-- **`spacedock-state/dev`** (orphan) — the entity state, checked out as a
-  linked worktree at `dev/.spacedock-state`. The orphan branch has no common
-  ancestor with `main`, so the state tree and the spec tree are disjoint.
-
-One git repo (`.spacedock/repo/`), two branches, one object store:
-- **`main`** — the workflow spec: `README.md`, `_mods/`, `DETACH.md`. Pushed to
+One git repo (`.spacedock/repo/`), three branches, one object store:
+- **`main`** — the workflow specs: `README.md`, `explore/README.md`, `_mods/`,
+  `DETACH.md`, and `setup.sh`. Pushed to
   `origin/spacedock-workflow`.
 - **`dev-state`** (orphan, declared via `state-branch: dev-state` in the README
   frontmatter) — the entity state, checked out as a linked worktree at
   `dev/.spacedock-state`. Pushed to `origin/dev-state`.
+- **`explore-state`** (orphan, declared via `state-branch: explore-state` in
+  `explore/README.md`) — probe state, checked out at
+  `explore/.spacedock-state`. Pushed to `origin/explore-state`.
 
 Remote: `origin = https://github.com/clkao/cargento`. This simulates an
-outside-contributor shape: the workflow spec and the entity state are
-independent branches on the upstream, so a contributor clones
-`spacedock-workflow` for the spec and `dev-state` for the state separately,
-and `state ready`/`state commit` pull/push the `dev-state` branch directly.
+outside-contributor shape: the workflow specs and state ledgers are
+independent branches on the upstream. A contributor clones
+`spacedock-workflow` for the specs, then checks out `dev-state` and
+`explore-state` separately. `state ready` and `state commit` pull and push the
+branch declared by each workflow.
 
-The local orphan branch is named `dev-state` (not the default
-`spacedock-state/dev`) so the binary's `Publish`/`Pull` — which push/pull
-`refs/heads/<StateBranch-result>` — hit `origin/dev-state`. `StateBranch`
-reads the `state-branch:` override from the README frontmatter; without it
-the binary would push to `origin/spacedock-state/dev`, a branch that does
-not exist upstream, and `state ready` would fail to pull. The
-`state-branch:` field is the one line that keeps the local branch name and
-the remote state branch name aligned.
+The local orphan branches are named `dev-state` and `explore-state`, rather
+than the default `spacedock-state/<workflow>`. The binary's `Publish`/`Pull`
+push and pull `refs/heads/<StateBranch-result>`, and `StateBranch` reads the
+`state-branch:` override from each README frontmatter. Those declarations keep
+the local and remote state branch names aligned.
 
 ## Why separate branches (not inline)
 
@@ -128,8 +129,8 @@ auto-discovery from the Cargento root.
 
 - `status --boot` from `cargento/` root auto-discovers `.spacedock/dev`. ✓
 - `status --workflow-dir .spacedock/dev --validate` → `VALID`. ✓
-- `state ready` → exits 0, pulls from `origin/dev-state` (`State checkout
-  ready — integrated peers' state from dev-state`). ✓
+- `state ready` → exits 0 for both workflows and pulls from the declared
+  state branch (`dev-state` or `explore-state`). ✓
 - `state commit <slug>` → commits to the `dev-state` worktree and pushes to
   `origin/dev-state` (`Committed and pushed <slug> to dev-state`). ✓
 - `dispatch build --stamp` → worktrees land in `cargento/.worktrees/`
@@ -152,10 +153,11 @@ on a fresh clone (the outside-contributor path):
    `.worktrees/`.
 2. Clone the spec branch:
    `git clone -b spacedock-workflow https://github.com/clkao/cargento .spacedock/repo`
-3. Create the workflow dir with symlinks to the spec:
-   `mkdir -p .spacedock/dev && ln -s ../repo/README.md .spacedock/dev/README.md && ln -s ../repo/_mods .spacedock/dev/_mods`
-4. Fetch the state branch and add it as a linked worktree:
+3. Create both workflow dirs with symlinks to their specs:
+   `mkdir -p .spacedock/dev .spacedock/explore && ln -s ../repo/README.md .spacedock/dev/README.md && ln -s ../repo/_mods .spacedock/dev/_mods && ln -s ../repo/explore/README.md .spacedock/explore/README.md`
+4. Fetch each state branch and add it as a linked worktree:
    `git -C .spacedock/repo fetch origin dev-state && git -C .spacedock/repo worktree add ../dev/.spacedock-state dev-state`
+   `git -C .spacedock/repo fetch origin explore-state && git -C .spacedock/repo worktree add ../explore/.spacedock-state explore-state`
 
 This is single-machine-clone-friendly today. The binary's `state init`
 still fetches from the workflow dir's repo on the *default* state branch
@@ -164,13 +166,12 @@ name, which is the overlay-contribution sprint's DoD-3 gap; the manual
 `state init` fetches the README-declared `state-branch`) is a binary
 follow-up.
 
-### Why two remote branches (spacedock-workflow + dev-state), not one
+### Why separate remote branches, not one
 
-The workflow spec (`main` → `spacedock-workflow`) and the entity state
-(`dev-state`) are separate branches on the same upstream repo so a
-contributor can pull the spec without the (large, mutable) state history,
-and push state without churning the spec branch. This mirrors the local
-orphan-branch split (spec on `main`, state on the orphan) onto the remote:
-two branches, one upstream repo, no PR between them — the state branch is
-not a feature branch to review; it is the contributor's durable state
-ledger, and `state ready`/`state commit` keep it in sync.
+The workflow specs (`main` → `spacedock-workflow`) and the state ledgers
+(`dev-state`, `explore-state`) are separate branches on the same upstream repo
+so a contributor can pull the specs without the mutable state histories, and
+push state without churning the spec branch. This mirrors the local split onto
+the remote: one spec branch plus one orphan branch per workflow, one upstream
+repo, and no PR between them. A state branch is a durable ledger, not a feature
+branch to review; `state ready` and `state commit` keep it in sync.
