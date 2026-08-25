@@ -81,3 +81,13 @@ Then let the server make a new dedicated clone.
 Backend logs are in `/Users/clkao/git/spacedock-research/cargento/.spacedock/runtime/operator-cockpit/state/`.
 The proxy keeps the public port during a backend replacement.
 The API and SSE paths use the same proxy as the HTML page.
+
+## Exercise record
+
+The exercise started at review checkpoint `938e4f83056792d26a1d961feb2e5a8e4df5062e`.
+The stable proxy used backend port 18766 and process 3035.
+The `/api/data` response had 13 active sessions, seven project labels, and zero real asks.
+The `/api/stream` response had revision event `1787634817.4`.
+
+This record commit is the review-checkout update for the exercise.
+The next record update gives its exact checkpoint and the after-update measurements.
