@@ -2,11 +2,11 @@
 title: Session interaction origin
 status: breadboard
 source: commission seed
-started:
+started: 2026-08-25T03:33:48Z
 completed:
 verdict:
 score: 0.85
-worktree:
+worktree: .worktrees/spacedock-ensign-session-interaction-origin
 issue:
 pr:
 parent:
