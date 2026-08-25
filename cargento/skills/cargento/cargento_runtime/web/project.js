@@ -277,10 +277,15 @@ function projectSessionMirror(d, sess, group){
   return `<section class="pc-mirror" data-session-mirror="${esc(key)}">` +
     `<div class="pc-mirror-head"><div><span class="pc-kicker">Primary session mirror</span>` +
     `<h3>${esc(sess.title || "Untitled Codex session")}</h3></div>` +
+    `<div class="pc-mirror-actions"><button type="button" class="quiet"` +
+    ` data-calm="project-context-refresh" data-arg="${esc(group.label)}">refresh context</button>` +
     `<button type="button" class="quiet" data-calm="project-session-link-copy"` +
-    ` data-arg="${esc(key)}">copy session link</button></div>` +
+    ` data-arg="${esc(key)}">copy session link</button></div></div>` +
+    `<div class="pc-now"><span class="pc-kicker">Right now</span>` +
     `<div class="pc-mirror-state"><strong>${esc(state)}</strong><span>${esc(detail)}</span></div>` +
+    `<div class="pc-mirror-purpose">${projectObserverSummary(group)}</div>` +
     projectMirrorAttention(d, sess, group) +
+    projectRecentSteering(sess, group) + `</div>` +
     `<div class="pc-mirror-meta"><code>${esc(key)}</code>` +
     `<span>project · ${esc(group.label)}</span>` +
     `<span>model · ${esc(sess.model || "unavailable")}</span>` +
@@ -318,8 +323,8 @@ function projectObserverSummary(group){
     const goal = sidecar.goal && sidecar.goal !== "no goal derived"
       ? `<div class="pc-observer-goal">${esc(sidecar.goal)}</div>`
       : `<div class="pc-observer-empty">No observer goal derived for this session.</div>`;
-    const facts = [sidecar.stage ? `stage · ${sidecar.stage}` : "",
-      sidecar.block ? `open block · ${sidecar.block}` : ""].filter(Boolean);
+    const facts = [sidecar.stage ? `stage · ${sidecar.stage}` : "workflow stage unavailable",
+      sidecar.block ? `open block · ${sidecar.block}` : "open-block reading unavailable"];
     const model = sidecar.model || {};
     const modelLine = model.model
       ? `${model.model} · reasoning ${model.reasoning_effort || "unavailable"} · ${model.status || "unknown"}`
@@ -328,6 +333,28 @@ function projectObserverSummary(group){
       ? `<div class="pc-observer-facts">${facts.map(f => `<span>${esc(f)}</span>`).join("")}</div>`
       : "") + `<div class="pc-observer-source">derived, subordinate · ${esc(modelLine)} · ${esc(key)}</div></div>`;
   }).join("");
+}
+
+function projectRecentSteering(sess, group){
+  const entry = projectContextEntry(group.label);
+  if(!entry || entry.state === "loading" && !entry.data){
+    return `<div class="pc-mirror-steer unavailable">Reading recent steering…</div>`;
+  }
+  if(entry.state === "error" || !entry.data){
+    return `<div class="pc-mirror-steer unavailable">Recent steering source unavailable.</div>`;
+  }
+  const event = (Array.isArray(entry.data.events) ? entry.data.events : []).find(row =>
+    row.kind === "steer" && row.harness === sess.harness && row.sid === sess.sid);
+  if(!event){
+    return `<div class="pc-mirror-steer unavailable">No timestamped steering found for this session.</div>`;
+  }
+  const timestamp = Number(event.at);
+  const iso = Number.isFinite(timestamp) ? new Date(timestamp * 1000).toISOString() : "";
+  return `<div class="pc-mirror-steer"><span class="pc-kicker">Most recent steering</span>` +
+    `<strong>${esc(event.title)}</strong>` +
+    `<span>${esc(event.source || "source unavailable")}` +
+    (iso ? ` · <time datetime="${esc(iso)}">${esc(iso)}</time>` : " · timestamp unavailable") +
+    `</span></div>`;
 }
 
 function projectLoadContext(d, refresh){
@@ -420,6 +447,12 @@ function projectView(d, draft){
   const sessions = surrounding.length
     ? surrounding.map(projectSessionRow).join("")
     : `<div class="pc-empty">No other active sessions in this project.</div>`;
+  const mirror = projectQuerySession ? projectSessionMirror(d, focus, group) : "";
+  const aggregateObserver = projectQuerySession ? "" :
+    `<div class="pc-observer"><div class="pc-subhead"><h3>Observer context</h3>` +
+    `<span>derived · subordinate</span><button type="button" class="quiet"` +
+    ` data-calm="project-context-refresh" data-arg="${esc(group.label)}">refresh</button></div>` +
+    `${projectObserverSummary(group)}</div>`;
   return top + `<nav class="pc-nav" aria-label="Project being resumed">` +
     `<label class="pc-nav-k" for="pc-project-select">project</label>` +
     `<select id="pc-project-select">${options}</select>` +
@@ -440,11 +473,7 @@ function projectView(d, draft){
     `<button type="button" class="quiet" data-calm="project-goal-clear"` +
     ` data-arg="${esc(group.label)}">clear</button>${note}</div>` +
     `<div class="pc-key">provisional exact-label key · ${esc(goalKey)} · observer text never overwrites this field</div></div>` +
-    `${projectSessionMirror(d, focus, group)}` +
-    `<div class="pc-observer"><div class="pc-subhead"><h3>Observer context</h3>` +
-    `<span>derived · subordinate</span><button type="button" class="quiet"` +
-    ` data-calm="project-context-refresh" data-arg="${esc(group.label)}">refresh</button></div>` +
-    `${projectObserverSummary(group)}</div>` +
+    `${mirror}${aggregateObserver}` +
     `<div class="pc-columns"><div class="pc-needs"><h3>Needs you</h3>${projectAttention(d, group)}</div>` +
     `<div class="pc-active"><div class="pc-active-head"><h3>Surrounding sessions</h3>` +
     `<span>lightweight project context</span></div>${sessions}</div></div>` +

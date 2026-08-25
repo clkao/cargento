@@ -212,6 +212,54 @@ console.log(JSON.stringify({
         self.assertTrue(out["source"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_focused_right_now_unifies_live_and_derived_truth(self) -> None:
+        checks = """
+projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
+  observers: [{harness: "codex", sid: "focus-1", goal: "Shape the focused mirror",
+    stage: null, block: null, model: {model: "gpt-5.6-luna", reasoning_effort: "max",
+      status: "used"}}],
+  events: [{at: 99990, kind: "steer", phase: "captain instruction",
+    title: "Keep the project as context", detail: "codex:focus-1",
+    source: "transcript user message", harness: "codex", sid: "focus-1"}],
+  sources: {scope: "focused session", gate: {}, steer: {live: 1, unavailable: []}}
+}};
+const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
+  active: true, state: "working", state_detail: "running exec", needs_you: null})]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+console.log(JSON.stringify({
+  hierarchy: h.indexOf("Operator goal") < h.indexOf("Primary session mirror") &&
+    h.indexOf("Primary session mirror") < h.indexOf("Right now") &&
+    h.indexOf("Right now") < h.indexOf("Shape the focused mirror"),
+  motion: h.includes("working") && h.includes("running exec"),
+  purpose: h.includes("Shape the focused mirror") && h.includes("gpt-5.6-luna") &&
+    h.includes("reasoning max"),
+  workflowBoundary: h.includes("workflow stage unavailable") &&
+    h.includes("open-block reading unavailable"),
+  attention: h.includes("No live needs-captain signal"),
+  steering: h.includes("Most recent steering") && h.includes("Keep the project as context") &&
+    h.includes("transcript user message") && h.includes("1970-01-02T03:46:30.000Z"),
+  identity: h.includes("codex:focus-1"),
+  operatorPrecedence: h.includes("observer text never overwrites this field")
+}));
+"""
+        out = self.run_project(
+            checks,
+            goal="Operator-owned outcome",
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["hierarchy"])
+        self.assertTrue(out["motion"])
+        self.assertTrue(out["purpose"])
+        self.assertTrue(out["workflowBoundary"])
+        self.assertTrue(out["attention"])
+        self.assertTrue(out["steering"])
+        self.assertTrue(out["identity"])
+        self.assertTrue(out["operatorPrecedence"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_activity_reuses_causal_log_shape_without_mocked_history(self) -> None:
         checks = """
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {

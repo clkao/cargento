@@ -73,3 +73,22 @@ rendering and source inspection, not screenshots or visual polish.
 - **Personal liking: 4/5. Would I want this as my own mirror?** Yes: I can now glance at it without
   mistaking silence for safety, though the goal, current motion, attention, and steering still read
   as separate dashboard modules rather than one coherent present-tense self.
+
+## Round 5 — make a present-tense mirror
+
+- **Finding:** The truthful parts were present but cognitively scattered: live motion in the mirror,
+  purpose in a separate observer panel, attention in another block, and steering at the bottom. I
+  still had to assemble “where am I now?” in my head.
+- **Exact change:** Consolidated the focused session's live state/detail, derived goal, workflow-stage
+  and open-block readings, needs-captain state, and newest exact steering event under one “Right now”
+  region. The newest event keeps its transcript source and exact ISO timestamp. The authoritative
+  project operator goal remains above it; unfocused project pages retain their aggregate observer
+  panel.
+- **Live falsification:** The exact live DOM kept the operator goal before “Right now,” rendered one
+  exact observer row and four exact history rows, and surfaced the newest steering source with a
+  machine-readable timestamp. Because the live evidence still had no stage or block, the unified
+  mirror showed both unavailable boundaries. Its needs state remained clear-with-warning, not
+  requested, and the exact sid stayed visible.
+- **Personal liking: 4/5. Would I want this as my own mirror?** Yes: this is the first round I would
+  keep open while working because it answers purpose, motion, attention, and recent direction in one
+  place; I withhold 5 because stage/block observation and true visual inspection remain unavailable.
