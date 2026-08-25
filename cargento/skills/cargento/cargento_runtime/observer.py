@@ -218,7 +218,12 @@ def _parse_message_record(record: Any) -> dict[str, str] | None:
     """
     if not isinstance(record, dict) or record.get("isMeta") is True:
         return None
-    message = records.message_dict(record)
+    record_type = record.get("type")
+    payload = records.as_dict(record.get("payload"))
+    if record_type == "response_item" and payload.get("type") == "message":
+        message = payload
+    else:
+        message = records.message_dict(record)
     role = message.get("role")
     if role not in ("user", "assistant"):
         return None
@@ -226,7 +231,7 @@ def _parse_message_record(record: Any) -> dict[str, str] | None:
     # injected skill bodies carry `isMeta: true` and were refused above. The old
     # Pi-only type gate made every real Claude transcript resolve successfully
     # and then derive no goal from an empty message list.
-    if record.get("type") not in ("message", role):
+    if record_type not in ("message", role, "response_item"):
         return None
     content = message.get("content")
     if isinstance(content, list) and any(
@@ -265,6 +270,8 @@ def _extract_messages(config: RuntimeConfig, path: str) -> list[dict[str, str]]:
         if parsed is None:
             continue
         entry_id = record.get("id") if isinstance(record, dict) else None
+        if not entry_id and isinstance(record, dict):
+            entry_id = records.as_dict(record.get("payload")).get("id")
         key = entry_id if isinstance(entry_id, str) and entry_id else parsed["text"]
         if key in seen:
             continue
@@ -486,6 +493,30 @@ def read_sidecar(config: RuntimeConfig, harness: str, sid: str) -> dict[str, Any
     return value if isinstance(value, dict) else None
 
 
+def _resolve_codex_transcript(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    sid: str,
+) -> str | None:
+    found: list[tuple[int, str]] = []
+    for path in runtime_io.glob_stores(
+        config,
+        "codex.sessions",
+        "*",
+        "*",
+        "*",
+        "rollout-*.jsonl",
+    ):
+        meta = transcripts.codex_meta(config, state, path)
+        if meta.get("session_id") != sid or meta.get("subagent"):
+            continue
+        try:
+            found.append((os.stat(path).st_mtime_ns, path))
+        except OSError:
+            continue
+    return max(found)[1] if found else None
+
+
 def resolve_transcript(
     config: RuntimeConfig,
     state: RuntimeState,
@@ -517,6 +548,8 @@ def resolve_transcript(
             if os.path.basename(path).removesuffix(".jsonl").startswith(sid)
         ]
         return found[0] if len(found) == 1 else None
+    if harness == "codex":
+        return _resolve_codex_transcript(config, state, sid)
     if harness != "pi":
         return None
     # Pi's default store is nested and a custom one is flat, so both shapes are

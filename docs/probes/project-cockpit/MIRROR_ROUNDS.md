@@ -19,3 +19,21 @@ rendering and source inspection, not screenshots or visual polish.
   remained zero, so this round does not claim context it did not add.
 - **Personal liking: 2/5. Would I want this as my own mirror?** Barely: it now knows which self I am
   looking at, but it still cannot tell me what that self is trying to accomplish or how it got here.
+
+## Round 2 — recover the session's goal
+
+- **Finding:** “Working” and a tool/subagent detail describe motion, not purpose. The observer
+  resolver explicitly supported Claude and Pi only, so the exact Codex session had no derived goal.
+- **Exact change:** Reused the Codex collector's real identity contract: scan the bounded dated
+  rollout store, match `session_meta.id`, reject subagent rollouts, and select the newest matching
+  parent rollout. Added Codex `response_item` user/assistant message parsing and prioritized the
+  focused identity ahead of newer siblings inside the three-session analysis bound. The project
+  context request now carries the exact `harness:sid`.
+- **Live falsification:** A temporary server over the dirty checkpoint resolved only the requested
+  live Codex session: `focus.observed=true`, one observer row, zero unavailable and zero omitted.
+  The row reported a non-sentinel goal and model metadata `gpt-5.6-luna`, reasoning `max`, status
+  `used`; the executable live DOM moved from zero to one observer row. Stage, block, and event rows
+  remained absent, so this round claims only goal recovery.
+- **Personal liking: 3/5. Would I want this as my own mirror?** Mostly: seeing purpose beside motion
+  feels recognizably useful, but without stage, steering, or an explicit attention reading I still
+  have to reconstruct too much of my situation.

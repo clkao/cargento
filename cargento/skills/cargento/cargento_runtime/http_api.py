@@ -443,6 +443,19 @@ class _RequestHandler(BaseHTTPRequestHandler):
         if not project or len(project) > application.config.ask_project_cap_chars:
             self.send_error(400, "a bounded project label is required")
             return
+        focus_raw = parse_qs(url.query).get("session", [""])[0]
+        focus: tuple[str, str] | None = None
+        if focus_raw:
+            harness, separator, sid = focus_raw.partition(":")
+            if (
+                not separator
+                or not harness
+                or not sid
+                or len(focus_raw) > application.config.ask_project_cap_chars
+            ):
+                self.send_error(400, "a bounded harness:session identity is required")
+                return
+            focus = (harness, sid)
         collected = application.collect(show_all=False)
         result = runtime_project_context.collect(
             application.config,
@@ -451,6 +464,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             project,
             now=application.clock(),
             refresh=parse_qs(url.query).get("refresh", ["0"])[0] == "1",
+            focus=focus,
         )
         self._send(
             json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode(),

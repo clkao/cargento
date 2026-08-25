@@ -288,6 +288,7 @@ def collect(
     *,
     now: float,
     refresh: bool = False,
+    focus: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """Observer results and a real project event log for exact-label sessions."""
     selected = [
@@ -295,7 +296,17 @@ def collect(
         for session in sessions
         if str(session.get("project") or "") == project and session.get("active") is True
     ]
-    selected.sort(key=lambda item: float(item.get("last_activity") or 0), reverse=True)
+    selected.sort(
+        key=lambda item: (
+            (
+                str(item.get("harness") or ""),
+                str(item.get("sid") or ""),
+            )
+            == focus,
+            float(item.get("last_activity") or 0),
+        ),
+        reverse=True,
+    )
     observers: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
     unavailable: list[dict[str, str]] = []
@@ -348,6 +359,15 @@ def collect(
     steer_count = sum(1 for event in timeline if event["kind"] == "steer")
     return {
         "project": project,
+        "focus": {
+            "harness": focus[0],
+            "sid": focus[1],
+            "observed": any(
+                row.get("harness") == focus[0] and row.get("sid") == focus[1] for row in observers
+            ),
+        }
+        if focus
+        else None,
         "observers": observers,
         "events": timeline,
         "sources": {

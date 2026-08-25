@@ -167,6 +167,41 @@ class ProjectContextTest(unittest.TestCase):
         )
         self.assertEqual(1, len(result["sources"]["observer"]["omitted"]))
 
+    def test_focus_identity_precedes_newer_project_sessions(self) -> None:
+        state = build_runtime_state(self.config, started=self.NOW)
+        sessions = [
+            {
+                "project": "repo/proj",
+                "harness": "pi",
+                "sid": f"newer-{index}",
+                "last_activity": self.NOW + index,
+                "active": True,
+            }
+            for index in range(project_context.MAX_PROJECT_OBSERVERS)
+        ]
+        sessions.append(
+            {
+                "project": "repo/proj",
+                "harness": "pi",
+                "sid": self.SID,
+                "last_activity": self.NOW - 100,
+                "active": True,
+            }
+        )
+
+        result = project_context.collect(
+            self.config,
+            state,
+            sessions,
+            "repo/proj",
+            now=self.NOW,
+            focus=("pi", self.SID),
+        )
+
+        self.assertEqual(self.SID, result["observers"][0]["sid"])
+        self.assertTrue(result["focus"]["observed"])
+        self.assertEqual(1, len(result["sources"]["observer"]["omitted"]))
+
 
 if __name__ == "__main__":
     unittest.main()

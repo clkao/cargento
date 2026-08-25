@@ -256,6 +256,48 @@ class ObserverAnalyzerTest(unittest.TestCase):
 
         self.assertEqual("Show the project observer goal", result["goal"])
 
+    def test_codex_response_messages_supply_goal_and_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_transcript(
+                tmp,
+                [
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "id": "user-1",
+                                "role": "user",
+                                "content": [
+                                    {"type": "input_text", "text": "Shape my session mirror"}
+                                ],
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "id": "assistant-1",
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": "I am blocked on a missing browser connection.",
+                                    }
+                                ],
+                            },
+                        }
+                    ),
+                ],
+            )
+
+            result = self.analyze(path)
+
+        self.assertEqual("Shape my session mirror", result["goal"])
+        self.assertIn("blocked", result["block"])
+
     def _fo_transcript(
         self, tmp: str, *, stage: str, declared: list[str], age_sec: float = 0.0
     ) -> str:
@@ -593,6 +635,28 @@ class ObserverTranscriptResolutionTest(RuntimeTestCase):
         config, state = runtime()
         self.assertIsNone(observer.resolve_transcript(config, state, "codex", "abc"))
         self.assertIsNone(observer.resolve_transcript(config, state, "pi", "a/../b"))
+
+    def test_a_codex_session_id_resolves_through_first_line_metadata(self) -> None:
+        sid = "01a035ee-2a7b-76f0-873f-eaddc97860c3"
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = Path(tmp) / "sessions"
+            rollout = sessions / "2026" / "08" / "24" / f"rollout-{sid}.jsonl"
+            rollout.parent.mkdir(parents=True)
+            rollout.write_text(
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {"id": sid, "cwd": "/repo", "source": "cli"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with store_patch(CODEX_SESSIONS_DIR=str(sessions)):
+                config, state = runtime()
+                found = observer.resolve_transcript(config, state, "codex", sid)
+
+        self.assertEqual(str(rollout), found)
 
 
 class ObserverRouteTest(RuntimeTestCase):

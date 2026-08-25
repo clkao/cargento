@@ -162,7 +162,8 @@ console.log(JSON.stringify({
   hierarchy: h.indexOf("Operator goal") < h.indexOf("Primary session mirror"),
   surrounding: h.includes("Surrounding sessions") && h.includes("claude:around-1"),
   noDuplicate: !h.slice(h.indexOf("Surrounding sessions"),
-    h.indexOf("Gate and steering history")).includes("codex:focus-1")
+    h.indexOf("Gate and steering history")).includes("codex:focus-1"),
+  observerScoped: __fetchCalls.some(call => call[0].includes("session=codex%3Afocus-1"))
 }));
 """
         out = self.run_project(
@@ -175,6 +176,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["hierarchy"])
         self.assertTrue(out["surrounding"])
         self.assertTrue(out["noDuplicate"])
+        self.assertTrue(out["observerScoped"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_activity_reuses_causal_log_shape_without_mocked_history(self) -> None:

@@ -36,6 +36,14 @@ function projectGoal(label){
   catch(e){ return ""; }
 }
 
+function projectContextKey(label){
+  return `${label}\n${projectQuerySession || ""}`;
+}
+
+function projectContextEntry(label){
+  return projectContextByLabel[projectContextKey(label)] || projectContextByLabel[label];
+}
+
 function projectPermalink(label, sessionKey){
   try{
     const url = new URL(location.href);
@@ -264,16 +272,19 @@ function projectAttention(d, group){
 }
 
 function projectObserverSummary(group){
-  const entry = projectContextByLabel[group.label];
+  const entry = projectContextEntry(group.label);
   if(!entry || entry.state === "loading"){
     return `<div class="pc-observer-empty">Reading project transcripts and entity state…</div>`;
   }
   if(entry.state === "error" || !entry.data){
     return `<div class="pc-observer-empty">Project observer source is unavailable.</div>`;
   }
-  const rows = Array.isArray(entry.data.observers) ? entry.data.observers : [];
+  let rows = Array.isArray(entry.data.observers) ? entry.data.observers : [];
+  if(projectQuerySession){
+    rows = rows.filter(sidecar => `${sidecar.harness}:${sidecar.sid}` === projectQuerySession);
+  }
   if(!rows.length){
-    return `<div class="pc-observer-empty">No selected-project session has a readable Claude or Pi transcript.</div>`;
+    return `<div class="pc-observer-empty">No readable Claude, Codex, or Pi transcript was found for the focused session.</div>`;
   }
   return rows.map(sidecar => {
     const key = `${sidecar.harness}:${sidecar.sid}`;
@@ -295,21 +306,23 @@ function projectObserverSummary(group){
 function projectLoadContext(d, refresh){
   const group = projectCockpitGroup(d).selected;
   if(!group) return;
-  const old = projectContextByLabel[group.label];
+  const cacheKey = projectContextKey(group.label);
+  const old = projectContextByLabel[cacheKey];
   if(old && !refresh) return;
-  projectContextByLabel[group.label] = {
+  projectContextByLabel[cacheKey] = {
     state: "loading", data: old && old.data || null, generated: d.generated
   };
   const query = "/api/project-context?project=" + encodeURIComponent(group.label) +
+    (projectQuerySession ? "&session=" + encodeURIComponent(projectQuerySession) : "") +
     (refresh ? "&refresh=1" : "");
   fetch(query).then(r => {
     if(!r.ok) throw new Error("bad status");
     return r.json();
   }).then(data => {
-    projectContextByLabel[group.label] = {state: "ready", data: data, generated: d.generated};
+    projectContextByLabel[cacheKey] = {state: "ready", data: data, generated: d.generated};
     if(lastData) render(lastData);
   }).catch(() => {
-    projectContextByLabel[group.label] = {state: "error", data: null, generated: d.generated};
+    projectContextByLabel[cacheKey] = {state: "error", data: null, generated: d.generated};
     if(lastData) render(lastData);
   });
 }
@@ -317,7 +330,7 @@ function projectLoadContext(d, refresh){
 /* The mirror prototype's causal-log shape, now fed only by the selected
    project's timestamped transcript instructions and Spacedock gate records. */
 function projectActivity(d, group){
-  const entry = projectContextByLabel[group.label];
+  const entry = projectContextEntry(group.label);
   if(!entry || entry.state === "loading" && !entry.data){
     return `<div class="pc-empty">Reading the gate and instruction sources…</div>`;
   }
@@ -412,7 +425,7 @@ function projectView(d, draft){
     `<p><b>Live:</b> sessions and asks come from this dashboard's API. Only real AskRegistry entries appear.</p>` +
     `<p><b>Derived:</b> project groups, goal keys, and permalinks use exact display-label equality. The label is not a stable id.</p>` +
     `<p><b>Browser-owned goal:</b> each exact label has a separate key on this origin. Same-label projects collide, and a rename orphans the value.</p>` +
-    `<p><b>Observer:</b> goals come from bounded Claude or Pi transcripts. Stages come from declared Spacedock entity state. No project-level synthesis overwrites the operator goal.</p>` +
+    `<p><b>Observer:</b> goals come from bounded Claude, Codex, or Pi transcripts. Stages come from declared Spacedock entity state. No project-level synthesis overwrites the operator goal.</p>` +
     `<p><b>History:</b> captain instructions are timestamped transcript user messages. Gate decisions are timestamped entity frontmatter resolutions. Untimestamped prepare and status-transition history stay unavailable.</p>` +
-    `<p><b>Unavailable:</b> verified ask-to-session attribution, ask reassignment, Codex transcript observation, and steering transport.</p></details>`;
+    `<p><b>Unavailable:</b> verified ask-to-session attribution, ask reassignment, and steering transport.</p></details>`;
 }
