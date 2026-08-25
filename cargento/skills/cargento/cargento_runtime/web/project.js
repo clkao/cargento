@@ -9,6 +9,12 @@
    contract. The page states the collision and rename failure beside the value. */
 const PROJECT_COCKPIT_KEY = "cargento.projectCockpitProject";
 const PROJECT_GOAL_PREFIX = "cargento.projectGoal.v1:";
+const PROJECT_STEERING_NODE_LIMIT = 3;
+const PROJECT_OUTCOME_NODE_LIMIT = 4;
+const PROJECT_SOURCE_LANE_WINDOW = 6;
+const PROJECT_OUTCOME_KINDS = new Set([
+  "gate", "checkpoint", "decision", "test_result", "ask_resolution", "outcome", "work"
+]);
 let projectCockpitLabel = null;
 let projectQueryLabel = null;
 let projectQuerySession = null;
@@ -375,8 +381,22 @@ function projectTimelineEvents(focus, sourceEvents){
   const exact = row => !focus ||
     (row.harness === focus.harness && row.sid === focus.sid);
   const events = sourceEvents.filter(exact).map(row => Object.assign({}, row));
-  return events.filter(event => Number(event.at) && event.source)
-    .sort((a, b) => a.at - b.at).slice(-12);
+  const semantic = events.filter(event => Number(event.at) && event.source &&
+    (event.kind === "steer" || PROJECT_OUTCOME_KINDS.has(event.kind)))
+    .sort((a, b) => a.at - b.at);
+  const steering = semantic.filter(event => event.kind === "steer")
+    .slice(-PROJECT_SOURCE_LANE_WINDOW);
+  const work = semantic.filter(event => PROJECT_OUTCOME_KINDS.has(event.kind));
+  const selectedWork = work.slice(-PROJECT_SOURCE_LANE_WINDOW);
+  const preserveNewest = phase => {
+    const candidate = work.filter(event => event.phase === phase).slice(-1)[0];
+    if(!candidate || selectedWork.some(event => event.phase === phase)) return;
+    if(selectedWork.length >= PROJECT_SOURCE_LANE_WINDOW) selectedWork.shift();
+    selectedWork.push(candidate);
+  };
+  preserveNewest("Spacedock dispatch build");
+  preserveNewest("ordinary subagent task and paired result");
+  return steering.concat(selectedWork).sort((a, b) => a.at - b.at);
 }
 
 function projectLifecycleEvidence(focus){
@@ -395,20 +415,20 @@ function projectRelationTarget(event, steering){
   return steering.find(item => item.id && item.id === event.related_to) || null;
 }
 
-function projectSemanticNode(d, event, kind, steering){
+function projectSemanticNode(d, event, kind, steering, visible){
   const ago = event.at
     ? fmtDur(Math.max(0, (Number(d.generated) || 0) - event.at)) + " ago"
     : "time unavailable";
   const iso = event.at ? new Date(Number(event.at) * 1000).toISOString() : "";
-  const intent = kind === "steer" && event.intent && event.intent_source
-    ? `<span class="pc-intent">intent · ${esc(event.intent)}</span>` : "";
+  const steeringTag = kind === "steer" && event.steering_tag && event.tag_source
+    ? `<span class="pc-intent">${esc(event.steering_tag)}</span>` : "";
   const relation = kind === "outcome" && projectRelationTarget(event, steering)
     ? `<span class="pc-relation" data-causal-link="supported">linked by ${esc(event.relation_source)}</span>`
     : "";
-  return `<article class="pc-semantic-node ${kind}">` +
-    `<div class="pc-event-title">${esc(event.title)}</div>${intent}${relation}` +
-    `<details class="pc-event-evidence"><summary>${esc(ago)} · source</summary>` +
-    `<div>${esc(event.phase || event.kind)} · ${esc(event.source || "source unavailable")}` +
+  return `<article class="pc-semantic-node ${kind}" data-visible-node="${visible}">` +
+    `<div class="pc-event-title">${esc(event.title)}</div>${steeringTag}${relation}` +
+    `<details class="pc-event-evidence"><summary>evidence</summary>` +
+    `<div>${esc(ago)} · ${esc(event.phase || event.kind)} · ${esc(event.source || "source unavailable")}` +
     (iso ? ` · <time datetime="${esc(iso)}">${esc(iso)}</time>` : "") +
     (event.detail ? ` · ${esc(event.detail)}` : "") + `</div></details></article>`;
 }
@@ -417,11 +437,19 @@ function projectSemanticLane(d, title, kind, events, steering){
   const empty = kind === "steer"
     ? "No timestamped non-meta user-role instruction found."
     : "No demonstrated outcome found for this session.";
+  const newest = events.slice().reverse();
+  const limit = kind === "steer" ? PROJECT_STEERING_NODE_LIMIT : PROJECT_OUTCOME_NODE_LIMIT;
+  const visible = newest.slice(0, limit);
+  const overflow = newest.slice(limit);
   return `<section class="pc-semantic-lane" data-order="newest-first"` +
     ` data-semantic-lane="${kind === "steer" ? "steering" : "outcome"}">` +
-    `<h4>${esc(title)}</h4>` + (events.length
-      ? events.slice().reverse().map(event => projectSemanticNode(d, event, kind, steering)).join("")
-      : `<div class="pc-semantic-empty">${empty}</div>`) + `</section>`;
+    `<h4>${esc(title)}</h4>` + (visible.length
+      ? visible.map(event => projectSemanticNode(d, event, kind, steering, true)).join("")
+      : `<div class="pc-semantic-empty">${empty}</div>`) +
+    (overflow.length ? `<details class="pc-semantic-overflow"><summary>${overflow.length} older ` +
+      `${kind === "steer" ? "instructions" : "work records"}</summary>` +
+      overflow.map(event => projectSemanticNode(d, event, kind, steering, false)).join("") +
+      `</details>` : "") + `</section>`;
 }
 
 function projectDerivedContext(d, observers, focus){
@@ -438,10 +466,10 @@ function projectDerivedContext(d, observers, focus){
       const modelLine = model.model
         ? `${model.model} · reasoning ${model.reasoning_effort || "not reported"} · ${model.status || "not reported"}`
         : "deterministic observer fallback";
-      return `<article class="pc-semantic-node context"><span class="pc-context-kind">derived · subordinate</span>` +
+      return `<article class="pc-semantic-node context" data-visible-node="true"><span class="pc-context-kind">derived · subordinate</span>` +
         `<div class="pc-event-title">${esc(row.goal)}</div>` +
-        `<details class="pc-event-evidence"><summary>${esc(ago)} · source</summary>` +
-        `<div>${esc(row.source || "bounded transcript observation")} · ${esc(modelLine)} · ` +
+        `<details class="pc-event-evidence"><summary>evidence</summary>` +
+        `<div>${esc(ago)} · ${esc(row.source || "bounded transcript observation")} · ${esc(modelLine)} · ` +
         `<time datetime="${esc(iso)}">${esc(iso)}</time></div></details></article>`;
     }).join("") + `</section>`;
 }
@@ -450,12 +478,10 @@ function projectWorkIntervals(steering, outcomes){
   const rows = [];
   for(const outcome of outcomes){
     const linked = projectRelationTarget(outcome, steering);
-    const prior = steering.filter(event => event.at <= outcome.at);
-    const start = linked || prior[prior.length - 1];
-    if(!start) continue;
-    rows.push({start:start, outcome:outcome, linked:!!linked});
+    if(!linked) continue;
+    rows.push({start:linked, outcome:outcome, linked:true});
   }
-  return rows;
+  return rows.slice(-2);
 }
 
 function projectWorkIntervalRows(intervals){
@@ -482,10 +508,7 @@ function projectActivity(d, group, focus){
     contextEvents
   );
   const steering = events.filter(event => event.kind === "steer");
-  const outcomeKinds = new Set([
-    "gate", "checkpoint", "decision", "test_result", "ask_resolution", "outcome"
-  ]);
-  const outcomes = events.filter(event => outcomeKinds.has(event.kind));
+  const outcomes = events.filter(event => PROJECT_OUTCOME_KINDS.has(event.kind));
   if(!steering.length && !outcomes.length && !observers.length){
     const reading = !entry || entry.state === "loading"
       ? "Reading the gate and instruction sources…"
@@ -508,13 +531,15 @@ function projectEvidenceLimits(group, focus){
   const gate = sources.gate || {};
   const steer = sources.steer || {};
   const observer = sources.observer || {};
+  const work = sources.work || {};
   return `<ul class="pc-limit-list">` +
     `<li><b>Operator note:</b> Operator note overrides derived context. It is browser-only, keyed by the exact project label, and is not durable project authority. <code>${esc(projectGoalKey(group.label))}</code></li>` +
     `<li><b>Requests:</b> Absence of an exact AskRegistry or live needs-input signal does not prove unblocked.</li>` +
     `<li><b>Meaning:</b> “What you asked” means timestamped non-meta user-role text, not verified captain authorship. Chronological proximity does not imply causality; only a source-named relation is linked.</li>` +
     `<li><b>Derived context:</b> Bounded transcript observation stays subordinate. Stage and block are omitted when absent.</li>` +
     `<li><b>Observed sources:</b> ${Number(steer.live) || 0} steering records · ` +
-    `${Number(gate.live) || 0} gate decisions · ${Number(observer.live) || 0} derived snapshots. ` +
+    `${Number(gate.live) || 0} gate decisions · ${Number(work.live) || 0} work records · ` +
+    `${Number(observer.live) || 0} derived snapshots. ` +
     `Status-transition history is omitted.</li>${projectLifecycleEvidence(focus)}</ul>`;
 }
 

@@ -226,9 +226,106 @@ class ProjectContextTest(unittest.TestCase):
         self.assertIsNotNone(event)
         assert event is not None
         self.assertEqual("Captain changed the shape", event["title"])
-        self.assertEqual("user-role transcript message", event["phase"])
-        self.assertEqual("codex:project-session", event["detail"])
-        self.assertEqual("transcript user-role message", event["source"])
+        self.assertEqual("user-role instruction", event["phase"])
+        self.assertNotIn("detail", event)
+        self.assertEqual("timestamped non-meta user-role record", event["source"])
+
+    def test_instruction_is_condensed_and_tagged_only_by_explicit_wording(self) -> None:
+        event = project_context._instruction_event(
+            self.config,
+            codex_message(
+                "Captain clarification: Keep the graph concise.\n"
+                "Infrastructure prose that must not become the directive.",
+                "2026-08-24T20:10:00Z",
+            ),
+            "codex",
+            self.SID,
+        )
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual("Keep the graph concise.", event["title"])
+        self.assertEqual("reframed", event["steering_tag"])
+        self.assertEqual("explicit user-role wording", event["tag_source"])
+        self.assertNotIn("Infrastructure prose", event["title"])
+
+    def test_pi_work_events_normalize_dispatch_and_subagent_results(self) -> None:
+        records = [
+            {
+                "type": "message",
+                "timestamp": "2026-08-24T20:00:00Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "raw-build-id",
+                            "name": "bash",
+                            "arguments": {
+                                "command": "echo preparing\n"
+                                "spacedock dispatch build --workflow-dir /work task-one "
+                                "--stage shaping\n"
+                            },
+                        },
+                        {
+                            "type": "toolCall",
+                            "id": "raw-batch-id",
+                            "name": "subagent",
+                            "arguments": {
+                                "tasks": [
+                                    {"task": "Inspect architecture", "agent": "one"},
+                                    {"task": "Inspect interaction", "agent": "two"},
+                                ]
+                            },
+                        },
+                        {
+                            "type": "toolCall",
+                            "id": "raw-status-id",
+                            "name": "subagent",
+                            "arguments": {"action": "status"},
+                        },
+                        {
+                            "type": "toolCall",
+                            "id": "raw-open-id",
+                            "name": "subagent",
+                            "arguments": {"task": "Check the unresolved edge"},
+                        },
+                    ],
+                },
+            },
+            {
+                "type": "message",
+                "timestamp": "2026-08-24T20:01:00Z",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "raw-build-id",
+                    "isError": False,
+                    "content": [{"type": "text", "text": "built"}],
+                },
+            },
+            {
+                "type": "message",
+                "timestamp": "2026-08-24T20:02:00Z",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "raw-batch-id",
+                    "isError": False,
+                    "content": [{"type": "text", "text": "done"}],
+                },
+            },
+        ]
+        self.transcript.write_text(
+            "\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8"
+        )
+
+        events = project_context.work_events(self.config, str(self.transcript), "pi", self.SID)
+
+        self.assertEqual(["work", "outcome", "work"], [event["kind"] for event in events])
+        self.assertIn("Built dispatch package · task-one · shaping", events[0]["title"])
+        self.assertEqual("2 background tasks contributed", events[1]["title"])
+        self.assertIn("Background task started", events[2]["title"])
+        self.assertNotIn("raw-status-id", json.dumps(events))
+        self.assertNotIn("preparing", json.dumps(events))
 
     def test_environment_context_is_not_steering(self) -> None:
         event = project_context._instruction_event(

@@ -403,7 +403,7 @@ console.log(JSON.stringify({
   decision: h.slice(h.indexOf("What happened")).includes("application consumed") &&
     h.includes("shaping · approve"),
   unrelated: !h.includes("unrelated read") && !h.includes("caused") &&
-    !h.includes('data-causal-link="supported"') && h.includes("chronology only") &&
+    !h.includes('data-causal-link="supported"') && !h.includes("Work interval") &&
     h.includes("Chronological proximity does not imply causality"),
   boundary: h.indexOf("Status-transition history is omitted") >
     h.indexOf("Evidence / limits"),
@@ -426,9 +426,9 @@ projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
     {id: "instruction:0", at: 99960, kind: "steer", phase: "user-role transcript message",
       title: "Earlier instruction", intent: "unsupported guess", detail: "codex:focus-1",
       source: "transcript user-role message", harness: "codex", sid: "focus-1"},
-    {id: "instruction:1", at: 99970, kind: "steer", phase: "user-role transcript message",
-      title: "Prepare checkpoint", intent: "record a checkpoint",
-      intent_source: "model-supported intent tag", detail: "codex:focus-1",
+    {id: "instruction:1", at: 99970, kind: "steer", phase: "user-role instruction",
+      title: "Prepare checkpoint", steering_tag: "generated",
+      tag_source: "explicit user-role wording", detail: "codex:focus-1",
       source: "transcript user-role message", harness: "codex", sid: "focus-1"},
     {at: 99980, kind: "activity", phase: "read", title: "Unrelated activity",
       source: "activity source", harness: "codex", sid: "focus-1"},
@@ -450,8 +450,8 @@ console.log(JSON.stringify({
     h.includes("20s"),
   newest: h.indexOf("Prepare checkpoint") < h.indexOf("Earlier instruction") &&
     h.includes('data-order="newest-first"'),
-  intentBoundary: h.includes("intent · record a checkpoint") &&
-    !h.includes("intent · unsupported guess") && h.split("intent ·").length - 1 === 1,
+  intentBoundary: h.includes(">generated</span>") &&
+    !h.includes("unsupported guess</span>"),
   noAutonomyClaim: !h.includes("autonomous") && !h.includes("autonomy phase"),
   unrelatedHidden: !h.includes("Unrelated activity")
 }));
@@ -467,6 +467,79 @@ console.log(JSON.stringify({
         self.assertTrue(out["intentBoundary"])
         self.assertTrue(out["noAutonomyClaim"])
         self.assertTrue(out["unrelatedHidden"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_mixed_work_stays_semantic_bounded_and_provenance_secondary(self) -> None:
+        checks = """
+projectContextByLabel[projectContextKey("git/asr")] = {state: "ready", generated: 100000,
+  data: {observers: [{harness: "pi", sid: "asr-root", goal: "Resume the ASR work",
+    observed_at: 99999, source: "bounded transcript", model: {model: "gpt-5.6-luna",
+      reasoning_effort: "max", status: "used"}}], events: [
+    {at: 99910, kind: "steer", title: "Keep the first directive", harness: "pi",
+      sid: "asr-root", source: "timestamped non-meta user-role record"},
+    {at: 99950, kind: "steer", title: "Correct the session grouping", steering_tag: "corrected",
+      tag_source: "explicit user-role wording", harness: "pi", sid: "asr-root",
+      source: "timestamped non-meta user-role record"},
+    {at: 99930, kind: "steer", title: "Do not infer ownership", steering_tag: "generated",
+      harness: "pi", sid: "asr-root", source: "timestamped non-meta user-role record"},
+    {at: 99940, kind: "steer", title: "Condense steering", harness: "pi", sid: "asr-root",
+      source: "timestamped non-meta user-role record"},
+    {at: 99920, kind: "steer", title: "Use mixed work as evidence", harness: "pi",
+      sid: "asr-root", source: "timestamped non-meta user-role record"},
+    {at: 99955, kind: "work", title: "Built dispatch package · task-one · shaping",
+      harness: "pi", sid: "asr-root", source: "Pi bash tool call and paired result"},
+    {at: 99960, kind: "outcome", title: "2 background tasks contributed", harness: "pi",
+      sid: "asr-root", source: "Pi subagent tool call and paired result"},
+    {at: 99965, kind: "work", title: "Built dispatch package · task-two · review",
+      harness: "pi", sid: "asr-root", source: "Pi bash tool call and paired result"},
+    {at: 99970, kind: "outcome", title: "Background task returned · Inspect latency",
+      harness: "pi", sid: "asr-root", source: "Pi subagent tool call and paired result"},
+    {at: 99975, kind: "work", title: "Built dispatch package · task-three · review",
+      harness: "pi", sid: "asr-root", source: "Pi bash tool call and paired result"},
+    {at: 99980, kind: "outcome", title: "Background task returned · Check routing",
+      harness: "pi", sid: "asr-root", source: "Pi subagent tool call and paired result"}
+  ], sources: {gate: {}, work: {live: 6}, steer: {live: 5, unavailable: []},
+    observer: {live: 1}}}};
+const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
+  active: true, state: "working", subagent_events: [
+    {kind: "task_started", source: "raw lifecycle"},
+    {kind: "task_complete", source: "raw lifecycle"}
+  ]})]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+const graph = h.slice(h.indexOf("What changed"), h.indexOf("Other project sessions"));
+const visibleText = Array.from(graph.matchAll(
+  /<article[^>]*data-visible-node="true"[^>]*>([\\s\\S]*?)<details/g
+)).map(match => match[1]).join("");
+console.log(JSON.stringify({
+  bounded: (graph.match(/data-visible-node="true"/g) || []).length === 8 &&
+    graph.includes("older instructions") && graph.includes("older work records"),
+  separated: graph.includes("What you asked") && graph.includes("What happened"),
+  mixed: graph.includes("Built dispatch package") && graph.includes("background tasks contributed"),
+  quietPrimary: !visibleText.includes("asr-root") && !visibleText.includes("pi:") &&
+    !visibleText.includes("gpt-5.6-luna") && !visibleText.includes("reasoning") &&
+    !visibleText.includes("transcript message") && !visibleText.includes("source"),
+  supportedTagOnly: visibleText.includes("corrected</span>") &&
+    !visibleText.includes("generated</span>"),
+  noCausalGuess: !graph.includes('data-causal-link="supported"'),
+  lifecycleSuppressed: !graph.includes("task_started") && !graph.includes("task_complete") &&
+    !graph.includes("raw lifecycle")
+}));
+"""
+        out = self.run_project(
+            checks,
+            project="git/asr",
+            query_project="git/asr",
+            query_session="pi:asr-root",
+        )
+        self.assertTrue(out["bounded"])
+        self.assertTrue(out["separated"])
+        self.assertTrue(out["mixed"])
+        self.assertTrue(out["quietPrimary"])
+        self.assertTrue(out["supportedTagOnly"])
+        self.assertTrue(out["noCausalGuess"])
+        self.assertTrue(out["lifecycleSuppressed"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_primary_copy_omits_empty_fields_and_each_material_limit_appears_once(self) -> None:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 from typing import TYPE_CHECKING, Any
 
 from . import io as runtime_io
@@ -17,6 +19,26 @@ if TYPE_CHECKING:
 
 MAX_PROJECT_EVENTS = 100
 MAX_PROJECT_OBSERVERS = 3
+MAX_SEMANTIC_LINE = 112
+
+_DIRECTIVE_PREFIX_RE = re.compile(
+    r"^(?:please\s+|captain(?:\s+(?:says|asks|adds|clarifies|refines|clarification|refinement|correction))?\s*[:—-]\s*)+",
+    re.IGNORECASE,
+)
+_DIRECTIVE_TAGS = (
+    ("corrected", ("correction", "correct this", "fix the")),
+    ("reframed", ("reframe", "refinement", "clarification", "change direction")),
+    ("answered", ("answer to", "answered")),
+    ("generated", ("new acceptance", "add a new", "create a new")),
+)
+_DISPATCH_BUILD_RE = re.compile(r"^\s*spacedock\s+dispatch\s+build(?:\s+(.*))?$", re.IGNORECASE)
+_DISPATCH_VALUE_OPTIONS = {
+    "--checklist-file",
+    "--host",
+    "--stage",
+    "--stamp",
+    "--workflow-dir",
+}
 
 
 def _transcript_signature(transcript_path: str) -> dict[str, int] | None:
@@ -113,17 +135,274 @@ def _instruction_event(
     text = message["text"].strip()
     if at is None or not text:
         return None
-    title = records.safe_text(text.splitlines()[0], config.observer_goal_cap_chars)
-    return {
+    title = _semantic_line(text, min(MAX_SEMANTIC_LINE, config.observer_goal_cap_chars))
+    if not title:
+        return None
+    event: dict[str, Any] = {
         "at": at,
         "kind": "steer",
-        "phase": "user-role transcript message",
+        "phase": "user-role instruction",
         "title": title,
-        "detail": f"{harness}:{sid}",
-        "source": "transcript user-role message",
+        "source": "timestamped non-meta user-role record",
         "harness": harness,
         "sid": sid,
     }
+    lower = text.casefold()
+    for tag, markers in _DIRECTIVE_TAGS:
+        if any(marker in lower for marker in markers):
+            event["steering_tag"] = tag
+            event["tag_source"] = "explicit user-role wording"
+            break
+    return event
+
+
+def _semantic_line(text: str, limit: int) -> str:
+    """A short directive/task label from real text, without its envelope prose."""
+    candidates: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip().lstrip("#*- ").strip()
+        if not line or line.startswith(("<", "```", "Message Type:", "Task name:", "Sender:")):
+            continue
+        line = _DIRECTIVE_PREFIX_RE.sub("", line)
+        if not line:
+            continue
+        candidates.append(line)
+    if not candidates:
+        return ""
+    chosen = candidates[0]
+    sentence = re.split(r"(?<=[.!?])\s+", chosen, maxsplit=1)[0]
+    sentence = re.sub(r"\s+", " ", sentence).strip()
+    return records.safe_text(sentence, limit)
+
+
+def _record_timestamp(record: dict[str, Any]) -> float | None:
+    message = record.get("message")
+    message_ts = message.get("timestamp") if isinstance(message, dict) else None
+    return records.parse_ts(record.get("timestamp") or message_ts or "")
+
+
+def _dispatch_identity(command_line: str) -> tuple[str, str] | None:
+    match = _DISPATCH_BUILD_RE.match(command_line)
+    if match is None:
+        return None
+    try:
+        tokens = shlex.split(match.group(1) or "")
+    except ValueError:
+        return None
+    slug = ""
+    stage = ""
+    index = 0
+    while index < len(tokens):
+        part = tokens[index]
+        if part in {"|", "&&", ";"} or part.startswith((">", "1>", "2>")):
+            break
+        if part in _DISPATCH_VALUE_OPTIONS:
+            value = tokens[index + 1] if index + 1 < len(tokens) else ""
+            if part == "--stage" and spacedock.SD_STAGE_RE.fullmatch(value):
+                stage = value
+            index += 2
+            continue
+        if part.startswith("-"):
+            index += 1
+            continue
+        if not slug and spacedock.SD_STAGE_RE.fullmatch(part):
+            slug = part
+        index += 1
+    return (slug, stage) if slug else None
+
+
+def _subagent_tasks(arguments: dict[str, Any]) -> list[str]:
+    tasks: list[str] = []
+    task = arguments.get("task")
+    if isinstance(task, str) and task.strip():
+        tasks.append(task)
+    batch = arguments.get("tasks")
+    if isinstance(batch, list):
+        for item in batch:
+            if not isinstance(item, dict):
+                continue
+            value = item.get("task")
+            if isinstance(value, str) and value.strip():
+                tasks.append(value)
+    return tasks
+
+
+def _work_records(config: RuntimeConfig, transcript_path: str) -> list[dict[str, Any]]:
+    transcript: list[dict[str, Any]] = []
+    bounded = list(
+        runtime_io.reverse_lines(
+            config,
+            transcript_path,
+            max_bytes=config.turn_scan_max_bytes,
+        )
+    )
+    for raw_bytes in reversed(bounded):
+        raw = raw_bytes.decode("utf-8", "replace")
+        if not raw or not raw.lstrip().startswith("{"):
+            continue
+        try:
+            record = json.loads(raw)
+        except (ValueError, json.JSONDecodeError, RecursionError):
+            continue
+        if isinstance(record, dict):
+            transcript.append(record)
+    return transcript
+
+
+def _paired_results(transcript: list[dict[str, Any]]) -> dict[str, bool]:
+    results: dict[str, bool] = {}
+    for record in transcript:
+        message = record.get("message")
+        if not isinstance(message, dict) or message.get("role") != "toolResult":
+            continue
+        call_id = message.get("toolCallId")
+        if isinstance(call_id, str):
+            results[call_id] = message.get("isError") is not True
+    return results
+
+
+def _dispatch_events(
+    command: str,
+    *,
+    at: float,
+    succeeded: bool | None,
+    harness: str,
+    sid: str,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for command_line in command.splitlines():
+        identity = _dispatch_identity(command_line)
+        if identity is None:
+            continue
+        slug, stage = identity
+        action = "Built" if succeeded is True else "Attempted"
+        title = f"{action} dispatch package · {slug}"
+        if stage:
+            title += f" · {stage}"
+        events.append(
+            {
+                "at": at,
+                "kind": "work",
+                "phase": "Spacedock dispatch build",
+                "title": title,
+                "source": "Pi bash tool call"
+                + (" and paired result" if succeeded is not None else ""),
+                "harness": harness,
+                "sid": sid,
+                "entity": slug,
+            }
+        )
+    return events
+
+
+def _subagent_event(
+    arguments: dict[str, Any],
+    *,
+    at: float,
+    succeeded: bool | None,
+    harness: str,
+    sid: str,
+) -> dict[str, Any] | None:
+    tasks = _subagent_tasks(arguments)
+    if not tasks:
+        return None
+    if len(tasks) > 1:
+        title = f"{len(tasks)} background tasks contributed"
+    else:
+        task = _semantic_line(tasks[0], MAX_SEMANTIC_LINE)
+        if not task:
+            return None
+        if succeeded is None:
+            title = f"Background task started · {task}"
+        elif succeeded:
+            title = f"Background task returned · {task}"
+        else:
+            title = f"Background task failed · {task}"
+    return {
+        "at": at,
+        "kind": "outcome" if succeeded is not None else "work",
+        "phase": "ordinary subagent task and paired result"
+        if succeeded is not None
+        else "ordinary subagent task",
+        "title": title,
+        "source": "Pi subagent tool call" + (" and paired result" if succeeded is not None else ""),
+        "harness": harness,
+        "sid": sid,
+        "contributors": len(tasks),
+    }
+
+
+def _tool_call_events(
+    block: dict[str, Any],
+    *,
+    at: float,
+    results: dict[str, bool],
+    harness: str,
+    sid: str,
+) -> list[dict[str, Any]]:
+    call_id = block.get("id")
+    call_key = call_id if isinstance(call_id, str) else ""
+    arguments = block.get("arguments")
+    args = arguments if isinstance(arguments, dict) else {}
+    if block.get("name") == "bash":
+        command = args.get("command")
+        if not isinstance(command, str):
+            return []
+        return _dispatch_events(
+            command,
+            at=at,
+            succeeded=results.get(call_key),
+            harness=harness,
+            sid=sid,
+        )
+    if block.get("name") != "subagent":
+        return []
+    event = _subagent_event(
+        args,
+        at=at,
+        succeeded=results.get(call_key),
+        harness=harness,
+        sid=sid,
+    )
+    return [event] if event is not None else []
+
+
+def work_events(
+    config: RuntimeConfig,
+    transcript_path: str,
+    harness: str,
+    sid: str,
+) -> list[dict[str, Any]]:
+    """Meaningful Pi tool work; lifecycle/status-only calls stay suppressed."""
+    if harness != "pi":
+        return []
+    transcript = _work_records(config, transcript_path)
+    results = _paired_results(transcript)
+
+    events: list[dict[str, Any]] = []
+    for record in transcript:
+        message = record.get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        at = _record_timestamp(record)
+        if at is None:
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "toolCall":
+                continue
+            events.extend(
+                _tool_call_events(
+                    block,
+                    at=at,
+                    results=results,
+                    harness=harness,
+                    sid=sid,
+                )
+            )
+    return events
 
 
 def instruction_events(
@@ -338,6 +617,7 @@ def collect(
         )
         observers.append({**identity, **result, "source": "bounded transcript and entity state"})
         events.extend(instruction_events(config, transcript_path, harness, sid))
+        events.extend(work_events(config, transcript_path, harness, sid))
         gate_rows, prepared = _gate_context(config, state, transcript_path, harness, sid)
         events.extend(gate_rows)
         briefings += prepared
@@ -356,6 +636,7 @@ def collect(
     timeline = timeline[:MAX_PROJECT_EVENTS]
     gate_count = sum(1 for event in timeline if event["kind"] == "gate")
     steer_count = sum(1 for event in timeline if event["kind"] == "steer")
+    work_count = sum(1 for event in timeline if event["kind"] in {"work", "outcome"})
     return {
         "project": project,
         "focus": {
@@ -384,6 +665,11 @@ def collect(
             },
             "steer": {
                 "live": steer_count,
+                "unavailable": unavailable,
+                "omitted": omitted_rows,
+            },
+            "work": {
+                "live": work_count,
                 "unavailable": unavailable,
                 "omitted": omitted_rows,
             },
