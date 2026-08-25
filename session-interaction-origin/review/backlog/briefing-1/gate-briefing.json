@@ -1,0 +1,24 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:a1wk3a7zaz8zdqv0d3r01wcm:backlog:attempt-1:revision-1",
+  "question": "Should this probe advance to breadboard an explicit, opt-in session registration and bounded steering channel?",
+  "artifacts": [
+    {
+      "id": "artifact:a1wk3a7zaz8zdqv0d3r01wcm:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/4300917a8a7b730c77b8d7f4e5e3e5a96f97d4f1/session-interaction-origin/index.md",
+      "rev": "sha256:cc6efaab2be490d3d54053b3651476fe1fda0fb6c53370dc02fd88256d02a41e",
+      "mediaType": "text/markdown",
+      "summary": "Compare literal tmux delivery with a transport-neutral registered mailbox contract. Prove exact-target delivery, refusal of stale or unregistered targets, and honest acknowledgement states using only disposable sessions; exclude arbitrary shell execution, inferred targets, and production UI work."
+    }
+  ],
+  "context": [
+    {
+      "type": "Reference",
+      "id": "reference:a1wk3a7zaz8zdqv0d3r01wcm:backlog:attempt-1:revision-1:item-2",
+      "uri": "git-root://state/c0b23faa9ada2581dbf46b7c598ac667425069e8/explore/README.md",
+      "mediaType": "text/markdown",
+      "rev": "sha256:b456b9009026aac17dfbf4e4893394b2d2f68e0c9ad191d1a0cde045212ea637"
+    }
+  ]
+}
