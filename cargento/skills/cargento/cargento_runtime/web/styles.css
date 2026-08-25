@@ -780,7 +780,10 @@
   .pc-trail-dot{position:relative;z-index:1;width:9px;height:9px;border-radius:50%;margin:5px 0 0 2px;background:var(--ink2);box-shadow:0 0 0 3px var(--panel)}
   .pc-trail-dot.prepared{background:var(--panel);border:2px solid var(--ink3)}
   .pc-trail-dot.started{background:var(--accent)}
-  .pc-trail-dot.intent{background:var(--panel);border:2px solid var(--accent-ink)}
+  .pc-trail-dot.workflow{border-radius:2px}
+  .pc-trail-dot.intent{width:7px;height:7px;border-radius:1px;margin-left:3px;background:var(--accent-ink);transform:rotate(45deg)}
+  .pc-trail-dot.burst{height:7px;border-radius:2px;margin-top:6px;background:var(--ink3)}
+  .pc-trail.burst .pc-trail-event{display:grid;grid-template-columns:minmax(120px,.7fr) minmax(0,1fr);gap:10px}
   .pc-trail-body{min-width:0}
   .pc-trail-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
   .pc-trail-top strong{font-size:var(--fs-sm);color:var(--ink)}

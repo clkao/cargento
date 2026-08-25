@@ -22,6 +22,9 @@ MAX_PROJECT_EVENTS = 100
 MAX_PROJECT_OBSERVERS = 3
 MAX_ACTIVE_CHILD_OBSERVERS = 3
 MAX_SEMANTIC_LINE = 112
+SEMANTIC_CURRENT_HORIZON_SEC = 15 * 60
+SEMANTIC_BURST_EPSILON_SEC = 2
+MAX_PRIMARY_ACTIVITY_NODES = 5
 
 _DIRECTIVE_PREFIX_RE = re.compile(
     r"^(?:please\s+|captain(?:\s+(?:says|asks|adds|clarifies|refines|clarification|refinement|correction))?\s*[:—-]\s*)+",
@@ -197,6 +200,19 @@ def _intent_promotable(text: str, title: str) -> bool:
     }:
         return False
     lowered = text.lstrip().casefold()
+    stripped_title = title.strip()
+    looks_like_non_intent = (
+        re.match(r"^[,.;:)}\]]", stripped_title) is not None
+        or re.match(
+            r"^(?:raise\s+[a-z_][a-z0-9_]*\s*\(|(?:find|ls|cat|sed|rg)\s+(?:~?/|\.\.?/))",
+            stripped_title,
+            re.IGNORECASE,
+        )
+        is not None
+        or re.match(r"^(?:saved|wrote|written|created)\b.*\s(?:to|at)\s+/", lowered) is not None
+    )
+    if looks_like_non_intent:
+        return False
     if lowered.startswith(
         (
             "command failed",
@@ -1081,6 +1097,12 @@ def _semantic_fact_from_event(
     for key in ("stage", "decision", "by", "target_stage", "assignment", "worker_kind"):
         if source_event.get(key) not in (None, ""):
             fact[key] = source_event[key]
+    lineage = str(source_event.get("lineage") or "")
+    if lineage:
+        call_key = lineage.rsplit(":", 1)[0]
+        fact["batch_id"] = _semantic_id(
+            "batch", source_event.get("harness"), source_event.get("sid"), call_key
+        )
     return fact
 
 
@@ -1102,6 +1124,21 @@ def _semantic_intent(fact: dict[str, Any]) -> tuple[dict[str, Any], dict[str, An
         "provenance": "bounded semantic-line extraction",
     }
     return projection, relation
+
+
+def _append_semantic_intent(
+    fact: dict[str, Any],
+    intent_summaries: set[str],
+    intent_projections: list[dict[str, Any]],
+    relations: list[dict[str, Any]],
+) -> None:
+    projection, relation = _semantic_intent(fact)
+    summary_key = str(projection["summary"]).casefold().strip()
+    if summary_key in intent_summaries:
+        return
+    intent_summaries.add(summary_key)
+    intent_projections.append(projection)
+    relations.append(relation)
 
 
 def _semantic_source_binding(
@@ -1232,6 +1269,113 @@ def _semantic_assignments(
     return sorted(assignments, key=lambda row: float(row.get("at") or 0), reverse=True)
 
 
+def _activity_nodes(representatives: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    clusters: list[list[dict[str, Any]]] = []
+    for representative in sorted(representatives, key=lambda row: float(row.get("at") or 0)):
+        if not clusters:
+            clusters.append([representative])
+            continue
+        cluster = clusters[-1]
+        first = cluster[0]
+        same_batch = bool(representative.get("batch_id")) and representative.get(
+            "batch_id"
+        ) == first.get("batch_id")
+        near = (
+            float(representative.get("at") or 0) - float(first.get("at") or 0)
+            <= SEMANTIC_BURST_EPSILON_SEC
+        )
+        if not (same_batch or near):
+            cluster = []
+            clusters.append(cluster)
+        cluster.append(representative)
+
+    nodes: list[dict[str, Any]] = []
+    for cluster in clusters:
+        cluster.sort(key=lambda row: float(row.get("at") or 0), reverse=True)
+        work_item_ids = [
+            work_item_id for member in cluster for work_item_id in member["work_item_ids"]
+        ]
+        if len(cluster) == 1:
+            node = dict(cluster[0])
+            node["kind"] = "work"
+        else:
+            node = {
+                "kind": "burst",
+                "at": cluster[0].get("at"),
+                "count": len(cluster),
+                "work_item_ids": work_item_ids,
+                "latest_event": cluster[0].get("latest_event"),
+                "retry_count": sum(int(member.get("retry_count") or 0) for member in cluster),
+            }
+        nodes.append(node)
+    return sorted(nodes, key=lambda row: float(row.get("at") or 0), reverse=True)[
+        :MAX_PRIMARY_ACTIVITY_NODES
+    ]
+
+
+def _semantic_activity_projection(
+    work_items: dict[str, dict[str, Any]],
+    trail_heads: list[dict[str, Any]],
+    facts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Bound the primary graph without turning old requests into current state."""
+    if not facts:
+        return {"nodes": [], "historical_unresolved": 0}
+    newest_at = max(float(fact.get("at") or 0) for fact in facts)
+    current_after = newest_at - SEMANTIC_CURRENT_HORIZON_SEC
+    fact_by_id = {str(fact["fact_id"]): fact for fact in facts}
+
+    def label_key(work_item_id: str) -> str:
+        label = str(work_items.get(work_item_id, {}).get("label") or "")
+        return re.sub(r"[^a-z0-9]+", " ", label.casefold()).strip()
+
+    current: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for head in trail_heads:
+        latest = fact_by_id.get(str(head.get("latest_meaningful_event")))
+        if latest is None or float(latest.get("at") or 0) < current_after:
+            continue
+        if head.get("status") not in {"prepared", "requested", "outcome", "decision"}:
+            continue
+        current.append((head, latest))
+
+    # An exact repeated assignment is one work lane with retry history, not a
+    # new primary node each time the orchestrator redispatches it.
+    grouped: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    for head, latest in current:
+        key = label_key(str(head["work_item_id"])) or str(head["work_item_id"])
+        grouped.setdefault(key, []).append((head, latest))
+    representatives: list[dict[str, Any]] = []
+    for members in grouped.values():
+        members.sort(key=lambda pair: float(pair[1].get("at") or 0), reverse=True)
+        head, latest = members[0]
+        representatives.append(
+            {
+                "at": latest.get("at"),
+                "batch_id": latest.get("batch_id"),
+                "status": head.get("status"),
+                "work_item_ids": [str(pair[0]["work_item_id"]) for pair in members],
+                "latest_event": latest["fact_id"],
+                "retry_count": len(members) - 1,
+            }
+        )
+    nodes = _activity_nodes(representatives)
+
+    represented_keys = {
+        label_key(work_item_id) for node in nodes for work_item_id in node.get("work_item_ids", [])
+    }
+    historical_keys = {
+        label_key(str(head["work_item_id"]))
+        for head in trail_heads
+        if head.get("status") == "requested"
+        and label_key(str(head["work_item_id"])) not in represented_keys
+    }
+    return {
+        "nodes": nodes,
+        "historical_unresolved": len(historical_keys),
+        "current_after": current_after,
+    }
+
+
 def _semantic_model(
     events: list[dict[str, Any]], observers: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -1244,6 +1388,7 @@ def _semantic_model(
     contributors: dict[str, dict[str, Any]] = {}
     relations: list[dict[str, Any]] = []
     intent_projections: list[dict[str, Any]] = []
+    intent_summaries: set[str] = set()
     fact_by_work_item: dict[str, list[dict[str, Any]]] = {}
     for source_event in ordered:
         raw_kind = str(source_event.get("kind") or "")
@@ -1257,9 +1402,7 @@ def _semantic_model(
         fact_id = str(fact["fact_id"])
         facts.append(fact)
         if raw_kind == "steer" and source_event.get("intent_promotable") is True:
-            projection, relation = _semantic_intent(fact)
-            intent_projections.append(projection)
-            relations.append(relation)
+            _append_semantic_intent(fact, intent_summaries, intent_projections, relations)
         if not work_item_id:
             continue
         work_item = work_items.setdefault(
@@ -1308,6 +1451,7 @@ def _semantic_model(
     facts.sort(key=lambda fact: float(fact.get("at") or 0), reverse=True)
     trail_heads = _semantic_trail_heads(fact_by_work_item, facts)
     assignments = _semantic_assignments(fact_by_work_item, work_items)
+    activity = _semantic_activity_projection(work_items, trail_heads, facts)
     return {
         "facts": facts,
         "work_items": list(work_items.values()),
@@ -1317,6 +1461,7 @@ def _semantic_model(
             "operator_intents": intent_projections,
             "trail_heads": trail_heads,
             "assignments": assignments,
+            "activity": activity,
             "steering_episodes": [],
             "candidate_goal_shifts": [],
         },

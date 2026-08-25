@@ -9,9 +9,7 @@
    contract. The page states the collision and rename failure beside the value. */
 const PROJECT_COCKPIT_KEY = "cargento.projectCockpitProject";
 const PROJECT_GOAL_PREFIX = "cargento.projectGoal.v1:";
-const PROJECT_VISIBLE_TRAIL_HEADS = 5;
-const PROJECT_VISIBLE_INTENTS = 2;
-const PROJECT_VISIBLE_STANDALONE = 2;
+const PROJECT_VISIBLE_ACTIVITY_NODES = 5;
 let projectCockpitLabel = null;
 let projectQueryLabel = null;
 let projectQuerySession = null;
@@ -478,7 +476,7 @@ function projectFactEvidence(fact){
     `</div></details>`;
 }
 
-function projectTrailRow(d, head, model){
+function projectTrailRow(d, head, model, node){
   const facts = Array.isArray(model.facts) ? model.facts : [];
   const items = Array.isArray(model.work_items) ? model.work_items : [];
   const item = items.find(candidate => candidate.work_item_id === head.work_item_id) || {};
@@ -488,26 +486,18 @@ function projectTrailRow(d, head, model){
   const status = head.status === "requested"
     ? "requested · current state unknown" : head.status;
   const age = latest.at ? fmtDur(Math.max(0, Number(d.generated) - Number(latest.at))) + " ago" : "";
-  return `<article class="pc-trail" data-trail-head="${esc(head.status || "latest")}">` +
-    `<span class="pc-trail-dot ${esc(head.status || "latest")}"></span><div class="pc-trail-body">` +
+  const kind = item.kind === "workflow_item" ? " workflow" : "";
+  const retries = Number(node && node.retry_count) || 0;
+  return `<article class="pc-trail${kind}" data-trail-head="${esc(head.status || "latest")}">` +
+    `<span class="pc-trail-dot ${esc(head.status || "latest")}${kind}"></span><div class="pc-trail-body">` +
     `<div class="pc-trail-top"><strong>${esc(item.label || latest.summary || "Work item")}</strong>` +
     `<span>${esc(status)}${age ? ` · ${esc(age)}` : ""}</span></div>` +
-    `<div class="pc-trail-result">${esc(latest.summary || "Latest state")}</div>` +
+    `<div class="pc-trail-result">${esc(latest.summary || "Latest state")}` +
+    (retries ? ` <span class="pc-trail-quiet">· ${retries} earlier retr${retries === 1 ? "y" : "ies"} folded</span>` : "") +
+    `</div>` +
     `<details class="pc-trail-history"><summary>${history.length} sourced event${history.length === 1 ? "" : "s"}</summary>` +
     history.map(fact => `<div class="pc-trail-event"><span>${esc(fact.summary || fact.type)}</span>` +
       projectFactEvidence(fact) + `</div>`).join("") + `</details></div></article>`;
-}
-
-function projectIntentRow(d, intent, model){
-  const facts = Array.isArray(model.facts) ? model.facts : [];
-  const fact = facts.find(candidate => candidate.fact_id === intent.derived_from) || {};
-  const age = intent.at ? fmtDur(Math.max(0, Number(d.generated) - Number(intent.at))) + " ago" : "";
-  return `<article class="pc-trail intent" data-steering-state="unpaired">` +
-    `<span class="pc-trail-dot intent"></span><div class="pc-trail-body">` +
-    `<div class="pc-trail-top"><strong>Operator intent</strong><span>${esc(age)}</span></div>` +
-    `<div class="pc-trail-result">${esc(intent.summary || "Intent summary unavailable")}</div>` +
-    `<div class="pc-trail-quiet">No demonstrated reaction linked</div>` +
-    projectFactEvidence(fact) + `</div></article>`;
 }
 
 function projectEpisodeRow(d, episode, model){
@@ -516,70 +506,104 @@ function projectEpisodeRow(d, episode, model){
     candidate.projection_id === episode.intent_id) || {};
   const adaptation = facts.find(candidate => candidate.fact_id === episode.adaptation_fact) || {};
   const age = adaptation.at ? fmtDur(Math.max(0, Number(d.generated) - Number(adaptation.at))) + " ago" : "";
+  const action = adaptation.summary || "Demonstrated reaction";
+  const intentText = intent.summary || "Operator intent unavailable";
   return `<article class="pc-trail episode" data-steering-state="paired">` +
-    `<span class="pc-trail-dot intent"></span><div class="pc-trail-body">` +
-    `<div class="pc-trail-top"><strong>Course adapted</strong><span>${esc(age)}</span></div>` +
-    `<div class="pc-trail-result"><span>${esc(intent.summary || "Operator intent")}</span>` +
-    `<b aria-label="responded to"> → </b><span>${esc(adaptation.summary || "Demonstrated reaction")}</span></div>` +
-    `<div class="pc-trail-quiet">source-linked reaction · ${esc(episode.confidence || "supported")}</div>` +
+    `<span class="pc-trail-dot intent" title="${esc(intentText)}"></span><div class="pc-trail-body">` +
+    `<div class="pc-trail-top"><strong>${esc(action)}</strong><span>${esc(age)}</span></div>` +
+    `<details class="pc-trail-history"><summary>source-linked correction · ${esc(episode.confidence || "supported")}</summary>` +
+    `<div class="pc-trail-event">Operator intent: ${esc(intentText)}</div></details>` +
     projectFactEvidence(adaptation) + `</div></article>`;
 }
 
-function projectStandaloneFact(d, fact){
-  const age = fact.at ? fmtDur(Math.max(0, Number(d.generated) - Number(fact.at))) + " ago" : "";
-  const label = fact.type === "observer_snapshot" ? "Derived snapshot" : "Result";
-  return `<article class="pc-trail ${esc(fact.type)}"><span class="pc-trail-dot"></span>` +
-    `<div class="pc-trail-body"><div class="pc-trail-top"><strong>${esc(label)}</strong>` +
-    `<span>${esc(age)}</span></div><div class="pc-trail-result">${esc(fact.summary || label)}</div>` +
-    projectFactEvidence(fact) + `</div></article>`;
+function projectBurstRow(d, node, model){
+  const facts = Array.isArray(model.facts) ? model.facts : [];
+  const items = Array.isArray(model.work_items) ? model.work_items : [];
+  const ids = Array.isArray(node.work_item_ids) ? node.work_item_ids : [];
+  const age = node.at ? fmtDur(Math.max(0, Number(d.generated) - Number(node.at))) + " ago" : "";
+  const rows = ids.map(id => {
+    const item = items.find(candidate => candidate.work_item_id === id) || {};
+    const itemFacts = facts.filter(fact => fact.work_item_id === id)
+      .sort((a, b) => Number(b.at) - Number(a.at));
+    const latest = itemFacts[0] || {};
+    return `<div class="pc-trail-event"><strong>${esc(item.label || "Work item")}</strong>` +
+      `<span>${esc(latest.summary || "Source event unavailable")}</span></div>`;
+  }).join("");
+  return `<article class="pc-trail burst" data-semantic-burst="${ids.length}">` +
+    `<span class="pc-trail-dot burst"></span><div class="pc-trail-body">` +
+    `<div class="pc-trail-top"><strong>${Number(node.count) || ids.length} entities touched</strong>` +
+    `<span>${esc(age)}</span></div><details class="pc-trail-history"><summary>show sourced work items</summary>` +
+    rows + `</details></div></article>`;
 }
 
 function projectSemanticTimeline(d, model){
   const projections = model.projections || {};
   const facts = Array.isArray(model.facts) ? model.facts : [];
   const heads = Array.isArray(projections.trail_heads) ? projections.trail_heads : [];
-  const intents = Array.isArray(projections.operator_intents) ? projections.operator_intents : [];
   const episodes = Array.isArray(projections.steering_episodes)
     ? projections.steering_episodes : [];
-  const pairedIntents = new Set(episodes.map(episode => episode.intent_id));
-  const allHeadRows = heads.map(head => {
-    const fact = facts.find(candidate => candidate.fact_id === head.latest_meaningful_event) || {};
-    return {at:Number(fact.at), status:head.status, html:projectTrailRow(d, head, model)};
+  const activity = projections.activity || {};
+  let nodes = Array.isArray(activity.nodes) ? activity.nodes : [];
+  if(!nodes.length && !Object.prototype.hasOwnProperty.call(activity, "nodes")){
+    nodes = heads.filter(head => ["prepared", "outcome", "decision"].includes(head.status))
+      .slice(0, PROJECT_VISIBLE_ACTIVITY_NODES).map(head => {
+      const fact = facts.find(candidate => candidate.fact_id === head.latest_meaningful_event) || {};
+      return {kind:"work", at:fact.at, status:head.status,
+        work_item_ids:[head.work_item_id], latest_event:head.latest_meaningful_event};
+    });
+  }
+  const headByItem = new Map(heads.map(head => [head.work_item_id, head]));
+  const activityRows = nodes.map(node => {
+    if(node.kind === "burst") return {at:Number(node.at), html:projectBurstRow(d, node, model)};
+    const firstId = Array.isArray(node.work_item_ids) ? node.work_item_ids[0] : "";
+    const head = headByItem.get(firstId) || {work_item_id:firstId, status:node.status,
+      latest_meaningful_event:node.latest_event};
+    return {at:Number(node.at), html:projectTrailRow(d, head, model, node)};
   });
-  const allIntentRows = intents.filter(intent => !pairedIntents.has(intent.projection_id))
-    .sort((a, b) => Number(b.at) - Number(a.at)).map(intent => ({
-    at:Number(intent.at), html:projectIntentRow(d, intent, model)
-  }));
-  const allStandalone = facts.filter(fact => !fact.work_item_id &&
-    ["result", "decision", "observer_snapshot"].includes(fact.type)).map(fact => ({
-    at:Number(fact.at), type:fact.type, html:projectStandaloneFact(d, fact)
-  }));
-  const primaryHeadRows = allHeadRows.filter(row =>
-    ["working", "blocked", "outcome", "decision"].includes(row.status));
-  const historicalHeadRows = allHeadRows.filter(row =>
-    !["working", "blocked", "outcome", "decision"].includes(row.status));
-  const primaryStandalone = allStandalone.filter(row => row.type === "observer_snapshot");
-  const historicalStandalone = allStandalone.filter(row =>
-    row.type !== "observer_snapshot");
   const episodeRows = episodes.map(episode => {
     const fact = facts.find(candidate => candidate.fact_id === episode.adaptation_fact) || {};
     return {at:Number(fact.at), html:projectEpisodeRow(d, episode, model)};
   });
-  const visible = primaryHeadRows.slice(0, PROJECT_VISIBLE_TRAIL_HEADS)
-    .concat(allIntentRows.slice(0, PROJECT_VISIBLE_INTENTS),
-      primaryStandalone.slice(0, PROJECT_VISIBLE_STANDALONE), episodeRows)
+  const visible = activityRows.concat(episodeRows)
     .sort((a, b) => b.at - a.at);
-  const overflow = primaryHeadRows.slice(PROJECT_VISIBLE_TRAIL_HEADS)
-    .concat(historicalHeadRows)
-    .concat(allIntentRows.slice(PROJECT_VISIBLE_INTENTS),
-      primaryStandalone.slice(PROJECT_VISIBLE_STANDALONE), historicalStandalone)
-    .sort((a, b) => b.at - a.at);
-  const rows = visible.concat(overflow);
-  if(!rows.length) return "";
+  if(!visible.length) return `<div class="pc-empty">No source-backed current work or reaction.</div>`;
   return `<section class="pc-semantic-timeline" data-order="newest-first" data-model="fact-projection">` +
-    visible.map(row => row.html).join("") +
-    (overflow.length ? `<details class="pc-semantic-overflow"><summary>${overflow.length} older trail heads and context</summary>` +
-      overflow.map(row => row.html).join("") + `</details>` : "") + `</section>`;
+    visible.map(row => row.html).join("") + `</section>`;
+}
+
+function projectSemanticEvidence(group){
+  const entry = projectContextEntry(group.label);
+  const model = entry && entry.data && entry.data.semantic || {};
+  const projections = model.projections || {};
+  const activity = projections.activity || {};
+  const intents = Array.isArray(projections.operator_intents) ? projections.operator_intents : [];
+  const paired = new Set((projections.steering_episodes || []).map(episode => episode.intent_id));
+  const unpaired = intents.filter(intent => !paired.has(intent.projection_id));
+  const facts = Array.isArray(model.facts) ? model.facts : [];
+  const heads = Array.isArray(projections.trail_heads) ? projections.trail_heads : [];
+  const historicalHeads = heads.filter(head => head.status === "requested");
+  const historical = Number(activity.historical_unresolved) || historicalHeads.length;
+  const contextFacts = facts.filter(fact => !fact.work_item_id &&
+    ["result", "decision", "observer_snapshot"].includes(fact.type));
+  if(!historical && !unpaired.length && !contextFacts.length) return "";
+  return `<li><b>Collapsed semantic evidence:</b> ${historical} historical unresolved request${historical === 1 ? "" : "s"}` +
+    ` · ${unpaired.length} intent candidate${unpaired.length === 1 ? "" : "s"} without a supported reaction.` +
+    (unpaired.length ? `<details><summary>show unpaired intent evidence</summary>` +
+      unpaired.map(intent => {
+        const fact = facts.find(candidate => candidate.fact_id === intent.derived_from) || {};
+        return `<div><b>Operator intent:</b> ${esc(intent.summary || "Intent unavailable")}` +
+          projectFactEvidence(fact) + `</div>`;
+      }).join("") + `</details>` : "") +
+    (historicalHeads.length ? `<details><summary>show historical request evidence</summary>` +
+      historicalHeads.map(head => {
+        const fact = facts.find(candidate => candidate.fact_id === head.latest_meaningful_event) || {};
+        return `<div>${esc(fact.summary || "Historical request")} · requested · current state unknown` +
+          projectFactEvidence(fact) + `</div>`;
+      }).join("") + `</details>` : "") +
+    (contextFacts.length ? `<details><summary>show ambiguous result and snapshot evidence</summary>` +
+      contextFacts.map(fact => `<div><b>${fact.type === "observer_snapshot" ? "Derived snapshot" : "Result"}:</b> ` +
+        `${esc(fact.summary || fact.type)}${projectFactEvidence(fact)}</div>`).join("") +
+      `</details>` : "") + `</li>`;
 }
 
 function projectActivity(d, group){
@@ -614,7 +638,7 @@ function projectEvidenceLimits(group, focus){
     `<li><b>Observed sources:</b> ${Number(steer.live) || 0} steering records · ` +
     `${Number(gate.live) || 0} gate decisions · ${Number(work.live) || 0} work records · ` +
     `${Number(observer.live) || 0} derived snapshots · ${Number(support.suppressed_tool_calls) || 0} supporting tool calls suppressed. ` +
-    `Status-transition history is omitted.</li>${projectLifecycleEvidence(focus)}</ul>`;
+    `Status-transition history is omitted.</li>${projectSemanticEvidence(group)}${projectLifecycleEvidence(focus)}</ul>`;
 }
 
 function projectView(d, draft){

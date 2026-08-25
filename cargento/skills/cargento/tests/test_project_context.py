@@ -477,6 +477,65 @@ class ProjectContextTest(unittest.TestCase):
             )
         )
 
+    def test_primary_activity_collapses_dispatch_burst_and_old_retry(self) -> None:
+        events = [
+            {
+                "at": 1.0,
+                "kind": "task_started",
+                "title": "Fix causal encoder",
+                "source": "old task call",
+                "harness": "pi",
+                "sid": self.SID,
+                "lineage": "old-call:0",
+            },
+            {
+                "at": 2.0,
+                "kind": "task_started",
+                "title": "Historical unrelated request",
+                "source": "old task call",
+                "harness": "pi",
+                "sid": self.SID,
+                "lineage": "older-call:0",
+            },
+        ]
+        events.extend(
+            {
+                "at": 2_000.0,
+                "kind": "task_started",
+                "title": "Fix causal encoder" if index == 0 else f"Entity {index}",
+                "source": "batch task call",
+                "harness": "pi",
+                "sid": self.SID,
+                "lineage": f"batch-call:{index}",
+            }
+            for index in range(8)
+        )
+
+        activity = project_context._semantic_model(events, [])["projections"]["activity"]
+
+        self.assertEqual(1, len(activity["nodes"]))
+        self.assertEqual("burst", activity["nodes"][0]["kind"])
+        self.assertEqual(8, activity["nodes"][0]["count"])
+        self.assertEqual(1, activity["historical_unresolved"])
+
+    def test_intent_promotion_rejects_output_code_and_path_rows(self) -> None:
+        rejected = (
+            ", mode, buffering, encoding, errors, newline)",
+            'raise RuntimeError("no benchmark samples selected")',
+            "find ~/.cache/whisperlivekit/benchmark_data",
+            "Saved metadata to /Users/example/long_samples.json",
+        )
+
+        for text in rejected:
+            with self.subTest(text=text):
+                self.assertFalse(project_context._intent_promotable(text, text))
+        self.assertTrue(
+            project_context._intent_promotable(
+                "redispatch the causal bug fix worker",
+                "redispatch the causal bug fix worker",
+            )
+        )
+
     def test_exact_dispatch_artifact_binds_spawn_and_result_to_workflow_item(self) -> None:
         artifact = "/tmp/spacedock-dispatch/spacedock-ensign-search-review.md"
         model = project_context._semantic_model(

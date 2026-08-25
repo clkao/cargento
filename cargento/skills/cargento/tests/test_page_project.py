@@ -549,7 +549,7 @@ render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   linked: h.includes('data-steering-state="paired"') &&
-    h.includes("source-linked reaction") && h.includes("Checkpoint recorded"),
+    h.includes("source-linked correction") && h.includes("Checkpoint recorded"),
   interval: !h.includes("Work interval") && h.includes("Prepare checkpoint") &&
     h.includes("Checkpoint recorded"),
   newest: h.indexOf("Prepare checkpoint") < h.indexOf("Earlier instruction") &&
@@ -625,7 +625,12 @@ projectContextByLabel[projectContextKey("git/asr")].data.semantic = {
       {projection_id: "intent-proj-old", at: 99920, summary: "Use mixed work as evidence", derived_from: "intent-old"}
     ], trail_heads: Array.from({length: 7}, (_, i) => ({work_item_id: `work-${i}`,
       status: i === 6 ? "prepared" : "outcome", latest_meaningful_event: `result-${i}`})),
-    steering_episodes: [], candidate_goal_shifts: []}
+    activity: {nodes: [
+      {kind: "burst", at: 99990, count: 6,
+        work_item_ids: Array.from({length: 6}, (_, i) => `work-${i}`), latest_event: "result-0"},
+      {kind: "work", at: 99984, status: "prepared", work_item_ids: ["work-6"],
+        latest_event: "result-6", retry_count: 0}
+    ], historical_unresolved: 0}, steering_episodes: [], candidate_goal_shifts: []}
 };
 const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
   active: true, state: "working", subagent_events: [
@@ -636,21 +641,21 @@ Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("What changed"), h.indexOf("Other project sessions"));
-const visibleText = graph.split('<details class="pc-semantic-overflow">')[0];
+const visibleText = graph;
 const primaryText = Array.from(visibleText.matchAll(
   /<article class="pc-trail[^>]*>([\\s\\S]*?)<details/g
 )).map(match => match[1]).join("");
 console.log(JSON.stringify({
-  bounded: (visibleText.match(/<article class="pc-trail/g) || []).length === 8 &&
-    graph.includes("older trail heads and context"),
+  bounded: (visibleText.match(/<article class="pc-trail/g) || []).length === 2 &&
+    graph.includes("6 entities touched"),
   separated: graph.includes('data-model="fact-projection"') &&
     !graph.includes("What you asked") && !graph.includes("What happened"),
   mixed: graph.includes("task-one → shaping") && graph.includes("Meaningful result"),
   quietPrimary: !primaryText.includes("asr-root") && !primaryText.includes("pi:") &&
     !primaryText.includes("gpt-5.6-luna") && !primaryText.includes("reasoning") &&
     !primaryText.includes("transcript message") && !primaryText.includes("source"),
-  supportedTagOnly: primaryText.includes("Correct the session grouping") &&
-    !primaryText.includes("generated</span>"),
+  supportedTagOnly: !primaryText.includes("Correct the session grouping") &&
+    !primaryText.includes("Operator intent") && !primaryText.includes("generated</span>"),
   noCausalGuess: !graph.includes('data-causal-link="supported"'),
   lifecycleSuppressed: !graph.includes("task_started") && !graph.includes("task_complete") &&
     !graph.includes("raw lifecycle")
@@ -695,14 +700,16 @@ const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
   active: true, state: "idle"})]);
 Object.assign(d, {ask: true, asks: []});
 render(d);
-const graph = __els.app.innerHTML.slice(__els.app.innerHTML.indexOf("What changed"),
+const h = __els.app.innerHTML;
+const graph = h.slice(h.indexOf("What changed"),
   __els.app.innerHTML.indexOf("Other project sessions"));
 const primary = graph.split('<details class="pc-semantic-overflow">')[0];
 console.log(JSON.stringify({
   finalPrimary: primary.includes("Search index shipped") && primary.includes('data-trail-head="outcome"'),
   historicalHidden: !primary.includes("task is DONE") && !primary.includes("42 validation checks passed"),
-  historyPreserved: graph.includes("task is DONE") && graph.includes("42 validation checks passed") &&
-    graph.includes("requested · current state unknown"),
+  historyPreserved: h.includes("task is DONE") && h.includes("42 validation checks passed") &&
+    h.includes("requested · current state unknown") &&
+    h.indexOf("task is DONE") > h.indexOf("Evidence / limits"),
   noFalseCurrent: !graph.includes('data-trail-head="started"') &&
     !graph.includes("current state unverified")
 }));
