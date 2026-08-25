@@ -134,8 +134,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "7ff71070fabf53c55754a3263825eb3c330ed1457bc8661d983d694df97ea218",
             ),
             "project.js": (
-                29_483,
-                "2e48c9248ae2921017f482e65ba0d3c6143bacd9f929a1cd217322a5b13df85c",
+                30_037,
+                "cd0016a52d672754c3c95fbfbae8f70caf3b1097277f6c23fba6cf8bedc3b8ad",
             ),
             "calm.js": (
                 57_092,
@@ -177,9 +177,9 @@ class FrontendAssetContractTest(unittest.TestCase):
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(367_650, len(assembled))
+        self.assertEqual(368_204, len(assembled))
         self.assertEqual(
-            "992e07508f43ea46b5dbe316f66b0948ce1801f4e8c08c41c3e684a0d8a86432",
+            "f6f72c75dd13907e20c8a03a2f7f4542b8206e3fbe8259508e75c7ce4ad272c7",
             hashlib.sha256(assembled).hexdigest(),
         )
 

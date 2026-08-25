@@ -45,6 +45,12 @@ _SEMANTIC_FACT_TYPES = {
     "ask_resolution": "decision",
 }
 _DISPATCH_BUILD_RE = re.compile(r"^\s*spacedock\s+dispatch\s+build(?:\s+(.*))?$", re.IGNORECASE)
+# This is transcript grammar from the dispatch contract, not a location we create or write.
+_DISPATCH_DIRECTORY = "/tmp/spacedock-dispatch"  # noqa: S108
+_DISPATCH_FILE_PREFIX = f"{_DISPATCH_DIRECTORY}/spacedock-ensign-"
+_DISPATCH_ARTIFACT_RE = re.compile(
+    re.escape(_DISPATCH_FILE_PREFIX) + r"[A-Za-z0-9][A-Za-z0-9._-]*\.md"
+)
 _DISPATCH_VALUE_OPTIONS = {
     "--checklist-file",
     "--host",
@@ -153,6 +159,7 @@ def _instruction_event(
         "source": "timestamped non-meta user-role record",
         "harness": harness,
         "sid": sid,
+        "intent_promotable": _intent_promotable(text, title),
     }
     lower = text.casefold()
     for tag, markers in _DIRECTIVE_TAGS:
@@ -161,6 +168,41 @@ def _instruction_event(
             event["tag_source"] = "explicit user-role wording"
             break
     return event
+
+
+def _intent_promotable(text: str, title: str) -> bool:
+    """Reject rows that cannot stand alone as a useful semantic directive."""
+    normalized = re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
+    if normalized in {
+        "continue",
+        "do it",
+        "go ahead",
+        "no",
+        "ok",
+        "okay",
+        "why do we need that",
+        "why do we need this",
+        "yes",
+    }:
+        return False
+    lowered = text.lstrip().casefold()
+    if lowered.startswith(
+        (
+            "command failed",
+            "error:",
+            "exception:",
+            "fatal:",
+            "traceback (most recent call last)",
+        )
+    ):
+        return False
+    if re.match(
+        r"^(?:\.?\.?/|\.venv/|python(?:3)?\s|uv\s+run\s|npm\s|pytest(?:\s|$))",
+        lowered,
+    ):
+        return False
+    words = re.findall(r"[a-z0-9]+", normalized)
+    return len(words) >= 3 and len(normalized) >= 12
 
 
 def _semantic_line(text: str, limit: int) -> str:
@@ -237,13 +279,18 @@ def _subagent_tasks(arguments: dict[str, Any]) -> list[str]:
     return tasks
 
 
-def _subagent_specs(arguments: dict[str, Any]) -> list[tuple[str, str, str]]:
-    specs: list[tuple[str, str, str]] = []
+def _dispatch_artifact(text: str) -> str:
+    match = _DISPATCH_ARTIFACT_RE.search(text)
+    return match.group(0) if match is not None else ""
+
+
+def _subagent_specs(arguments: dict[str, Any]) -> list[tuple[str, str, str, str]]:
+    specs: list[tuple[str, str, str, str]] = []
     task = arguments.get("task")
     if isinstance(task, str) and task.strip():
         contributor = arguments.get("agent") or arguments.get("name") or ""
         binding = arguments.get("work_item") or arguments.get("task_id") or ""
-        specs.append((task, str(contributor), str(binding)))
+        specs.append((task, str(contributor), str(binding), _dispatch_artifact(task)))
     batch = arguments.get("tasks")
     if isinstance(batch, list):
         for item in batch:
@@ -254,7 +301,7 @@ def _subagent_specs(arguments: dict[str, Any]) -> list[tuple[str, str, str]]:
                 continue
             contributor = item.get("agent") or item.get("name") or ""
             binding = item.get("work_item") or item.get("task_id") or ""
-            specs.append((value, str(contributor), str(binding)))
+            specs.append((value, str(contributor), str(binding), _dispatch_artifact(value)))
     return specs
 
 
@@ -343,6 +390,8 @@ def _dispatch_events(
                 "entity": slug,
                 "workflow_binding": workflow_binding,
                 "stage": stage,
+                "dispatch_artifact": (f"{_DISPATCH_FILE_PREFIX}{slug}-{stage}.md" if stage else ""),
+                "dispatch_artifact_prefix": f"{_DISPATCH_FILE_PREFIX}{slug}-",
                 "succeeded": result.get("succeeded") if result is not None else None,
             }
         )
@@ -430,7 +479,7 @@ def _subagent_events(
     if not specs:
         return []
     rows: list[dict[str, Any]] = []
-    for index, (task, contributor, binding) in enumerate(specs):
+    for index, (task, contributor, binding, artifact) in enumerate(specs):
         title = _semantic_line(task, MAX_SEMANTIC_LINE)
         if not title:
             continue
@@ -446,14 +495,13 @@ def _subagent_events(
                 "lineage": f"{call_key}:{index}",
                 "work_item_binding": binding,
                 "contributor_ref": contributor,
+                "dispatch_artifact": artifact,
                 "stage": "started",
             }
         )
     if result is None:
         return rows
     result_title = _subagent_result_title(tasks, result)
-    if not result_title:
-        return rows
     result_at = result.get("at")
     outcome_at = float(result_at) if isinstance(result_at, (int, float)) else at
     text = str(result.get("text", ""))
@@ -462,23 +510,29 @@ def _subagent_events(
     complete_count = int(completed.group(1)) if completed else len(tasks)
     failure_count = int(failed.group(1)) if failed else 0
     if len(tasks) == 1 or (complete_count == len(tasks) and failure_count == 0):
-        for index, (_task, contributor, binding) in enumerate(specs):
+        for index, (task, contributor, binding, artifact) in enumerate(specs):
+            item_title = result_title or _subagent_result_title([task], result)
+            if not item_title and artifact and result.get("succeeded") is True:
+                item_title = "Dispatch result returned"
+            if not item_title:
+                continue
             rows.append(
                 {
                     "at": outcome_at,
                     "kind": "task_result",
                     "phase": "ordinary subagent result",
-                    "title": result_title,
+                    "title": item_title,
                     "source": "Pi subagent task label and paired result",
                     "harness": harness,
                     "sid": sid,
                     "lineage": f"{call_key}:{index}",
                     "work_item_binding": binding,
                     "contributor_ref": contributor,
+                    "dispatch_artifact": artifact,
                     "stage": "completed",
                 }
             )
-    else:
+    elif result_title:
         rows.append(
             {
                 "at": outcome_at,
@@ -793,11 +847,63 @@ def _gate_context(
     return events, briefings
 
 
+def _bind_dispatch_artifacts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bind a consumed dispatch file only to its exact prepared artifact."""
+    prepared: list[tuple[str, str, str, str, str]] = []
+    for event in events:
+        if event.get("kind") != "prepared_dispatch":
+            continue
+        artifact = str(event.get("dispatch_artifact") or "")
+        prefix = str(event.get("dispatch_artifact_prefix") or "")
+        workflow = str(event.get("workflow_binding") or "")
+        entity = str(event.get("entity") or "")
+        stage = str(event.get("stage") or "")
+        if workflow and entity and (artifact or prefix):
+            prepared.append((artifact, prefix, workflow, entity, stage))
+
+    normalized: list[dict[str, Any]] = []
+    for source_event in events:
+        event = dict(source_event)
+        artifact = str(event.get("dispatch_artifact") or "")
+        bindings: set[tuple[str, str, str]] = set()
+        for exact, prefix, workflow, entity, prepared_stage in prepared:
+            if exact and artifact == exact:
+                bindings.add((workflow, entity, prepared_stage))
+                continue
+            if not artifact.startswith(prefix) or not artifact.endswith(".md"):
+                continue
+            stage = artifact[len(prefix) : -len(".md")]
+            if stage and spacedock.SD_STAGE_RE.fullmatch(stage):
+                bindings.add((workflow, entity, stage))
+        if event.get("kind") in {"task_started", "task_result"} and len(bindings) == 1:
+            workflow, entity, stage = next(iter(bindings))
+            event.update(
+                {
+                    "workflow_binding": workflow,
+                    "entity": entity,
+                    "stage": stage,
+                    "title": (
+                        f"{entity} result returned"
+                        if event.get("kind") == "task_result"
+                        else f"{entity} work requested"
+                    ),
+                    "source": str(event.get("source") or "") + " and exact dispatch artifact match",
+                }
+            )
+        normalized.append(event)
+    return normalized
+
+
 def _semantic_work_identity(
     source_event: dict[str, Any], raw_kind: str
 ) -> tuple[str, str, str, str]:
     binding = str(source_event.get("work_item_binding") or "")
-    if raw_kind in {"prepared_dispatch", "gate"} and source_event.get("entity"):
+    if raw_kind in {
+        "prepared_dispatch",
+        "task_started",
+        "task_result",
+        "gate",
+    } and source_event.get("entity"):
         workflow_binding = str(source_event.get("workflow_binding") or "unbound-workflow")
         return (
             _semantic_id("workflow-item", workflow_binding, source_event["entity"]),
@@ -955,7 +1061,7 @@ def _semantic_trail_heads(
         newest = max(item_facts, key=lambda fact: float(fact.get("at") or 0))
         status = {
             "prepared_dispatch": "prepared",
-            "work_birth": "started",
+            "work_birth": "requested",
             "work_result": "outcome",
             "gate_decision": "decision",
         }.get(str(newest.get("type")), "latest")
@@ -978,7 +1084,9 @@ def _semantic_model(
     events: list[dict[str, Any]], observers: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Immutable source facts, explicit relations, and replaceable projections."""
-    ordered = sorted(events, key=lambda event: float(event.get("at") or 0))
+    ordered = sorted(
+        _bind_dispatch_artifacts(events), key=lambda event: float(event.get("at") or 0)
+    )
     facts: list[dict[str, Any]] = []
     work_items: dict[str, dict[str, Any]] = {}
     contributors: dict[str, dict[str, Any]] = {}
@@ -996,7 +1104,7 @@ def _semantic_model(
         fact = _semantic_fact_from_event(source_event, raw_kind, fact_type, work_item_id)
         fact_id = str(fact["fact_id"])
         facts.append(fact)
-        if raw_kind == "steer":
+        if raw_kind == "steer" and source_event.get("intent_promotable") is True:
             projection, relation = _semantic_intent(fact)
             intent_projections.append(projection)
             relations.append(relation)

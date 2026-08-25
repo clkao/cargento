@@ -612,6 +612,54 @@ console.log(JSON.stringify({
         self.assertTrue(out["lifecycleSuppressed"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_primary_trails_demote_birth_only_and_unbound_validation_history(self) -> None:
+        checks = """
+projectContextByLabel[projectContextKey("git/asr")] = {state: "ready", generated: 100000,
+  data: {observers: [], events: [], semantic: {facts: [
+    {fact_id: "validation", at: 99999, type: "result", summary: "42 validation checks passed",
+      work_item_id: null, evidence: {source: "unbound tool result", confidence: "exact"}},
+    {fact_id: "birth", at: 99998, type: "work_birth", summary: "task is DONE",
+      work_item_id: "old-task", evidence: {source: "historical task call", confidence: "exact"}},
+    {fact_id: "outcome", at: 99990, type: "work_result", summary: "Search index shipped",
+      work_item_id: "finished-task", evidence: {source: "paired result", confidence: "exact"}}
+  ], work_items: [
+    {work_item_id: "old-task", label: "Old task", kind: "one_off",
+      source_bindings: [], contributor_refs: []},
+    {work_item_id: "finished-task", label: "Search index", kind: "one_off",
+      source_bindings: [], contributor_refs: []}
+  ], contributors: [], relations: [], projections: {operator_intents: [], trail_heads: [
+    {work_item_id: "old-task", status: "requested", latest_meaningful_event: "birth"},
+    {work_item_id: "finished-task", status: "outcome", latest_meaningful_event: "outcome"}
+  ], steering_episodes: [], candidate_goal_shifts: []}},
+  sources: {gate: {}, steer: {unavailable: []}}}};
+const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
+  active: true, state: "idle"})]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const graph = __els.app.innerHTML.slice(__els.app.innerHTML.indexOf("What changed"),
+  __els.app.innerHTML.indexOf("Other project sessions"));
+const primary = graph.split('<details class="pc-semantic-overflow">')[0];
+console.log(JSON.stringify({
+  finalPrimary: primary.includes("Search index shipped") && primary.includes('data-trail-head="outcome"'),
+  historicalHidden: !primary.includes("task is DONE") && !primary.includes("42 validation checks passed"),
+  historyPreserved: graph.includes("task is DONE") && graph.includes("42 validation checks passed") &&
+    graph.includes("requested · current state unknown"),
+  noFalseCurrent: !graph.includes('data-trail-head="started"') &&
+    !graph.includes("current state unverified")
+}));
+"""
+        out = self.run_project(
+            checks,
+            project="git/asr",
+            query_project="git/asr",
+            query_session="pi:asr-root",
+        )
+        self.assertTrue(out["finalPrimary"])
+        self.assertTrue(out["historicalHidden"])
+        self.assertTrue(out["historyPreserved"])
+        self.assertTrue(out["noFalseCurrent"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_primary_copy_omits_empty_fields_and_each_material_limit_appears_once(self) -> None:
         checks = """
 projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generated: 100000,

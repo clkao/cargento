@@ -404,7 +404,8 @@ function projectTrailRow(d, head, model){
   const latest = facts.find(fact => fact.fact_id === head.latest_meaningful_event) || {};
   const history = facts.filter(fact => fact.work_item_id === head.work_item_id)
     .sort((a, b) => Number(b.at) - Number(a.at));
-  const status = head.status === "started" ? "started · current state unverified" : head.status;
+  const status = head.status === "requested"
+    ? "requested · current state unknown" : head.status;
   const age = latest.at ? fmtDur(Math.max(0, Number(d.generated) - Number(latest.at))) + " ago" : "";
   return `<article class="pc-trail" data-trail-head="${esc(head.status || "latest")}">` +
     `<span class="pc-trail-dot ${esc(head.status || "latest")}"></span><div class="pc-trail-body">` +
@@ -462,7 +463,7 @@ function projectSemanticTimeline(d, model){
   const pairedIntents = new Set(episodes.map(episode => episode.intent_id));
   const allHeadRows = heads.map(head => {
     const fact = facts.find(candidate => candidate.fact_id === head.latest_meaningful_event) || {};
-    return {at:Number(fact.at), html:projectTrailRow(d, head, model)};
+    return {at:Number(fact.at), status:head.status, html:projectTrailRow(d, head, model)};
   });
   const allIntentRows = intents.filter(intent => !pairedIntents.has(intent.projection_id))
     .sort((a, b) => Number(b.at) - Number(a.at)).map(intent => ({
@@ -470,19 +471,27 @@ function projectSemanticTimeline(d, model){
   }));
   const allStandalone = facts.filter(fact => !fact.work_item_id &&
     ["result", "decision", "observer_snapshot"].includes(fact.type)).map(fact => ({
-    at:Number(fact.at), html:projectStandaloneFact(d, fact)
+    at:Number(fact.at), type:fact.type, html:projectStandaloneFact(d, fact)
   }));
+  const primaryHeadRows = allHeadRows.filter(row =>
+    ["working", "blocked", "outcome", "decision"].includes(row.status));
+  const historicalHeadRows = allHeadRows.filter(row =>
+    !["working", "blocked", "outcome", "decision"].includes(row.status));
+  const primaryStandalone = allStandalone.filter(row => row.type === "observer_snapshot");
+  const historicalStandalone = allStandalone.filter(row =>
+    row.type !== "observer_snapshot");
   const episodeRows = episodes.map(episode => {
     const fact = facts.find(candidate => candidate.fact_id === episode.adaptation_fact) || {};
     return {at:Number(fact.at), html:projectEpisodeRow(d, episode, model)};
   });
-  const visible = allHeadRows.slice(0, PROJECT_VISIBLE_TRAIL_HEADS)
+  const visible = primaryHeadRows.slice(0, PROJECT_VISIBLE_TRAIL_HEADS)
     .concat(allIntentRows.slice(0, PROJECT_VISIBLE_INTENTS),
-      allStandalone.slice(0, PROJECT_VISIBLE_STANDALONE), episodeRows)
+      primaryStandalone.slice(0, PROJECT_VISIBLE_STANDALONE), episodeRows)
     .sort((a, b) => b.at - a.at);
-  const overflow = allHeadRows.slice(PROJECT_VISIBLE_TRAIL_HEADS)
+  const overflow = primaryHeadRows.slice(PROJECT_VISIBLE_TRAIL_HEADS)
+    .concat(historicalHeadRows)
     .concat(allIntentRows.slice(PROJECT_VISIBLE_INTENTS),
-      allStandalone.slice(PROJECT_VISIBLE_STANDALONE))
+      primaryStandalone.slice(PROJECT_VISIBLE_STANDALONE), historicalStandalone)
     .sort((a, b) => b.at - a.at);
   const rows = visible.concat(overflow);
   if(!rows.length) return "";

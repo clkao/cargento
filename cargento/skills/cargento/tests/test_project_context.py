@@ -455,6 +455,146 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual([], model["projections"]["steering_episodes"])
         self.assertEqual([], model["projections"]["candidate_goal_shifts"])
 
+    def test_birth_only_is_requested_history_not_demonstrated_current_work(self) -> None:
+        model = project_context._semantic_model(
+            [
+                {
+                    "at": 2.0,
+                    "kind": "task_started",
+                    "title": "task is DONE",
+                    "source": "historical subagent call",
+                    "lineage": "old-call:0",
+                }
+            ],
+            [],
+        )
+
+        self.assertEqual("requested", model["projections"]["trail_heads"][0]["status"])
+        self.assertFalse(
+            any(
+                head["status"] in {"started", "working"}
+                for head in model["projections"]["trail_heads"]
+            )
+        )
+
+    def test_exact_dispatch_artifact_binds_spawn_and_result_to_workflow_item(self) -> None:
+        artifact = "/tmp/spacedock-dispatch/spacedock-ensign-search-review.md"
+        model = project_context._semantic_model(
+            [
+                {
+                    "at": 1.0,
+                    "kind": "prepared_dispatch",
+                    "title": "search → review",
+                    "source": "build call",
+                    "workflow_binding": "/workflow/asr",
+                    "entity": "search",
+                    "stage": "",
+                    "dispatch_artifact": "",
+                    "dispatch_artifact_prefix": (
+                        "/tmp/spacedock-dispatch/spacedock-ensign-search-"
+                    ),
+                },
+                {
+                    "at": 2.0,
+                    "kind": "task_started",
+                    "title": f"Read {artifact} and treat its content as your assignment.",
+                    "source": "Pi subagent task label",
+                    "lineage": "spawn:0",
+                    "dispatch_artifact": artifact,
+                },
+                {
+                    "at": 3.0,
+                    "kind": "task_result",
+                    "title": "Dispatch result returned",
+                    "source": "Pi subagent paired result",
+                    "lineage": "spawn:0",
+                    "dispatch_artifact": artifact,
+                },
+            ],
+            [],
+        )
+
+        self.assertEqual(1, len(model["work_items"]))
+        self.assertEqual("workflow_item", model["work_items"][0]["kind"])
+        self.assertEqual("search", model["work_items"][0]["label"])
+        self.assertEqual("outcome", model["projections"]["trail_heads"][0]["status"])
+        summaries = {fact["summary"] for fact in model["facts"]}
+        self.assertIn("search work requested", summaries)
+        self.assertIn("search result returned", summaries)
+        self.assertFalse(any("/tmp/spacedock-dispatch" in str(value) for value in summaries))
+
+    def test_dispatch_artifact_binding_rejects_ambiguous_or_similar_labels(self) -> None:
+        artifact = "/tmp/spacedock-dispatch/spacedock-ensign-shared-review.md"
+        events = [
+            {
+                "at": float(index),
+                "kind": "prepared_dispatch",
+                "title": "shared → review",
+                "source": "build call",
+                "workflow_binding": f"/workflow/{index}",
+                "entity": "shared",
+                "stage": "review",
+                "dispatch_artifact": artifact,
+            }
+            for index in (1, 2)
+        ]
+        events.extend(
+            [
+                {
+                    "at": 3.0,
+                    "kind": "task_started",
+                    "title": f"Read {artifact}",
+                    "source": "subagent call",
+                    "lineage": "ambiguous:0",
+                    "dispatch_artifact": artifact,
+                },
+                {
+                    "at": 4.0,
+                    "kind": "task_started",
+                    "title": "Review shared task",
+                    "source": "subagent call",
+                    "lineage": "similar-only:0",
+                },
+            ]
+        )
+
+        model = project_context._semantic_model(events, [])
+
+        self.assertEqual(4, len(model["work_items"]))
+        self.assertEqual(2, sum(item["kind"] == "one_off" for item in model["work_items"]))
+
+    def test_only_context_sufficient_user_rows_become_intent_projections(self) -> None:
+        rows = [
+            ("do it", False),
+            ("why do we need that?", False),
+            ("Error: command returned an internal failure\nraw stack row", False),
+            (".venv/bin/python scripts/check.py --verbose", False),
+            ("Keep the selected project as the context boundary.", True),
+        ]
+        events = []
+        for index, (text, expected) in enumerate(rows):
+            event = project_context._instruction_event(
+                self.config,
+                codex_message(text, f"2026-08-24T20:1{index}:00Z"),
+                "codex",
+                self.SID,
+            )
+            self.assertIsNotNone(event)
+            assert event is not None
+            self.assertIs(expected, event["intent_promotable"])
+            events.append(event)
+
+        model = project_context._semantic_model(events, [])
+
+        self.assertEqual(
+            5, len([fact for fact in model["facts"] if fact["type"] == "user_message"])
+        )
+        self.assertEqual(1, len(model["projections"]["operator_intents"]))
+        self.assertEqual(
+            "Keep the selected project as the context boundary.",
+            model["projections"]["operator_intents"][0]["summary"],
+        )
+
     def test_semantic_ids_include_workflow_and_survive_order_changes(self) -> None:
         first = {
             "at": 2.0,
