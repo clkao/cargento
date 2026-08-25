@@ -1,6 +1,6 @@
 ---
 title: Session interaction origin
-status: backlog
+status: breadboard
 source: commission seed
 started:
 completed:
@@ -37,7 +37,7 @@ gates:
                 reason: Captain approved the bounded interaction-origin probe using only disposable registered sessions; existing real sessions and private transcript content remain out of scope.
               application:
                 target-stage: breadboard
-                state: pending
+                state: consumed
 ---
 
 Discover a safe, explicit channel through which the Cargento UI can steer the intended active session and report delivery honestly.
