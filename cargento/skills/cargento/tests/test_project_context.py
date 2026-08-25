@@ -26,6 +26,14 @@ def message(msg_id: str, text: str, timestamp: str) -> str:
     )
 
 
+def codex_message(text: str, timestamp: str) -> dict[str, object]:
+    return {
+        "timestamp": timestamp,
+        "type": "response_item",
+        "payload": {"type": "message", "role": "user", "content": text},
+    }
+
+
 class ProjectContextTest(unittest.TestCase):
     NOW = 1_800_000_000.0
     SID = "project-session"
@@ -167,7 +175,7 @@ class ProjectContextTest(unittest.TestCase):
         )
         self.assertEqual(1, len(result["sources"]["observer"]["omitted"]))
 
-    def test_focus_identity_precedes_newer_project_sessions(self) -> None:
+    def test_focus_identity_excludes_surrounding_sessions_from_analysis(self) -> None:
         state = build_runtime_state(self.config, started=self.NOW)
         sessions = [
             {
@@ -200,7 +208,64 @@ class ProjectContextTest(unittest.TestCase):
 
         self.assertEqual(self.SID, result["observers"][0]["sid"])
         self.assertTrue(result["focus"]["observed"])
-        self.assertEqual(1, len(result["sources"]["observer"]["omitted"]))
+        self.assertEqual([], result["sources"]["observer"]["omitted"])
+        self.assertEqual("focused session", result["sources"]["scope"])
+        self.assertEqual(
+            project_context.MAX_PROJECT_OBSERVERS,
+            result["sources"]["surrounding_active"],
+        )
+
+    def test_codex_response_item_is_a_timestamped_instruction(self) -> None:
+        event = project_context._instruction_event(
+            self.config,
+            codex_message("Captain changed the shape", "2026-08-24T20:10:00Z"),
+            "codex",
+            self.SID,
+        )
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual("Captain changed the shape", event["title"])
+        self.assertEqual("codex:project-session", event["detail"])
+        self.assertEqual("transcript user message", event["source"])
+
+    def test_codex_function_output_can_supply_boot_provenance(self) -> None:
+        envelope = (
+            '{"command":"boot","id_style":"slug",'
+            '"definition_dir":"/w/one","entity_dir":"/w/one",'
+            '"dispatchable":[]}'
+        )
+        record = json.dumps(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "output": "=== BOOT ===\n" + envelope,
+                },
+            }
+        ).encode()
+        pasted = json.dumps(codex_message(envelope, "2026-08-24T20:10:00Z")).encode()
+
+        self.assertEqual(1, len(project_context.spacedock.boot_records(self.config, record)))
+        self.assertEqual([], project_context.spacedock.boot_records(self.config, pasted))
+
+    def test_codex_custom_output_blocks_can_supply_boot_provenance(self) -> None:
+        envelope = (
+            '{"command":"boot","id_style":"slug",'
+            '"definition_dir":"/w/one","entity_dir":"/w/one",'
+            '"dispatchable":[]}'
+        )
+        record = json.dumps(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "output": [{"type": "input_text", "text": "=== BOOT ===\n" + envelope}],
+                },
+            }
+        ).encode()
+
+        self.assertEqual(1, len(project_context.spacedock.boot_records(self.config, record)))
 
 
 if __name__ == "__main__":

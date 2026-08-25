@@ -104,21 +104,13 @@ def _instruction_event(
     sid: str,
 ) -> dict[str, Any] | None:
     """One timestamped external user message, excluding tool and meta records."""
-    if not isinstance(record, dict) or record.get("isMeta") is True:
+    if not isinstance(record, dict):
         return None
-    message = records.message_dict(record)
-    if message.get("role") != "user":
-        return None
-    record_type = record.get("type")
-    if record_type not in {"message", "user"}:
-        return None
-    content = message.get("content")
-    if isinstance(content, list) and any(
-        isinstance(block, dict) and block.get("type") == "tool_result" for block in content
-    ):
+    message = observer.parse_message_record(record)
+    if message is None or message.get("role") != "user":
         return None
     at = records.parse_ts(record.get("timestamp") or "")
-    text = records.extract_text(content).strip()
+    text = message["text"].strip()
     if at is None or not text:
         return None
     title = records.safe_text(text.splitlines()[0], config.observer_goal_cap_chars)
@@ -296,22 +288,29 @@ def collect(
         for session in sessions
         if str(session.get("project") or "") == project and session.get("active") is True
     ]
-    selected.sort(
-        key=lambda item: (
-            (
-                str(item.get("harness") or ""),
-                str(item.get("sid") or ""),
+    selected.sort(key=lambda item: float(item.get("last_activity") or 0), reverse=True)
+    if focus is None:
+        analysis_sessions = selected[:MAX_PROJECT_OBSERVERS]
+        omitted = selected[MAX_PROJECT_OBSERVERS:]
+        scope = "selected project"
+        surrounding_active = 0
+    else:
+        analysis_sessions = [
+            session
+            for session in selected
+            if (
+                str(session.get("harness") or ""),
+                str(session.get("sid") or ""),
             )
-            == focus,
-            float(item.get("last_activity") or 0),
-        ),
-        reverse=True,
-    )
+            == focus
+        ]
+        omitted = []
+        scope = "focused session"
+        surrounding_active = len(selected) - len(analysis_sessions)
     observers: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
     unavailable: list[dict[str, str]] = []
     briefings = 0
-    omitted = selected[MAX_PROJECT_OBSERVERS:]
     omitted_rows = [
         {
             "harness": str(session.get("harness") or ""),
@@ -320,7 +319,7 @@ def collect(
         }
         for session in omitted
     ]
-    for session in selected[:MAX_PROJECT_OBSERVERS]:
+    for session in analysis_sessions:
         harness = str(session.get("harness") or "")
         sid = str(session.get("sid") or "")
         identity = {"harness": harness, "sid": sid}
@@ -371,6 +370,8 @@ def collect(
         "observers": observers,
         "events": timeline,
         "sources": {
+            "scope": scope,
+            "surrounding_active": surrounding_active,
             "observer": {
                 "live": len(observers),
                 "unavailable": unavailable,

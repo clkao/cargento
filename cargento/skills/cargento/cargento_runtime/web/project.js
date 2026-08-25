@@ -357,11 +357,14 @@ function projectHistoryBoundary(sources){
   const steer = sources && sources.steer || {};
   const missing = Array.isArray(steer.unavailable) ? steer.unavailable.length : 0;
   const omitted = Array.isArray(steer.omitted) ? steer.omitted.length : 0;
+  const scope = sources && sources.scope || "selected project";
+  const surrounding = Number(sources && sources.surrounding_active) || 0;
   return `<div class="pc-history-boundary">` +
-    `live · ${Number(gate.live) || 0} gate decisions · ${Number(steer.live) || 0} captain instructions · ` +
+    `live ${esc(scope)} · ${Number(gate.live) || 0} gate decisions · ${Number(steer.live) || 0} captain instructions · ` +
     `${Number(gate.untimestamped_prepare) || 0} gate preparations lack timestamps · ` +
     `status-transition history unavailable · ${missing} session transcript readers unavailable · ` +
-    `${omitted} sessions omitted by the three-session bound</div>`;
+    `${omitted} sessions omitted by the three-session bound · ` +
+    `${surrounding} other active project sessions remain lightweight context</div>`;
 }
 
 function projectView(d, draft){

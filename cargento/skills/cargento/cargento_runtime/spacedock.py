@@ -193,6 +193,23 @@ def tool_result_text(record: dict[str, Any]) -> list[str]:
     Nothing writes both shapes in one message today, so no behaviour changes,
     but a transcript that did would lose the second half.
     """
+    if record.get("type") == "response_item":
+        payload = records.as_dict(record.get("payload"))
+        if payload.get("type") not in {"function_call_output", "custom_tool_call_output"}:
+            return []
+        output = payload.get("output")
+        codex_out: list[str] = []
+        if isinstance(output, str):
+            codex_out.append(output)
+        elif isinstance(output, list):
+            codex_out.extend(
+                block["text"]
+                for block in output
+                if isinstance(block, dict)
+                and block.get("type") in {"input_text", "output_text", "text"}
+                and isinstance(block.get("text"), str)
+            )
+        return codex_out
     message = record.get("message")
     if not isinstance(message, dict):
         return []

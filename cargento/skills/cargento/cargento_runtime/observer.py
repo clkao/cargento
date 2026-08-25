@@ -209,7 +209,7 @@ def _is_no_goal_output(text: str) -> bool:
     return text.strip().rstrip(".").lower() == NO_GOAL
 
 
-def _parse_message_record(record: Any) -> dict[str, str] | None:
+def parse_message_record(record: Any) -> dict[str, str] | None:
     """One (role, text) pair from a JSONL message record, or None.
 
     Guards every field the way the collectors guard theirs: untyped JSON
@@ -266,7 +266,7 @@ def _extract_messages(config: RuntimeConfig, path: str) -> list[dict[str, str]]:
             record = json.loads(raw)
         except (ValueError, json.JSONDecodeError):
             continue
-        parsed = _parse_message_record(record)
+        parsed = parse_message_record(record)
         if parsed is None:
             continue
         entry_id = record.get("id") if isinstance(record, dict) else None

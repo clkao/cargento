@@ -37,3 +37,21 @@ rendering and source inspection, not screenshots or visual polish.
 - **Personal liking: 3/5. Would I want this as my own mirror?** Mostly: seeing purpose beside motion
   feels recognizably useful, but without stage, steering, or an explicit attention reading I still
   have to reconstruct too much of my situation.
+
+## Round 3 — make recent steering belong to this self
+
+- **Finding:** The derived goal existed, but the history still analyzed up to three project
+  sessions. That made a project aggregate look like the focused session's own memory and left real
+  Codex user instructions invisible.
+- **Exact change:** Parsed timestamped Codex `response_item` user messages as steering, recognized
+  Codex function/custom-tool output as command-output provenance, and made an explicit focus analyze
+  only that identity. Other active project sessions remain lightweight context and are counted
+  separately instead of being called omitted.
+- **Live falsification:** The exact live response contained one observer and four timestamped steer
+  events; every observer and event identity was the requested Codex sid, source scope was
+  `focused session`, and the executable DOM showed four event rows. It reported zero gate events,
+  no stage, and no block. The available Codex output did not contain a recognized boot envelope, so
+  this round leaves workflow stage unavailable rather than borrowing one from project state.
+- **Personal liking: 3/5. Would I want this as my own mirror?** Yes, cautiously: the recent steering
+  finally feels like my memory, but a four-item log below a separate goal panel still makes me scan
+  for the answer to “what needs me now?”
