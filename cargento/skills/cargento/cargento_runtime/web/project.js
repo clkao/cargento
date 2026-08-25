@@ -476,7 +476,16 @@ function projectFactEvidence(fact){
     `</div></details>`;
 }
 
-function projectTrailRow(d, head, model, node){
+function projectGraphRow(d, at, kind, lane, body, attributes, tip){
+  const age = at ? fmtDur(Math.max(0, Number(d.generated) - Number(at))) + " ago" : "";
+  return `<article class="pc-graph-row ${esc(kind)}" data-graph-node="${esc(kind)}"` +
+    (attributes ? ` ${attributes}` : "") + `>` +
+    `<time>${esc(age)}</time><span class="pc-graph-rail lane-${Number(lane) || 0}">` +
+    `<span class="pc-graph-mark ${esc(kind)}"${tip ? ` title="${esc(tip)}"` : ""}></span>` +
+    `</span><div class="pc-trail-body">${body}</div></article>`;
+}
+
+function projectTrailRow(d, head, model, node, lane){
   const facts = Array.isArray(model.facts) ? model.facts : [];
   const items = Array.isArray(model.work_items) ? model.work_items : [];
   const item = items.find(candidate => candidate.work_item_id === head.work_item_id) || {};
@@ -485,19 +494,19 @@ function projectTrailRow(d, head, model, node){
     .sort((a, b) => Number(b.at) - Number(a.at));
   const status = head.status === "requested"
     ? "requested · current state unknown" : head.status;
-  const age = latest.at ? fmtDur(Math.max(0, Number(d.generated) - Number(latest.at))) + " ago" : "";
-  const kind = item.kind === "workflow_item" ? " workflow" : "";
+  const kind = item.kind === "workflow_item" ? "stage" :
+    (head.status === "outcome" || head.status === "decision" ? "result" : "work");
   const retries = Number(node && node.retry_count) || 0;
-  return `<article class="pc-trail${kind}" data-trail-head="${esc(head.status || "latest")}">` +
-    `<span class="pc-trail-dot ${esc(head.status || "latest")}${kind}"></span><div class="pc-trail-body">` +
-    `<div class="pc-trail-top"><strong>${esc(item.label || latest.summary || "Work item")}</strong>` +
-    `<span>${esc(status)}${age ? ` · ${esc(age)}` : ""}</span></div>` +
+  const body = `<div class="pc-trail-top"><strong>${esc(item.label || latest.summary || "Work item")}</strong>` +
+    `<span>${esc(status)}</span></div>` +
     `<div class="pc-trail-result">${esc(latest.summary || "Latest state")}` +
     (retries ? ` <span class="pc-trail-quiet">· ${retries} earlier retr${retries === 1 ? "y" : "ies"} folded</span>` : "") +
     `</div>` +
     `<details class="pc-trail-history"><summary>${history.length} sourced event${history.length === 1 ? "" : "s"}</summary>` +
     history.map(fact => `<div class="pc-trail-event"><span>${esc(fact.summary || fact.type)}</span>` +
-      projectFactEvidence(fact) + `</div>`).join("") + `</details></div></article>`;
+      projectFactEvidence(fact) + `</div>`).join("") + `</details>`;
+  return projectGraphRow(d, latest.at, kind, lane, body,
+    `data-trail-head="${esc(head.status || "latest")}"`, latest.summary || item.label);
 }
 
 function projectEpisodeRow(d, episode, model){
@@ -505,22 +514,37 @@ function projectEpisodeRow(d, episode, model){
   const intent = (model.projections.operator_intents || []).find(candidate =>
     candidate.projection_id === episode.intent_id) || {};
   const adaptation = facts.find(candidate => candidate.fact_id === episode.adaptation_fact) || {};
-  const age = adaptation.at ? fmtDur(Math.max(0, Number(d.generated) - Number(adaptation.at))) + " ago" : "";
   const action = adaptation.summary || "Demonstrated reaction";
   const intentText = intent.summary || "Operator intent unavailable";
-  return `<article class="pc-trail episode" data-steering-state="paired">` +
-    `<span class="pc-trail-dot intent" title="${esc(intentText)}"></span><div class="pc-trail-body">` +
-    `<div class="pc-trail-top"><strong>${esc(action)}</strong><span>${esc(age)}</span></div>` +
+  const confidence = String(episode.confidence || "supported");
+  const edge = ["exact", "structural"].includes(confidence) ? "solid" :
+    (confidence.includes("derived") ? "derived" : "supported");
+  const body = `<div class="pc-trail-top"><strong>${esc(action)}</strong><span>steering response</span></div>` +
     `<details class="pc-trail-history"><summary>source-linked correction · ${esc(episode.confidence || "supported")}</summary>` +
     `<div class="pc-trail-event">Operator intent: ${esc(intentText)}</div></details>` +
-    projectFactEvidence(adaptation) + `</div></article>`;
+    projectFactEvidence(adaptation);
+  return projectGraphRow(d, adaptation.at, "steering paired", 1, body,
+    `data-steering-state="paired" data-causal-edge="${esc(edge)}"`,
+    `${intentText} → ${action}`);
 }
 
-function projectBurstRow(d, node, model){
+function projectSteeringRow(d, intent, model){
+  const facts = Array.isArray(model.facts) ? model.facts : [];
+  const fact = facts.find(candidate => candidate.fact_id === intent.derived_from) || {};
+  const summary = intent.summary || "Operator direction";
+  const body = `<div class="pc-trail-top"><strong>${esc(summary)}</strong>` +
+    `<span>operator direction</span></div>` +
+    `<details class="pc-trail-history"><summary>unpaired · no causal edge</summary>` +
+    `<div class="pc-trail-event">No demonstrated reaction is linked.</div>` +
+    `${projectFactEvidence(fact)}</details>`;
+  return projectGraphRow(d, intent.at, "steering unpaired", 1, body,
+    `data-steering-state="unpaired" data-causal-edge="none"`, summary);
+}
+
+function projectBurstRow(d, node, model, lane){
   const facts = Array.isArray(model.facts) ? model.facts : [];
   const items = Array.isArray(model.work_items) ? model.work_items : [];
   const ids = Array.isArray(node.work_item_ids) ? node.work_item_ids : [];
-  const age = node.at ? fmtDur(Math.max(0, Number(d.generated) - Number(node.at))) + " ago" : "";
   const rows = ids.map(id => {
     const item = items.find(candidate => candidate.work_item_id === id) || {};
     const itemFacts = facts.filter(fact => fact.work_item_id === id)
@@ -529,11 +553,12 @@ function projectBurstRow(d, node, model){
     return `<div class="pc-trail-event"><strong>${esc(item.label || "Work item")}</strong>` +
       `<span>${esc(latest.summary || "Source event unavailable")}</span></div>`;
   }).join("");
-  return `<article class="pc-trail burst" data-semantic-burst="${ids.length}">` +
-    `<span class="pc-trail-dot burst"></span><div class="pc-trail-body">` +
-    `<div class="pc-trail-top"><strong>${Number(node.count) || ids.length} entities touched</strong>` +
-    `<span>${esc(age)}</span></div><details class="pc-trail-history"><summary>show sourced work items</summary>` +
-    rows + `</details></div></article>`;
+  const count = Number(node.count) || ids.length;
+  const body = `<div class="pc-trail-top"><strong>${count} entities touched</strong>` +
+    `<span>dispatch burst</span></div><details class="pc-trail-history"><summary>show sourced work items</summary>` +
+    rows + `</details>`;
+  return projectGraphRow(d, node.at, "burst", lane, body,
+    `data-semantic-burst="${ids.length}"`, `${count} entities touched`);
 }
 
 function projectSemanticTimeline(d, model){
@@ -543,6 +568,10 @@ function projectSemanticTimeline(d, model){
   const episodes = Array.isArray(projections.steering_episodes)
     ? projections.steering_episodes : [];
   const activity = projections.activity || {};
+  const pairedIntents = new Set(episodes.map(episode => episode.intent_id));
+  const intentPool = Array.isArray(activity.steering) ? activity.steering :
+    (Array.isArray(projections.operator_intents) ? projections.operator_intents.slice(-3).reverse() : []);
+  const steering = intentPool.filter(intent => !pairedIntents.has(intent.projection_id));
   let nodes = Array.isArray(activity.nodes) ? activity.nodes : [];
   if(!nodes.length && !Object.prototype.hasOwnProperty.call(activity, "nodes")){
     nodes = heads.filter(head => ["prepared", "outcome", "decision"].includes(head.status))
@@ -553,21 +582,26 @@ function projectSemanticTimeline(d, model){
     });
   }
   const headByItem = new Map(heads.map(head => [head.work_item_id, head]));
-  const activityRows = nodes.map(node => {
-    if(node.kind === "burst") return {at:Number(node.at), html:projectBurstRow(d, node, model)};
+  const activityRows = nodes.map((node, index) => {
+    const lane = index % 3;
+    if(node.kind === "burst") return {at:Number(node.at), html:projectBurstRow(d, node, model, lane)};
     const firstId = Array.isArray(node.work_item_ids) ? node.work_item_ids[0] : "";
     const head = headByItem.get(firstId) || {work_item_id:firstId, status:node.status,
       latest_meaningful_event:node.latest_event};
-    return {at:Number(node.at), html:projectTrailRow(d, head, model, node)};
+    return {at:Number(node.at), html:projectTrailRow(d, head, model, node, lane)};
   });
   const episodeRows = episodes.map(episode => {
     const fact = facts.find(candidate => candidate.fact_id === episode.adaptation_fact) || {};
     return {at:Number(fact.at), html:projectEpisodeRow(d, episode, model)};
   });
-  const visible = activityRows.concat(episodeRows)
+  const steeringRows = steering.map(intent => ({
+    at:Number(intent.at), html:projectSteeringRow(d, intent, model)
+  }));
+  const visible = activityRows.concat(episodeRows, steeringRows)
     .sort((a, b) => b.at - a.at);
   if(!visible.length) return `<div class="pc-empty">No source-backed current work or reaction.</div>`;
-  return `<section class="pc-semantic-timeline" data-order="newest-first" data-model="fact-projection">` +
+  return `<section class="pc-semantic-timeline" data-order="newest-first" data-model="fact-projection"` +
+    ` data-graph-layout="time-spine-work-lanes">` +
     visible.map(row => row.html).join("") + `</section>`;
 }
 
@@ -578,7 +612,9 @@ function projectSemanticEvidence(group){
   const activity = projections.activity || {};
   const intents = Array.isArray(projections.operator_intents) ? projections.operator_intents : [];
   const paired = new Set((projections.steering_episodes || []).map(episode => episode.intent_id));
-  const unpaired = intents.filter(intent => !paired.has(intent.projection_id));
+  const primarySteering = new Set((activity.steering || []).map(intent => intent.projection_id));
+  const unpaired = intents.filter(intent => !paired.has(intent.projection_id) &&
+    !primarySteering.has(intent.projection_id));
   const facts = Array.isArray(model.facts) ? model.facts : [];
   const heads = Array.isArray(projections.trail_heads) ? projections.trail_heads : [];
   const historicalHeads = heads.filter(head => head.status === "requested");

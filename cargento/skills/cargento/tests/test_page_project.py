@@ -549,6 +549,7 @@ render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   linked: h.includes('data-steering-state="paired"') &&
+    h.includes('data-causal-edge="solid"') &&
     h.includes("source-linked correction") && h.includes("Checkpoint recorded"),
   interval: !h.includes("Work interval") && h.includes("Prepare checkpoint") &&
     h.includes("Checkpoint recorded"),
@@ -643,20 +644,24 @@ const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("What changed"), h.indexOf("Other project sessions"));
 const visibleText = graph;
 const primaryText = Array.from(visibleText.matchAll(
-  /<article class="pc-trail[^>]*>([\\s\\S]*?)<details/g
+  /<div class="pc-trail-top">([\\s\\S]*?)<\\/div>/g
 )).map(match => match[1]).join("");
 console.log(JSON.stringify({
-  bounded: (visibleText.match(/<article class="pc-trail/g) || []).length === 2 &&
-    graph.includes("6 entities touched"),
+  bounded: (visibleText.match(/<article class="pc-graph-row/g) || []).length === 4 &&
+    graph.includes("6 entities touched") &&
+    graph.includes('data-graph-layout="time-spine-work-lanes"'),
   separated: graph.includes('data-model="fact-projection"') &&
     !graph.includes("What you asked") && !graph.includes("What happened"),
   mixed: graph.includes("task-one → shaping") && graph.includes("Meaningful result"),
   quietPrimary: !primaryText.includes("asr-root") && !primaryText.includes("pi:") &&
     !primaryText.includes("gpt-5.6-luna") && !primaryText.includes("reasoning") &&
     !primaryText.includes("transcript message") && !primaryText.includes("source"),
-  supportedTagOnly: !primaryText.includes("Correct the session grouping") &&
-    !primaryText.includes("Operator intent") && !primaryText.includes("generated</span>"),
-  noCausalGuess: !graph.includes('data-causal-link="supported"'),
+  supportedTagOnly: primaryText.includes("Correct the session grouping") &&
+    graph.includes('data-steering-state="unpaired"') &&
+    !primaryText.includes("generated</span>"),
+  noCausalGuess: (graph.match(/data-causal-edge="none"/g) || []).length === 2 &&
+    !graph.includes('data-causal-edge="solid"') &&
+    !graph.includes('data-causal-edge="derived"'),
   lifecycleSuppressed: !graph.includes("task_started") && !graph.includes("task_complete") &&
     !graph.includes("raw lifecycle")
 }));

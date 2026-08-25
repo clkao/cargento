@@ -25,6 +25,7 @@ MAX_SEMANTIC_LINE = 112
 SEMANTIC_CURRENT_HORIZON_SEC = 15 * 60
 SEMANTIC_BURST_EPSILON_SEC = 2
 MAX_PRIMARY_ACTIVITY_NODES = 5
+MAX_PRIMARY_STEERING_NODES = 3
 
 _DIRECTIVE_PREFIX_RE = re.compile(
     r"^(?:please\s+|captain(?:\s+(?:says|asks|adds|clarifies|refines|clarification|refinement|correction))?\s*[:—-]\s*)+",
@@ -1381,6 +1382,12 @@ def _semantic_activity_projection(
     }
 
 
+def _recent_steering_nodes(intents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(intents, key=lambda row: float(row.get("at") or 0), reverse=True)[
+        :MAX_PRIMARY_STEERING_NODES
+    ]
+
+
 def _semantic_model(
     events: list[dict[str, Any]], observers: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -1457,6 +1464,7 @@ def _semantic_model(
     trail_heads = _semantic_trail_heads(fact_by_work_item, facts)
     assignments = _semantic_assignments(fact_by_work_item, work_items)
     activity = _semantic_activity_projection(work_items, trail_heads, facts)
+    activity["steering"] = _recent_steering_nodes(intent_projections)
     return {
         "facts": facts,
         "work_items": list(work_items.values()),
