@@ -667,6 +667,15 @@
   .pc-goal-actions button:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
   .pc-goal-note{margin-left:auto;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--accent-ink)}
   .pc-key{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);overflow-wrap:anywhere;margin-top:9px}
+  .pc-mirror{padding:18px 20px;border-top:1px solid var(--line2);background:color-mix(in oklab,var(--accent) 5%,var(--panel))}
+  .pc-mirror.unavailable{background:var(--sunk);color:var(--ink3)}
+  .pc-mirror-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+  .pc-mirror h3{font-size:var(--fs-md);margin:2px 0 0}
+  .pc-mirror-state{display:flex;align-items:baseline;gap:10px;margin-top:12px}
+  .pc-mirror-state strong{font-family:var(--mono);font-size:var(--fs-sm);color:var(--accent-ink)}
+  .pc-mirror-state span{font-size:var(--fs-sm);color:var(--ink2)}
+  .pc-mirror-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .pc-mirror-meta>*{border:1px solid var(--line2);border-radius:99px;padding:3px 7px}
   .pc-observer{padding:14px 20px;border-bottom:1px solid var(--line2);background:color-mix(in oklab,var(--panel) 92%,var(--sunk))}
   .pc-subhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px}
   .pc-subhead h3{font-size:var(--fs-xs);color:var(--ink2);margin:0}

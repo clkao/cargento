@@ -11,6 +11,7 @@ const PROJECT_COCKPIT_KEY = "cargento.projectCockpitProject";
 const PROJECT_GOAL_PREFIX = "cargento.projectGoal.v1:";
 let projectCockpitLabel = null;
 let projectQueryLabel = null;
+let projectQuerySession = null;
 let projectGoalNote = "";
 const projectDraftByLabel = {};
 const projectContextByLabel = {};
@@ -18,7 +19,9 @@ try{
   projectCockpitLabel = localStorage.getItem(PROJECT_COCKPIT_KEY) || null;
 }catch(e){ /* no browser storage — choose from the payload */ }
 try{
-  projectQueryLabel = new URLSearchParams(location.search || "").get("project");
+  const projectParams = new URLSearchParams(location.search || "");
+  projectQueryLabel = projectParams.get("project");
+  projectQuerySession = projectParams.get("session");
 }catch(e){ /* no URL surface — use browser storage or payload order */ }
 
 function projectGoalKey(label){
@@ -33,14 +36,18 @@ function projectGoal(label){
   catch(e){ return ""; }
 }
 
-function projectPermalink(label){
+function projectPermalink(label, sessionKey){
   try{
     const url = new URL(location.href);
     url.searchParams.set("project", label);
+    if(sessionKey) url.searchParams.set("session", sessionKey);
+    else url.searchParams.delete("session");
     return url.toString();
   }catch(e){
     const params = new URLSearchParams(location.search || "");
     params.set("project", label);
+    if(sessionKey) params.set("session", sessionKey);
+    else params.delete("session");
     return "?" + params.toString() + (location.hash || "");
   }
 }
@@ -90,10 +97,16 @@ function projectCockpitGroup(d){
   return {groups:groups, selected:group || null};
 }
 
+function projectFocusSession(group){
+  if(!group || !projectQuerySession) return null;
+  return group.sessions.find(sess => sessKey(sess) === projectQuerySession) || null;
+}
+
 function setProjectCockpit(label){
   projectCaptureDraft();
   projectCockpitLabel = String(label || "");
   projectQueryLabel = projectCockpitLabel;
+  projectQuerySession = null;
   projectGoalNote = "";
   try{ localStorage.setItem(PROJECT_COCKPIT_KEY, projectCockpitLabel); }
   catch(e){ /* selection still works for this page */ }
@@ -131,7 +144,7 @@ function projectGoalAction(act, label){
     return true;
   }
   if(act === "project-link-copy"){
-    const link = projectPermalink(label);
+    const link = projectPermalink(label, projectQuerySession);
     if(navigator.clipboard && navigator.clipboard.writeText){
       navigator.clipboard.writeText(link).then(() => {
         projectGoalNote = "project link copied";
@@ -176,6 +189,16 @@ function projectAction(act, arg){
     projectLoadContext(lastData, true);
     return true;
   }
+  if(act === "project-session-link-copy"){
+    const link = projectPermalink(projectCockpitLabel, String(arg || ""));
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(link).then(() => {
+        projectGoalNote = "session link copied";
+        if(lastData) render(lastData);
+      }).catch(() => {});
+    }
+    return true;
+  }
   return projectGoalAction(act, String(arg || ""));
 }
 
@@ -188,6 +211,7 @@ if(typeof window !== "undefined" && window.addEventListener){
   window.addEventListener("popstate", () => {
     try{
       projectQueryLabel = new URLSearchParams(location.search || "").get("project");
+      projectQuerySession = new URLSearchParams(location.search || "").get("session");
       if(lastData) render(lastData);
     }catch(e){ /* keep the current project */ }
   });
@@ -202,6 +226,30 @@ function projectSessionRow(sess){
     `<span class="pc-session-copy"><strong>${esc(sess.title || "Untitled session")}</strong>` +
     `<span>${esc(state)} · ${esc(detail)}</span></span>` +
     `<code>${esc(key)}</code></button>`;
+}
+
+function projectSessionMirror(sess, group){
+  if(!sess){
+    if(!projectQuerySession) return "";
+    return `<section class="pc-mirror unavailable">` +
+      `<div class="pc-kicker">Focused session unavailable</div>` +
+      `<p>The requested session is not present in this project's live dashboard payload.</p>` +
+      `<code>${esc(projectQuerySession)}</code></section>`;
+  }
+  const key = sessKey(sess);
+  const detail = humanTool(sess.state_detail) || sess.last_prompt || "No current detail";
+  const state = String(sess.state || (sess.active ? "active" : "idle"));
+  const subagents = Array.isArray(sess.subagents) ? sess.subagents.length : 0;
+  return `<section class="pc-mirror" data-session-mirror="${esc(key)}">` +
+    `<div class="pc-mirror-head"><div><span class="pc-kicker">Primary session mirror</span>` +
+    `<h3>${esc(sess.title || "Untitled Codex session")}</h3></div>` +
+    `<button type="button" class="quiet" data-calm="project-session-link-copy"` +
+    ` data-arg="${esc(key)}">copy session link</button></div>` +
+    `<div class="pc-mirror-state"><strong>${esc(state)}</strong><span>${esc(detail)}</span></div>` +
+    `<div class="pc-mirror-meta"><code>${esc(key)}</code>` +
+    `<span>project · ${esc(group.label)}</span>` +
+    `<span>model · ${esc(sess.model || "unavailable")}</span>` +
+    `<span>subagents · ${subagents}</span></div></section>`;
 }
 
 function projectAttention(d, group){
@@ -321,12 +369,14 @@ function projectView(d, draft){
     return `<option value="${esc(item.label)}"${on}>${esc(item.label)} · ${item.sessions.length}</option>`;
   }).join("");
   const active = group.sessions.filter(sess => sess.active);
+  const focus = projectFocusSession(group);
   const goal = draft && draft.label === group.label ? draft.value : projectGoal(group.label);
   const goalKey = projectGoalKey(group.label);
   const note = projectGoalNote ? `<span class="pc-goal-note">${esc(projectGoalNote)}</span>` : "";
-  const sessions = active.length
-    ? active.map(projectSessionRow).join("")
-    : `<div class="pc-empty">No active sessions in this project.</div>`;
+  const surrounding = active.filter(sess => !focus || sessKey(sess) !== sessKey(focus));
+  const sessions = surrounding.length
+    ? surrounding.map(projectSessionRow).join("")
+    : `<div class="pc-empty">No other active sessions in this project.</div>`;
   return top + `<nav class="pc-nav" aria-label="Project being resumed">` +
     `<label class="pc-nav-k" for="pc-project-select">project</label>` +
     `<select id="pc-project-select">${options}</select>` +
@@ -347,13 +397,14 @@ function projectView(d, draft){
     `<button type="button" class="quiet" data-calm="project-goal-clear"` +
     ` data-arg="${esc(group.label)}">clear</button>${note}</div>` +
     `<div class="pc-key">provisional exact-label key · ${esc(goalKey)} · observer text never overwrites this field</div></div>` +
+    `${projectSessionMirror(focus, group)}` +
     `<div class="pc-observer"><div class="pc-subhead"><h3>Observer context</h3>` +
     `<span>derived · subordinate</span><button type="button" class="quiet"` +
     ` data-calm="project-context-refresh" data-arg="${esc(group.label)}">refresh</button></div>` +
     `${projectObserverSummary(group)}</div>` +
     `<div class="pc-columns"><div class="pc-needs"><h3>Needs you</h3>${projectAttention(d, group)}</div>` +
-    `<div class="pc-active"><div class="pc-active-head"><h3>Active sessions</h3>` +
-    `<span>open for session mirror</span></div>${sessions}</div></div>` +
+    `<div class="pc-active"><div class="pc-active-head"><h3>Surrounding sessions</h3>` +
+    `<span>lightweight project context</span></div>${sessions}</div></div>` +
     `<div class="pc-activity"><div class="pc-active-head"><h3>Gate and steering history</h3>` +
     `<span>git-log shape · timestamped sources</span></div>${projectActivity(d, group)}</div>` +
     `</section>` +

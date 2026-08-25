@@ -30,6 +30,7 @@ const liveAsk = o => Object.assign({id: "ask-live", harness: "claude",
         goal: str | None = None,
         goals: dict[str, str] | None = None,
         query_project: str | None = None,
+        query_session: str | None = None,
     ) -> str:
         values = {
             "cargento.displayMode": "project",
@@ -43,6 +44,8 @@ const liveAsk = o => Object.assign({id: "ask-live", harness: "claude",
         query_items = [("mode", "project")]
         if query_project:
             query_items.append(("project", query_project))
+        if query_session:
+            query_items.append(("session", query_session))
         query = "?" + urlencode(query_items)
         return f"""
 let __store = {json.dumps(values)};
@@ -73,6 +76,7 @@ const setTimeout = fn => {{ __timers.push(fn); return __timers.length; }};
         goal: str | None = None,
         goals: dict[str, str] | None = None,
         query_project: str | None = None,
+        query_session: str | None = None,
     ) -> Any:
         return self._run_page_js(
             self.FIXTURE + checks,
@@ -81,6 +85,7 @@ const setTimeout = fn => {{ __timers.push(fn); return __timers.length; }};
                 goal=goal,
                 goals=goals,
                 query_project=query_project,
+                query_session=query_session,
             ),
         )
 
@@ -139,6 +144,37 @@ console.log(JSON.stringify({
         self.assertTrue(out["scoped"])
         self.assertTrue(out["separate"])
         self.assertTrue(out["noOverwrite"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_session_permalink_focuses_one_primary_mirror_inside_the_project(self) -> None:
+        checks = """
+const d = payload([
+  mk({project: "repo/proj", harness: "codex", sid: "focus-1", active: true,
+    state: "working", state_detail: "running exec", model: "gpt-5.6-sol", subagents: []}),
+  mk({project: "repo/proj", harness: "claude", sid: "around-1", active: true})
+]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+console.log(JSON.stringify({
+  mirror: h.includes('data-session-mirror="codex:focus-1"') && h.includes("running exec"),
+  identity: h.includes("codex:focus-1") && h.includes("project · repo/proj"),
+  hierarchy: h.indexOf("Operator goal") < h.indexOf("Primary session mirror"),
+  surrounding: h.includes("Surrounding sessions") && h.includes("claude:around-1"),
+  noDuplicate: !h.slice(h.indexOf("Surrounding sessions"),
+    h.indexOf("Gate and steering history")).includes("codex:focus-1")
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["mirror"])
+        self.assertTrue(out["identity"])
+        self.assertTrue(out["hierarchy"])
+        self.assertTrue(out["surrounding"])
+        self.assertTrue(out["noDuplicate"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_activity_reuses_causal_log_shape_without_mocked_history(self) -> None:
