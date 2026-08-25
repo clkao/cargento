@@ -301,19 +301,17 @@ function projectSubagentHierarchy(sess){
     : (Array.isArray(sess.subagents) ? sess.subagents.map(agent => Object.assign({
       depth: 1, parent_name: null
     }, agent)) : []);
-  if(!reported.length){
-    return `<div class="pc-child-tree"><span class="pc-kicker">Active child hierarchy</span>` +
-      `<span class="pc-child-empty">No active child session reported.</span></div>`;
-  }
+  if(!reported.length) return "";
   const rows = reported.slice().sort((a, b) =>
     (Number(a.depth) || 1) - (Number(b.depth) || 1));
   return `<div class="pc-child-tree"><span class="pc-kicker">Active child hierarchy</span>` +
     rows.map(agent => {
       const depth = Math.max(1, Math.min(6, Number(agent.depth) || 1));
       const relation = agent.parent_name ? `child of ${agent.parent_name}` : "direct child";
+      const model = agent.model ? ` · ${agent.model}` : "";
       return `<div class="pc-child depth-${depth}" data-subagent-depth="${depth}">` +
         `<span class="pc-child-node"></span><strong>${esc(agent.name || "subagent")}</strong>` +
-        `<span>${esc(relation)} · ${esc(agent.model || "model unavailable")}</span></div>`;
+        `<span>${esc(relation + model)}</span></div>`;
     }).join("") + `</div>`;
 }
 
@@ -337,7 +335,7 @@ function projectSessionMirror(d, sess, group){
     `<button type="button" class="quiet" data-calm="project-session-link-copy"` +
     ` data-arg="${esc(key)}">copy session link</button></div></div>` +
     `<div class="pc-mirror-meta"><code>${esc(key)}</code>` +
-    `<span>model · ${esc(sess.model || "unavailable")}</span></div>` +
+    (sess.model ? `<span>model · ${esc(sess.model)}</span>` : "") + `</div>` +
     `<div class="pc-now"><div class="pc-mirror-state"><strong>${esc(state)}</strong>` +
     `<span>${esc(detail)}</span></div>` + projectMirrorAttention(d, sess, group) +
     projectSubagentHierarchy(sess) + `</div></section>`;
@@ -377,18 +375,19 @@ function projectTimelineEvents(focus, sourceEvents){
   const exact = row => !focus ||
     (row.harness === focus.harness && row.sid === focus.sid);
   const events = sourceEvents.filter(exact).map(row => Object.assign({}, row));
-  return events.filter(event => Number(event.at)).sort((a, b) => a.at - b.at).slice(-12);
+  return events.filter(event => Number(event.at) && event.source)
+    .sort((a, b) => a.at - b.at).slice(-12);
 }
 
 function projectLifecycleEvidence(focus){
   const events = focus && Array.isArray(focus.subagent_events) ? focus.subagent_events : [];
   if(!events.length) return "";
   const count = kind => events.filter(event => event.kind === kind).length;
-  return `<p data-lifecycle-suppressed="${events.length}"><b>Suppressed child telemetry:</b> ` +
+  return `<li data-lifecycle-suppressed="${events.length}"><b>Child telemetry:</b> ` +
     `${events.length} typed child lifecycle records · ` +
     `${count("subagent_task_started")} task starts · ${count("subagent_complete")} completions · ` +
     `${count("subagent_interrupted")} interruptions. Lifecycle labels without demonstrated results stay telemetry; ` +
-    `they do not enter What happened.</p>`;
+    `they do not enter What happened.</li>`;
 }
 
 function projectRelationTarget(event, steering){
@@ -463,7 +462,7 @@ function projectWorkIntervalRows(intervals){
   if(!intervals.length) return "";
   return `<section class="pc-work-intervals"><h4>Work intervals</h4>` + intervals.map(row => {
     const elapsed = fmtDur(Math.max(0, Number(row.outcome.at) - Number(row.start.at)));
-    const relation = row.linked ? "source-linked interval" : "chronology only · relationship unverified";
+    const relation = row.linked ? "source-linked interval" : "chronology only";
     return `<div class="pc-work-interval" data-interval-relation="${row.linked ? "supported" : "unverified"}">` +
       `<strong>Work interval · ${esc(elapsed)}</strong><span>${relation}</span></div>`;
   }).join("") + `</section>`;
@@ -503,19 +502,20 @@ function projectActivity(d, group, focus){
     projectWorkIntervalRows(projectWorkIntervals(steering, outcomes)) + `</div>`;
 }
 
-function projectHistoryBoundary(sources){
-  const gate = sources && sources.gate || {};
-  const steer = sources && sources.steer || {};
-  const missing = Array.isArray(steer.unavailable) ? steer.unavailable.length : 0;
-  const omitted = Array.isArray(steer.omitted) ? steer.omitted.length : 0;
-  const scope = sources && sources.scope || "selected project";
-  const surrounding = Number(sources && sources.surrounding_active) || 0;
-  return `<div class="pc-history-boundary">` +
-    `live ${esc(scope)} · ${Number(gate.live) || 0} gate decisions · ${Number(steer.live) || 0} user-role messages · ` +
-    `${Number(gate.untimestamped_prepare) || 0} gate preparations lack timestamps · ` +
-    `status-transition history unavailable · ${missing} session transcript readers unavailable · ` +
-    `${omitted} sessions omitted by the three-session bound · ` +
-    `${surrounding} other recent project sessions remain lightweight context</div>`;
+function projectEvidenceLimits(group, focus){
+  const entry = projectContextEntry(group.label);
+  const sources = entry && entry.data && entry.data.sources || {};
+  const gate = sources.gate || {};
+  const steer = sources.steer || {};
+  const observer = sources.observer || {};
+  return `<ul class="pc-limit-list">` +
+    `<li><b>Operator note:</b> Operator note overrides derived context. It is browser-only, keyed by the exact project label, and is not durable project authority. <code>${esc(projectGoalKey(group.label))}</code></li>` +
+    `<li><b>Requests:</b> Absence of an exact AskRegistry or live needs-input signal does not prove unblocked.</li>` +
+    `<li><b>Meaning:</b> “What you asked” means timestamped non-meta user-role text, not verified captain authorship. Chronological proximity does not imply causality; only a source-named relation is linked.</li>` +
+    `<li><b>Derived context:</b> Bounded transcript observation stays subordinate. Stage and block are omitted when absent.</li>` +
+    `<li><b>Observed sources:</b> ${Number(steer.live) || 0} steering records · ` +
+    `${Number(gate.live) || 0} gate decisions · ${Number(observer.live) || 0} derived snapshots. ` +
+    `Status-transition history is omitted.</li>${projectLifecycleEvidence(focus)}</ul>`;
 }
 
 function projectView(d, draft){
@@ -538,7 +538,6 @@ function projectView(d, draft){
   const recent = group.sessions.filter(sess => sess.active);
   const focus = projectFocusSession(group);
   const goal = draft && draft.label === group.label ? draft.value : projectGoal(group.label);
-  const goalKey = projectGoalKey(group.label);
   const note = `<span id="pc-status" class="pc-goal-note" role="status"` +
     ` aria-live="polite" aria-atomic="true">${esc(projectGoalNote)}</span>`;
   const surrounding = recent.filter(sess => !focus || sessKey(sess) !== sessKey(focus));
@@ -571,7 +570,7 @@ function projectView(d, draft){
     ` data-arg="${esc(group.label)}">reload page</button>` +
     `<button type="button" class="quiet" data-calm="project-goal-clear"` +
     ` data-arg="${esc(group.label)}">clear</button>${note}</div>` +
-    `<div class="pc-key">browser-local exact-label key · ${esc(goalKey)} · observer inference never overwrites this note</div></div>` +
+    `</div>` +
     `${mirror}` +
     `<div class="pc-activity"><div class="pc-active-head"><h3>What changed</h3>` +
     `<span>newest first · verified sources only</span>` +
@@ -580,16 +579,6 @@ function projectView(d, draft){
     `<div class="pc-other"><div class="pc-active-head"><h3>Other project sessions</h3>` +
     `<span>lightweight surrounding context</span></div>${sessions}</div>` +
     `</section>` +
-    `<details class="pc-sources"><summary>Evidence and limitations</summary>` +
-    `<p><b>Live:</b> sessions and asks come from this dashboard's API. Only real AskRegistry entries appear.</p>` +
-    `<p><b>Derived:</b> project groups, goal keys, and permalinks use exact display-label equality. The label is not a stable id.</p>` +
-    `<p><b>Browser-owned operator note:</b> each exact label has a separate key on this origin. It precedes inference but is not durable project authority; same-label projects collide, and a rename orphans the value.</p>` +
-    `<p><b>Observer:</b> goals come from bounded Claude, Codex, or Pi transcripts and stay subordinate. For the present handoff, workflow stage unavailable and open-block reading unavailable remain explicit rather than inferred.</p>` +
-    `<p><b>History:</b> known meta wrappers are excluded; remaining steering evidence is labeled only as timestamped user-role transcript messages because captain authorship is not recorded. Gate decisions are timestamped entity frontmatter resolutions. Untimestamped prepare and status-transition history stay unavailable.</p>` +
-    `<p><b>Child lifecycle:</b> Codex hierarchy follows recorded parent thread ids. Task-start, completion, and interruption events are bounded to typed records in the 24 newest child rollouts; no spawn is inferred from a task start or from file freshness.</p>` +
-    `${projectLifecycleEvidence(focus)}` +
-    `<p><b>Requests:</b> “No request detected” means neither an exact focused-session AskRegistry row nor a live needs-input overlay is present. It is not proof that this session is unblocked.</p>` +
-    `<p><b>Unavailable:</b> durable project identity, durable operator-note persistence, ask reassignment, steering transport, and unsupported stage, block, gate, or outcome history.</p>` +
-    `${projectContextEntry(group.label) && projectContextEntry(group.label).data
-      ? projectHistoryBoundary(projectContextEntry(group.label).data.sources) : ""}</details>`;
+    `<details class="pc-sources"><summary>Evidence / limits</summary>` +
+    `${projectEvidenceLimits(group, focus)}</details>`;
 }

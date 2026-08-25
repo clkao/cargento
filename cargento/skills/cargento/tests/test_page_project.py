@@ -203,9 +203,9 @@ console.log(JSON.stringify({
   chosen: h.includes("Project context</span><h2>repo/proj</h2>"),
   active: h.includes("1</b> recent"),
   identity: h.includes("claude:aaa1"),
-  goalFirst: h.indexOf("Operator note") < h.indexOf("Observer context"),
+  goalFirst: h.indexOf("Operator note") < h.indexOf("What changed"),
   mirrorDrilldown: h.includes('data-calm="project-session-focus" data-arg="claude:aaa1"'),
-  secondary: h.indexOf("Evidence and limitations") > h.indexOf("Other project sessions")
+  secondary: h.indexOf("Evidence / limits") > h.indexOf("Other project sessions")
 }));
 """
         out = self.run_project(checks)
@@ -235,7 +235,7 @@ console.log(JSON.stringify({
   observed: h.includes("Derived session goal"),
   scoped: h.includes("Derived context snapshot") && h.includes("derived · subordinate"),
   separate: h.indexOf("Operator note") < h.indexOf("Derived session goal"),
-  noOverwrite: h.includes("observer inference never overwrites this note"),
+  noOverwrite: h.includes("Operator note overrides derived context"),
   once: h.split("Derived session goal").length - 1 === 1 &&
     !h.includes('class="pc-observer"')
 }));
@@ -265,7 +265,7 @@ console.log(JSON.stringify({
   hierarchy: h.indexOf("Operator note") < h.indexOf("Right now"),
   surrounding: h.includes("Other project sessions") && h.includes("claude:around-1"),
   noDuplicate: !h.slice(h.indexOf("Other project sessions"),
-    h.indexOf("Evidence and limitations")).includes("codex:focus-1"),
+    h.indexOf("Evidence / limits")).includes("codex:focus-1"),
   observerScoped: __fetchCalls.some(call => call[0].includes("session=codex%3Afocus-1"))
 }));
 """
@@ -302,8 +302,8 @@ render(d);
 const overlay = __els.app.innerHTML;
 console.log(JSON.stringify({
   clear: clear.includes("No request detected") && !clear.includes('class="pc-needs"') &&
-    clear.indexOf("not proof that this session is unblocked") >
-      clear.indexOf("Evidence and limitations") &&
+    clear.indexOf("does not prove unblocked") >
+      clear.indexOf("Evidence / limits") &&
     clear.includes('data-request-state="none"'),
   exactOnly: !clear.includes("Choose the release path?") && asked.includes("Needs you") &&
     asked.includes("Choose the release path?") && asked.includes(">safe</button>") &&
@@ -348,13 +348,14 @@ console.log(JSON.stringify({
   purpose: h.includes("Derived context snapshot") && h.includes("Shape the focused mirror") &&
     h.includes("gpt-5.6-luna") && h.includes("reasoning max") &&
     h.split("Shape the focused mirror").length - 1 === 1,
-  workflowBoundary: h.includes("workflow stage unavailable") &&
-    h.includes("open-block reading unavailable"),
+  workflowBoundary: !h.includes("workflow stage unavailable") &&
+    !h.includes("open-block reading unavailable") &&
+    h.includes("Stage and block are omitted when absent"),
   attention: h.includes("No request detected") && !h.includes("Needs captain"),
   steering: !h.includes("Most recent user-role message") && h.includes("Keep the project as context") &&
     h.includes("transcript user-role message") && h.includes("1970-01-02T03:46:30.000Z"),
   identity: h.includes("codex:focus-1"),
-  operatorPrecedence: h.includes("observer inference never overwrites this note"),
+  operatorPrecedence: h.includes("Operator note overrides derived context"),
   noDuplicateObserver: !h.includes('class="pc-observer"') &&
     h.split("Derived context snapshot").length - 1 === 1
 }));
@@ -402,9 +403,10 @@ console.log(JSON.stringify({
   decision: h.slice(h.indexOf("What happened")).includes("application consumed") &&
     h.includes("shaping · approve"),
   unrelated: !h.includes("unrelated read") && !h.includes("caused") &&
-    !h.includes('data-causal-link="supported"') && h.includes("relationship unverified"),
-  boundary: h.indexOf("status-transition history unavailable") >
-    h.indexOf("Evidence and limitations"),
+    !h.includes('data-causal-link="supported"') && h.includes("chronology only") &&
+    h.includes("Chronological proximity does not imply causality"),
+  boundary: h.indexOf("Status-transition history is omitted") >
+    h.indexOf("Evidence / limits"),
   noMockTags: !h.includes("generated</span>") && !h.includes("consistency")
 }));
 """
@@ -421,8 +423,12 @@ console.log(JSON.stringify({
         checks = """
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [], events: [
+    {id: "instruction:0", at: 99960, kind: "steer", phase: "user-role transcript message",
+      title: "Earlier instruction", intent: "unsupported guess", detail: "codex:focus-1",
+      source: "transcript user-role message", harness: "codex", sid: "focus-1"},
     {id: "instruction:1", at: 99970, kind: "steer", phase: "user-role transcript message",
-      title: "Prepare checkpoint", detail: "codex:focus-1",
+      title: "Prepare checkpoint", intent: "record a checkpoint",
+      intent_source: "model-supported intent tag", detail: "codex:focus-1",
       source: "transcript user-role message", harness: "codex", sid: "focus-1"},
     {at: 99980, kind: "activity", phase: "read", title: "Unrelated activity",
       source: "activity source", harness: "codex", sid: "focus-1"},
@@ -442,6 +448,10 @@ console.log(JSON.stringify({
     h.includes("linked by checkpoint manifest relation"),
   interval: h.includes("Work interval") && h.includes("source-linked interval") &&
     h.includes("20s"),
+  newest: h.indexOf("Prepare checkpoint") < h.indexOf("Earlier instruction") &&
+    h.includes('data-order="newest-first"'),
+  intentBoundary: h.includes("intent · record a checkpoint") &&
+    !h.includes("intent · unsupported guess") && h.split("intent ·").length - 1 === 1,
   noAutonomyClaim: !h.includes("autonomous") && !h.includes("autonomy phase"),
   unrelatedHidden: !h.includes("Unrelated activity")
 }));
@@ -453,8 +463,47 @@ console.log(JSON.stringify({
         )
         self.assertTrue(out["linked"])
         self.assertTrue(out["interval"])
+        self.assertTrue(out["newest"])
+        self.assertTrue(out["intentBoundary"])
         self.assertTrue(out["noAutonomyClaim"])
         self.assertTrue(out["unrelatedHidden"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_primary_copy_omits_empty_fields_and_each_material_limit_appears_once(self) -> None:
+        checks = """
+projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generated: 100000,
+  data: {observers: [], events: [], sources: {gate: {}, steer: {unavailable: []}}}};
+const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
+  active: true, state: "working", state_detail: "running exec", model: null,
+  subagents: [], subagent_events: []})]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+const primary = h.slice(0, h.indexOf("Evidence / limits"));
+const count = phrase => h.split(phrase).length - 1;
+console.log(JSON.stringify({
+  omittedEmpty: !primary.includes("Active child hierarchy") &&
+    !primary.includes("model unavailable") && !primary.includes("workflow stage unavailable") &&
+    !primary.includes("open-block reading unavailable"),
+  concisePrimary: primary.includes("No request detected") &&
+    !primary.includes("not proof") && !primary.includes("source unavailable"),
+  limitsOnce: count("Operator note overrides derived context") === 1 &&
+    count("No request detected") === 1 &&
+    count("does not prove unblocked") === 1 &&
+    count("Chronological proximity does not imply causality") === 1 &&
+    count("Stage and block are omitted when absent") === 1,
+  oneEvidence: count("Evidence / limits") === 1
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["omittedEmpty"])
+        self.assertTrue(out["concisePrimary"])
+        self.assertTrue(out["limitsOnce"])
+        self.assertTrue(out["oneEvidence"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_live_child_hierarchy_stays_primary_while_lifecycle_is_suppressed(self) -> None:
@@ -482,7 +531,7 @@ Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("What changed"), h.indexOf("Other project sessions"));
-const evidence = h.slice(h.indexOf("Evidence and limitations"));
+const evidence = h.slice(h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
   tree: h.includes("Active child hierarchy") &&
     h.includes('data-subagent-depth="1"') && h.includes('data-subagent-depth="2"'),

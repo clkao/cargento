@@ -665,7 +665,6 @@
   .pc-goal-actions button.quiet{border-color:var(--line2);background:transparent;color:var(--ink2)}
   .pc-goal-actions button:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
   .pc-goal-note{margin-left:auto;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--accent-ink)}
-  .pc-key{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);overflow-wrap:anywhere;margin-top:9px}
   .pc-mirror{padding:24px 20px;border-top:1px solid var(--line2);border-bottom:1px solid var(--line2);background:color-mix(in oklab,var(--accent) 7%,var(--panel));box-shadow:inset 4px 0 0 color-mix(in oklab,var(--accent) 75%,var(--line2))}
   .pc-mirror.unavailable{background:var(--sunk);color:var(--ink3)}
   .pc-mirror-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
@@ -738,7 +737,7 @@
   .pc-semantic-node{border:1px solid var(--line2);border-radius:9px;padding:11px 12px;background:var(--panel)}
   .pc-semantic-node+.pc-semantic-node{margin-top:8px}
   .pc-semantic-node.steer{border-left:3px solid var(--accent)}
-  .pc-semantic-node.outcome{border-left:3px solid var(--ok)}
+  .pc-semantic-node.outcome{border-left:3px solid var(--ink2)}
   .pc-semantic-empty{border:1px dashed var(--line2);border-radius:8px;padding:11px 12px;font-size:var(--fs-xs);color:var(--ink3)}
   .pc-event-evidence{margin-top:6px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
   .pc-event-evidence summary{cursor:pointer;color:var(--ink3)}
@@ -762,11 +761,13 @@
   .pc-event-meta time{margin-left:auto;color:var(--ink3)}
   .pc-event-title{font-size:var(--fs-sm);font-weight:600;color:var(--ink);line-height:1.4;margin-top:3px}
   .pc-event-detail{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);margin-top:3px}
-  .pc-history-boundary{border-top:1px dashed var(--line2);padding-top:9px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
   .pc-sources{border-top:1px solid var(--line2);padding:14px 4px;color:var(--ink3);font-size:var(--fs-xs);line-height:1.55}
   .pc-sources summary{color:var(--ink2);font-weight:700;cursor:pointer}
   .pc-sources p{max-width:92ch;margin:10px 0 0}
   .pc-sources b{color:var(--ink2)}
+  .pc-limit-list{margin:10px 0 0;padding-left:20px;max-width:100ch}
+  .pc-limit-list li+li{margin-top:6px}
+  .pc-limit-list code{overflow-wrap:anywhere}
   @media(max-width:780px){
     .pc-focus-head{flex-direction:column}
     .pc-counts{justify-content:flex-start}
