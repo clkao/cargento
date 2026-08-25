@@ -28,6 +28,7 @@ class CodexCollectorTest(RuntimeTestCase):
             "type": "session_meta",
             "payload": {
                 "id": "child-thread",
+                "session_id": "root-session",
                 "thread_source": "subagent",
                 "agent_nickname": "reviewer",
                 "source": {"subagent": {"thread_spawn": {"parent_thread_id": "parent-thread"}}},
@@ -40,7 +41,8 @@ class CodexCollectorTest(RuntimeTestCase):
             meta = runtime_transcripts.codex_meta(config, state, str(path))
 
         self.assertTrue(meta["subagent"])
-        self.assertEqual("child-thread", meta["session_id"])
+        self.assertEqual("root-session", meta["session_id"])
+        self.assertEqual("child-thread", meta["thread_id"])
         self.assertEqual("parent-thread", meta["parent_session_id"])
 
     def test_codex_subagent_usage_is_added_after_own_start_boundary(self) -> None:
@@ -180,6 +182,63 @@ class CodexCollectorTest(RuntimeTestCase):
                 self.assertEqual([], session["subagents"])
                 self.assertNotIn("subagent", session["state_detail"])
                 self.assertEqual(now, session["last_activity"])
+
+    def test_nested_child_attaches_to_top_level_and_retires_on_completion(self) -> None:
+        now = time.time()
+        root_id = "33333333-3333-3333-3333-333333333333"
+        worker_id = "44444444-4444-4444-4444-444444444444"
+
+        def event(kind: str, offset: float) -> dict[str, Any]:
+            return {
+                "type": "event_msg",
+                "timestamp": datetime.fromtimestamp(now + offset, UTC).isoformat(),
+                "payload": {"type": kind, "started_at": now + offset},
+            }
+
+        def meta(sid: str, parent: str | None = None, name: str | None = None) -> dict[str, Any]:
+            payload: dict[str, Any] = {"id": sid, "cwd": "/tmp/project"}
+            if parent is not None:
+                payload.update(
+                    {
+                        "session_id": root_id,
+                        "thread_source": "subagent",
+                        "agent_nickname": name,
+                        "source": {"subagent": {"thread_spawn": {"parent_thread_id": parent}}},
+                    }
+                )
+            return {"type": "session_meta", "payload": payload}
+
+        def collect_with_nested(terminal: bool) -> dict[str, Any]:
+            def write(root: Path, name: str, entries: list[dict[str, Any]]) -> None:
+                path = root / name
+                path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+                os.utime(path, (now, now))
+
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "2026" / "01" / "01"
+                root.mkdir(parents=True)
+                write(root, "rollout-root.jsonl", [meta(root_id), event("task_started", -40)])
+                write(
+                    root,
+                    "rollout-worker.jsonl",
+                    [meta(worker_id, root_id, "Volta"), event("task_started", -30)],
+                )
+                nested = [meta("nested", worker_id, "Turing"), event("task_started", -20)]
+                if terminal:
+                    nested.append(event("task_complete", -1))
+                write(root, "rollout-nested.jsonl", nested)
+                with store_patch(CODEX_SESSIONS_DIR=tmp):
+                    config, state = runtime()
+                    (session,) = codex_collector.collect(config, state, now, 24, False)
+            return session
+
+        running = collect_with_nested(False)
+        self.assertEqual({"Volta", "Turing"}, {a["name"] for a in running["subagents"]})
+        self.assertEqual("running 2 subagents", running["state_detail"])
+
+        completed = collect_with_nested(True)
+        self.assertEqual(["Volta"], [a["name"] for a in completed["subagents"]])
+        self.assertEqual("running 1 subagent", completed["state_detail"])
 
     def test_codex_meta_tolerates_malformed_payload_types(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

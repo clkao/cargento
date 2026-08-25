@@ -73,6 +73,10 @@ def codex_meta(config: RuntimeConfig, state: RuntimeState, path: str) -> dict[st
         )
         return {
             "session_id": p.get("session_id") or p.get("id"),
+            # Current Codex subagent metadata carries two identities: session_id
+            # is the top-level root and id is this rollout thread. Collection
+            # groups on the former; nested-parent traversal needs the latter.
+            "thread_id": p.get("id") or p.get("session_id"),
             "parent_session_id": (
                 spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
             ),

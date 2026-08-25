@@ -119,18 +119,36 @@ def _subagent_rate(
     return round(recent / (config.rate_window_sec / 60))
 
 
-def collect(
+def _top_level_parent(
+    sid: str,
+    parent_sid: str,
+    top_level: dict[str, tuple[float, str]],
+    meta_by_sid: dict[str, dict[str, Any]],
+) -> str:
+    """Resolve a nested Codex child to the dashboard session that owns it."""
+    seen = {sid}
+    while parent_sid not in top_level:
+        parent_meta = meta_by_sid.get(parent_sid)
+        next_parent = parent_meta.get("parent_session_id") if parent_meta is not None else None
+        if not next_parent or next_parent in seen:
+            break
+        seen.add(parent_sid)
+        parent_sid = next_parent
+    return parent_sid
+
+
+def _rollouts(
     config: RuntimeConfig,
     state: RuntimeState,
-    now: float,
-    window_hours: float,
-    show_all: bool,
-) -> list[Session]:
-    # Resumes and subagent threads each write their own rollout file, so group
-    # by the session_meta session_id rather than by file.
-    found: dict[str, tuple[float, str]] = {}  # session_id -> (mtime, path)
-    # parent session_id -> running agents, recent child activity, and rate
-    agent_data: dict[str, dict[str, Any]] = {}
+) -> tuple[
+    dict[str, tuple[float, str]],
+    list[tuple[str, float, str, dict[str, Any]]],
+    dict[str, dict[str, Any]],
+]:
+    """Read Codex rollout identity once and separate dashboard roots."""
+    found: dict[str, tuple[float, str]] = {}
+    rollouts: list[tuple[str, float, str, dict[str, Any]]] = []
+    meta_by_sid: dict[str, dict[str, Any]] = {}
     for fp in runtime_io.glob_stores(
         config,
         "codex.sessions",
@@ -144,9 +162,36 @@ def collect(
         except OSError:
             continue
         meta = transcripts.codex_meta(config, state, fp)
-        sid = meta.get("session_id") or os.path.basename(fp)[: -len(".jsonl")][-36:]
+        session_sid = meta.get("session_id") or os.path.basename(fp)[: -len(".jsonl")][-36:]
+        sid = (meta.get("thread_id") or session_sid) if meta.get("subagent") else session_sid
+        rollouts.append((sid, mtime, fp, meta))
+        meta_by_sid[sid] = meta
+        if not meta.get("subagent") and (session_sid not in found or mtime > found[session_sid][0]):
+            found[session_sid] = (mtime, fp)
+    return found, rollouts, meta_by_sid
+
+
+def collect(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    now: float,
+    window_hours: float,
+    show_all: bool,
+) -> list[Session]:
+    # Resumes and subagent threads each write their own rollout file, so group
+    # by the session_meta session_id rather than by file.
+    # parent session_id -> running agents, recent child activity, and rate
+    agent_data: dict[str, dict[str, Any]] = {}
+    found, rollouts, meta_by_sid = _rollouts(config, state)
+
+    for sid, mtime, fp, meta in rollouts:
         if meta.get("subagent"):
             parent_sid = meta.get("parent_session_id") or sid
+            # Codex nests worker threads. Only top-level sessions are dashboard
+            # rows, so walk the recorded parent links and attach each descendant
+            # to the real row that owns it. The previous direct-parent lookup
+            # orphaned depth-2 rollouts even though both links were on disk.
+            parent_sid = _top_level_parent(sid, parent_sid, found, meta_by_sid)
             data = agent_data.setdefault(parent_sid, {"agents": [], "activity": [], "rate": 0})
             # One scan, above both branches. The rate window is wider than the
             # working window today, so the rate branch happens to have scanned
@@ -177,8 +222,6 @@ def collect(
                     )
                 )
             continue
-        if sid not in found or mtime > found[sid][0]:
-            found[sid] = (mtime, fp)
 
     out: list[Session] = []
     for sid, (mtime, fp) in found.items():
