@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import unittest
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -147,7 +148,7 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   recentCount: h.includes("3</b> recent"),
   workingSection: h.includes("Working now") && h.includes("claude:work-1"),
-  recentIdleSection: h.includes("Recent · idle") && h.includes("pi:idle-1"),
+  recentIdleSection: h.includes("Recent and idle") && h.includes("pi:idle-1"),
   noActiveClaim: !h.includes("</b> active") && !h.includes("other active sessions")
 }));
 """
@@ -199,13 +200,12 @@ console.log(JSON.stringify({
   className: __els.app.className,
   compactNav: h.includes('id="pc-project-select"') && h.includes('class="pc-link"') &&
     !h.includes('class="pc-project'),
-  chosen: h.includes("Working toward</span><h2>repo/proj</h2>"),
+  chosen: h.includes("Project context</span><h2>repo/proj</h2>"),
   active: h.includes("1</b> recent"),
-  empty: h.includes("No session in this project is asking through Cargento."),
   identity: h.includes("claude:aaa1"),
-  goalFirst: h.indexOf("Operator goal") < h.indexOf("Observer context"),
+  goalFirst: h.indexOf("Operator note") < h.indexOf("Observer context"),
   mirrorDrilldown: h.includes('data-calm="project-session-focus" data-arg="claude:aaa1"'),
-  secondary: h.indexOf("Source and identity details") > h.indexOf("Surrounding sessions")
+  secondary: h.indexOf("Evidence and limitations") > h.indexOf("Other project sessions")
 }));
 """
         out = self.run_project(checks)
@@ -214,7 +214,6 @@ console.log(JSON.stringify({
         self.assertTrue(out["compactNav"])
         self.assertTrue(out["chosen"])
         self.assertTrue(out["active"])
-        self.assertTrue(out["empty"])
         self.assertTrue(out["identity"])
         self.assertTrue(out["goalFirst"])
         self.assertTrue(out["mirrorDrilldown"])
@@ -234,7 +233,7 @@ console.log(JSON.stringify({
   operator: h.includes("Operator note <em>remembered in this browser · precedes inference</em>"),
   observed: h.includes("Derived session goal"),
   scoped: h.includes("derived, subordinate") && h.includes("claude:aaa1"),
-  separate: h.indexOf("Operator goal") < h.indexOf("Derived session goal"),
+  separate: h.indexOf("Operator note") < h.indexOf("Derived session goal"),
   noOverwrite: h.includes("observer inference never overwrites this note")
 }));
 """
@@ -258,11 +257,11 @@ render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   mirror: h.includes('data-session-mirror="codex:focus-1"') && h.includes("running exec"),
-  identity: h.includes("codex:focus-1") && h.includes("project · repo/proj"),
-  hierarchy: h.indexOf("Operator goal") < h.indexOf("Primary session mirror"),
-  surrounding: h.includes("Surrounding sessions") && h.includes("claude:around-1"),
-  noDuplicate: !h.slice(h.indexOf("Surrounding sessions"),
-    h.indexOf("Gate and steering history")).includes("codex:focus-1"),
+  identity: h.includes("codex:focus-1") && h.includes("model · gpt-5.6-sol"),
+  hierarchy: h.indexOf("Operator note") < h.indexOf("Right now"),
+  surrounding: h.includes("Other project sessions") && h.includes("claude:around-1"),
+  noDuplicate: !h.slice(h.indexOf("Other project sessions"),
+    h.indexOf("Evidence and limitations")).includes("codex:focus-1"),
   observerScoped: __fetchCalls.some(call => call[0].includes("session=codex%3Afocus-1"))
 }));
 """
@@ -279,7 +278,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["observerScoped"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
-    def test_focused_mirror_distinguishes_no_signal_from_unblocked(self) -> None:
+    def test_focused_attention_is_quiet_until_an_exact_real_request_exists(self) -> None:
         checks = """
 const d = payload([
   mk({project: "repo/proj", harness: "codex", sid: "focus-1", active: true,
@@ -292,14 +291,22 @@ const clear = __els.app.innerHTML;
 d.asks = [liveAsk({harness: "codex", session_id: "focus-1"})];
 render(d);
 const asked = __els.app.innerHTML;
+d.asks = [];
+d.sessions[0].needs_you = true;
+d.sessions[0].needs_reason = "approval required";
+render(d);
+const overlay = __els.app.innerHTML;
 console.log(JSON.stringify({
-  clear: clear.includes("Needs captain") && clear.includes("No live needs-captain signal") &&
-    clear.includes("not proof that the session is unblocked") &&
-    clear.includes('data-needs-captain="clear"'),
-  exactOnly: !clear.includes("Attention requested") && asked.includes("Attention requested") &&
-    asked.includes("1 live registered question") &&
-    asked.includes('data-needs-captain="requested"'),
-  source: asked.includes("session overlay + AskRegistry")
+  clear: clear.includes("No request detected") && !clear.includes('class="pc-needs"') &&
+    clear.indexOf("not proof that this session is unblocked") >
+      clear.indexOf("Evidence and limitations") &&
+    clear.includes('data-request-state="none"'),
+  exactOnly: !clear.includes("Choose the release path?") && asked.includes("Needs you") &&
+    asked.includes("Choose the release path?") && asked.includes(">safe</button>") &&
+    asked.includes('data-request-state="ask"'),
+  askSource: asked.includes("AskRegistry · exact focused session"),
+  overlay: overlay.includes("Needs you") && overlay.includes("approval required") &&
+    overlay.includes("live session overlay") && overlay.includes('data-request-state="overlay"')
 }));
 """
         out = self.run_project(
@@ -309,7 +316,8 @@ console.log(JSON.stringify({
         )
         self.assertTrue(out["clear"])
         self.assertTrue(out["exactOnly"])
-        self.assertTrue(out["source"])
+        self.assertTrue(out["askSource"])
+        self.assertTrue(out["overlay"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_focused_right_now_unifies_live_and_derived_truth(self) -> None:
@@ -318,9 +326,9 @@ projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [{harness: "codex", sid: "focus-1", goal: "Shape the focused mirror",
     stage: null, block: null, model: {model: "gpt-5.6-luna", reasoning_effort: "max",
       status: "used"}}],
-  events: [{at: 99990, kind: "steer", phase: "captain instruction",
+  events: [{at: 99990, kind: "steer", phase: "user-role transcript message",
     title: "Keep the project as context", detail: "codex:focus-1",
-    source: "transcript user message", harness: "codex", sid: "focus-1"}],
+    source: "transcript user-role message", harness: "codex", sid: "focus-1"}],
   sources: {scope: "focused session", gate: {}, steer: {live: 1, unavailable: []}}
 }};
 const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
@@ -329,17 +337,16 @@ Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  hierarchy: h.indexOf("Operator goal") < h.indexOf("Primary session mirror") &&
-    h.indexOf("Primary session mirror") < h.indexOf("Right now") &&
+  hierarchy: h.indexOf("Operator note") < h.indexOf("Right now") &&
     h.indexOf("Right now") < h.indexOf("Shape the focused mirror"),
-  motion: h.includes("working") && h.includes("running exec"),
+  motion: h.includes("working now") && h.includes("running exec"),
   purpose: h.includes("Shape the focused mirror") && h.includes("gpt-5.6-luna") &&
     h.includes("reasoning max"),
   workflowBoundary: h.includes("workflow stage unavailable") &&
     h.includes("open-block reading unavailable"),
-  attention: h.includes("No live needs-captain signal"),
+  attention: h.includes("No request detected") && !h.includes("Needs captain"),
   steering: h.includes("Most recent user-role message") && h.includes("Keep the project as context") &&
-    h.includes("transcript user message") && h.includes("1970-01-02T03:46:30.000Z"),
+    h.includes("transcript user-role message") && h.includes("1970-01-02T03:46:30.000Z"),
   identity: h.includes("codex:focus-1"),
   operatorPrecedence: h.includes("observer inference never overwrites this note")
 }));
@@ -360,15 +367,16 @@ console.log(JSON.stringify({
         self.assertTrue(out["operatorPrecedence"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
-    def test_activity_reuses_causal_log_shape_without_mocked_history(self) -> None:
+    def test_what_changed_merges_only_timestamped_exact_source_events(self) -> None:
         checks = """
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [], events: [
-    {at: 99990, kind: "steer", phase: "captain instruction", title: "Prepare release path",
-      detail: "claude:aaa1", source: "transcript user message"},
+    {at: 99990, kind: "steer", phase: "user-role transcript message",
+      title: "Prepare release path", detail: "claude:aaa1",
+      source: "transcript user-role message", harness: "claude", sid: "aaa1"},
     {at: 99980, kind: "gate", phase: "gate decision · application consumed",
       title: "project-cockpit · shaping · approve", detail: "explore · claude:aaa1",
-      source: "Spacedock entity gate frontmatter"}
+      source: "Spacedock entity gate frontmatter", harness: "claude", sid: "aaa1"}
   ], sources: {gate: {live: 1, untimestamped_prepare: 2, status_history: "unavailable"},
     steer: {live: 1, unavailable: []}}
 }};
@@ -376,10 +384,11 @@ render(projectBoard());
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   graph: h.includes('class="pc-log"') && h.includes('class="pc-event-node"'),
-  instruction: h.includes("captain instruction") && h.includes("transcript user message"),
+  instruction: h.includes("user-role transcript message") &&
+    h.includes("transcript user-role message") && !h.includes("captain instruction"),
   decision: h.includes("application consumed") && h.includes("shaping · approve"),
-  boundary: h.includes("2 gate preparations lack timestamps") &&
-    h.includes("status-transition history unavailable"),
+  boundary: h.indexOf("status-transition history unavailable") >
+    h.indexOf("Evidence and limitations"),
   noMockTags: !h.includes("generated</span>") && !h.includes("consistency")
 }));
 """
@@ -389,6 +398,56 @@ console.log(JSON.stringify({
         self.assertTrue(out["decision"])
         self.assertTrue(out["boundary"])
         self.assertTrue(out["noMockTags"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_nested_child_hierarchy_and_lifecycle_join_the_focused_timeline(self) -> None:
+        checks = """
+projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generated: 100000,
+  data: {observers: [], events: [], sources: {gate: {}, steer: {unavailable: []}}}};
+const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
+  active: true, state: "working", state_detail: "running 2 subagents",
+  subagent_hierarchy: [
+    {name: "Volta", model: "gpt-5.6-sol", depth: 1, parent_name: null},
+    {name: "Turing", model: "gpt-5.6-sol", depth: 2, parent_name: "Volta"}
+  ],
+  subagent_events: [
+    {at: 99985, kind: "subagent_task_started", name: "Turing", model: "gpt-5.6-sol",
+      depth: 2, parent_name: "Volta", source: "Codex child rollout lifecycle"},
+    {at: 99995, kind: "subagent_complete", name: "Turing", model: "gpt-5.6-sol",
+      depth: 2, parent_name: "Volta", source: "Codex child rollout lifecycle"}
+  ]
+})]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+console.log(JSON.stringify({
+  tree: h.includes("Active child hierarchy") &&
+    h.includes('data-subagent-depth="1"') && h.includes('data-subagent-depth="2"'),
+  nested: h.indexOf("Volta") < h.indexOf("Turing") && h.includes("child of Volta"),
+  lifecycle: h.includes("child task started") && h.includes("child completed") &&
+    h.includes("Codex child rollout lifecycle"),
+  order: h.indexOf("child task started") < h.indexOf("child completed")
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["tree"])
+        self.assertTrue(out["nested"])
+        self.assertTrue(out["lifecycle"])
+        self.assertTrue(out["order"])
+
+    def test_project_narrow_width_rules_keep_primary_content_wrappable(self) -> None:
+        styles = (
+            Path(__file__).resolve().parents[1] / "cargento_runtime" / "web" / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn("@media(max-width:520px)", styles)
+        self.assertIn(".pc-nav select{width:100%;max-width:100%}", styles)
+        self.assertIn(".pc-mirror-head{flex-direction:column}", styles)
+        self.assertIn(".pc-event-meta{align-items:flex-start;flex-wrap:wrap}", styles)
+        self.assertIn("overflow-wrap:anywhere", styles)
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_only_real_registry_asks_enter_the_selected_project(self) -> None:
@@ -403,10 +462,14 @@ console.log(JSON.stringify({
   absentBefore: !before.includes("Choose the release path?"),
   presentAfter: after.includes("Choose the release path?"),
   options: after.includes(">safe</button>") && after.includes(">fast</button>"),
-  boundary: after.includes("project and session attribution are caller-supplied")
+  boundary: after.includes("AskRegistry · exact focused session")
 }));
 """
-        out = self.run_project(checks)
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="claude:aaa1",
+        )
         self.assertTrue(out["absentBefore"])
         self.assertTrue(out["presentAfter"])
         self.assertTrue(out["options"])
@@ -501,7 +564,7 @@ console.log(JSON.stringify({
             """
 render(projectBoard());
 const h = __els.app.innerHTML;
-console.log(JSON.stringify({chosen: h.includes("Working toward</span><h2>repo/other</h2>"),
+console.log(JSON.stringify({chosen: h.includes("Project context</span><h2>repo/other</h2>"),
   goal: h.includes("Goal for project B"), noLeak: !h.includes("Goal for project A")}));
 """,
             goals=goals,
@@ -518,7 +581,7 @@ render(projectBoard());
 projectGoalAction("project-link-copy", "repo/other");
 await __settle();
 console.log(JSON.stringify({
-  selected: __els.app.innerHTML.includes("Working toward</span><h2>repo/other</h2>"),
+  selected: __els.app.innerHTML.includes("Project context</span><h2>repo/other</h2>"),
   copied: __links[0],
   note: __els.app.innerHTML.includes("project link copied")
 }));

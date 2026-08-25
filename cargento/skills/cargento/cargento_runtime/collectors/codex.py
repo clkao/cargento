@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,9 @@ def discover(config: RuntimeConfig, _state: RuntimeState) -> bool:
 # events are frequent, so the snapshot is almost always in the newest file;
 # the rest of the budget covers a file that was only just created.
 _USAGE_FILE_CAP = 8
+_CHILD_LIFECYCLE_FILE_CAP = 24
+_CHILD_LIFECYCLE_BYTES = 128 * 1024
+_CHILD_LIFECYCLE_EVENT_CAP = 12
 
 
 def _usage_window(now: float, raw: Any) -> tuple[str, dict[str, Any]] | None:
@@ -119,13 +123,15 @@ def _subagent_rate(
     return round(recent / (config.rate_window_sec / 60))
 
 
-def _top_level_parent(
+def _child_lineage(
     sid: str,
     parent_sid: str,
     top_level: dict[str, tuple[float, str]],
     meta_by_sid: dict[str, dict[str, Any]],
-) -> str:
-    """Resolve a nested Codex child to the dashboard session that owns it."""
+) -> tuple[str, int, str | None]:
+    """Resolve a child root, depth, and immediate named parent from recorded links."""
+    immediate_parent = parent_sid
+    depth = 1
     seen = {sid}
     while parent_sid not in top_level:
         parent_meta = meta_by_sid.get(parent_sid)
@@ -134,7 +140,65 @@ def _top_level_parent(
             break
         seen.add(parent_sid)
         parent_sid = next_parent
-    return parent_sid
+        depth += 1
+    immediate_meta = meta_by_sid.get(immediate_parent)
+    parent_name = (
+        records.safe_text(immediate_meta.get("agent_label") or "subagent", 70)
+        if depth > 1 and immediate_meta is not None
+        else None
+    )
+    return parent_sid, depth, parent_name
+
+
+def _child_lifecycle(
+    config: RuntimeConfig,
+    path: str,
+    name: str,
+    model: Any,
+    depth: int,
+    parent_name: str | None,
+) -> list[dict[str, Any]]:
+    """Bounded lifecycle signals written by one real Codex child rollout."""
+    kinds = {
+        "task_started": "subagent_task_started",
+        "task_complete": "subagent_complete",
+        "turn_aborted": "subagent_interrupted",
+    }
+    events: list[dict[str, Any]] = []
+    for raw in runtime_io.reverse_lines(
+        config,
+        path,
+        max_bytes=_CHILD_LIFECYCLE_BYTES,
+        contains=b'"type"',
+    ):
+        try:
+            row = records.as_dict(json.loads(raw))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        payload = records.as_dict(row.get("payload"))
+        payload_type = payload.get("type")
+        kind = (
+            kinds.get(payload_type)
+            if row.get("type") == "event_msg" and isinstance(payload_type, str)
+            else None
+        )
+        at = records.parse_ts(row.get("timestamp"))
+        if kind is None or at is None:
+            continue
+        events.append(
+            {
+                "at": at,
+                "kind": kind,
+                "name": name,
+                "model": model,
+                "depth": depth,
+                "parent_name": parent_name,
+                "source": "Codex child rollout lifecycle",
+            }
+        )
+        if len(events) >= _CHILD_LIFECYCLE_EVENT_CAP:
+            break
+    return list(reversed(events))
 
 
 def _rollouts(
@@ -183,6 +247,13 @@ def collect(
     # parent session_id -> running agents, recent child activity, and rate
     agent_data: dict[str, dict[str, Any]] = {}
     found, rollouts, meta_by_sid = _rollouts(config, state)
+    lifecycle_paths = set(
+        [
+            fp
+            for _, _, fp, meta in sorted(rollouts, key=lambda row: -row[1])
+            if meta.get("subagent")
+        ][:_CHILD_LIFECYCLE_FILE_CAP]
+    )
 
     for sid, mtime, fp, meta in rollouts:
         if meta.get("subagent"):
@@ -191,8 +262,16 @@ def collect(
             # rows, so walk the recorded parent links and attach each descendant
             # to the real row that owns it. The previous direct-parent lookup
             # orphaned depth-2 rollouts even though both links were on disk.
-            parent_sid = _top_level_parent(sid, parent_sid, found, meta_by_sid)
-            data = agent_data.setdefault(parent_sid, {"agents": [], "activity": [], "rate": 0})
+            parent_sid, depth, parent_name = _child_lineage(
+                sid,
+                parent_sid,
+                found,
+                meta_by_sid,
+            )
+            data = agent_data.setdefault(
+                parent_sid,
+                {"agents": [], "activity": [], "rate": 0, "lifecycle": []},
+            )
             # One scan, above both branches. The rate window is wider than the
             # working window today, so the rate branch happens to have scanned
             # every child the second branch renders — but that is two config
@@ -202,9 +281,26 @@ def collect(
             charged = sessions.is_fresh(config, now, mtime, config.rate_window_sec)
             rendered = sessions.is_fresh(config, now, mtime, config.working_threshold_sec)
             scan = turns.scan_turns(config, state, fp, "codex") if charged or rendered else None
+            name = records.safe_text(meta.get("agent_label") or "subagent", 70)
             data["activity"].extend(
                 [mtime] if sessions.is_fresh(config, now, mtime, window_hours * 3600) else []
             )
+            if fp in lifecycle_paths and sessions.is_fresh(
+                config,
+                now,
+                mtime,
+                window_hours * 3600,
+            ):
+                data["lifecycle"].extend(
+                    _child_lifecycle(
+                        config,
+                        fp,
+                        name,
+                        (scan or {}).get("model"),
+                        depth,
+                        parent_name,
+                    )
+                )
             if charged:
                 data["rate"] += _subagent_rate(config, fp, now, scan)
             if rendered and scan and scan.get("turn_start") is not None:
@@ -215,17 +311,24 @@ def collect(
                 # active turn on either boundary.
                 data["agents"].append(
                     (
-                        (meta.get("agent_label") or "subagent")[:70],
+                        name,
                         mtime,
                         (scan or {}).get("model"),
                         turns.started_at(scan),
+                        depth,
+                        parent_name,
                     )
                 )
             continue
 
     out: list[Session] = []
     for sid, (mtime, fp) in found.items():
-        data = agent_data.get(sid) or {"agents": [], "activity": [], "rate": 0}
+        data = agent_data.get(sid) or {
+            "agents": [],
+            "activity": [],
+            "rate": 0,
+            "lifecycle": [],
+        }
         agents = sorted(data["agents"], key=lambda a: -a[1])
         activity_sources = (mtime, *data["activity"])
         last_activity = sessions.newest_plausible(config, now, activity_sources)
@@ -241,8 +344,22 @@ def collect(
         last_event_sources = (info["last_event_ts"] if info else 0, *activity_sources)
         subagents = [
             {"name": label, "model": model, "started_at": started_at}
-            for label, _, model, started_at in agents
+            for label, _, model, started_at, _, _ in agents
         ]
+        hierarchy = [
+            {
+                "name": label,
+                "model": model,
+                "started_at": started_at,
+                "depth": depth,
+                "parent_name": parent_name,
+            }
+            for label, _, model, started_at, depth, parent_name in sorted(
+                agents,
+                key=lambda agent: (agent[4], -agent[1], agent[0]),
+            )
+        ]
+        lifecycle = sorted(data["lifecycle"], key=lambda event: event["at"])[-48:]
         session_state, state_detail = "idle", "awaiting your message"
         if sessions.is_fresh(
             config,
@@ -296,6 +413,8 @@ def collect(
                 # reading "openai" off the harness name would be inference.
                 "model": scan.get("model") if scan else None,
                 "subagents": subagents,
+                "subagent_hierarchy": hierarchy,
+                "subagent_events": lifecycle,
             }
         )
         out.append(s)

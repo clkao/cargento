@@ -235,10 +235,31 @@ class CodexCollectorTest(RuntimeTestCase):
         running = collect_with_nested(False)
         self.assertEqual({"Volta", "Turing"}, {a["name"] for a in running["subagents"]})
         self.assertEqual("running 2 subagents", running["state_detail"])
+        self.assertEqual(
+            [
+                {"name": "Volta", "model": None, "depth": 1, "parent_name": None},
+                {"name": "Turing", "model": None, "depth": 2, "parent_name": "Volta"},
+            ],
+            running["subagent_hierarchy"],
+        )
+        self.assertEqual(
+            ["subagent_task_started", "subagent_task_started"],
+            [event["kind"] for event in running["subagent_events"]],
+        )
 
         completed = collect_with_nested(True)
         self.assertEqual(["Volta"], [a["name"] for a in completed["subagents"]])
         self.assertEqual("running 1 subagent", completed["state_detail"])
+        self.assertEqual(["Volta"], [a["name"] for a in completed["subagent_hierarchy"]])
+        self.assertEqual(
+            ["subagent_task_started", "subagent_task_started", "subagent_complete"],
+            [event["kind"] for event in completed["subagent_events"]],
+        )
+        terminal = completed["subagent_events"][-1]
+        self.assertEqual("Turing", terminal["name"])
+        self.assertEqual("Volta", terminal["parent_name"])
+        self.assertEqual(2, terminal["depth"])
+        self.assertEqual("Codex child rollout lifecycle", terminal["source"])
 
     def test_codex_meta_tolerates_malformed_payload_types(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -256,9 +256,11 @@ if(typeof window !== "undefined" && window.addEventListener){
 function projectSessionRow(sess){
   const key = sessKey(sess);
   const detail = humanTool(sess.state_detail) || sess.last_prompt || "No current detail";
-  const state = String(sess.state || (sess.active ? "active" : "idle"));
+  const working = sess.state === "working";
+  const state = (sess.state === "needs_input" || sess.needs_you === true) ? "needs you" :
+    (working ? "working now" : (sess.active ? "recent · idle" : "idle"));
   return `<button type="button" class="pc-session" data-calm="project-session-focus" data-arg="${esc(key)}">` +
-    `<span class="pc-session-state ${sess.active ? "active" : ""}"></span>` +
+    `<span class="pc-session-state ${working ? "working" : ""}"></span>` +
     `<span class="pc-session-copy"><strong>${esc(sess.title || "Untitled session")}</strong>` +
     `<span>${esc(state)} · ${esc(detail)}</span></span>` +
     `<code>${esc(key)}</code></button>`;
@@ -276,28 +278,46 @@ function projectMirrorAttention(d, sess, group){
     ? group.asks.filter(ask => String(ask && ask.harness || "") === String(sess.harness || "") &&
       String(ask && ask.session_id || "") === String(sess.sid || ""))
     : [];
-  const overlayNeeds = sess.state === "needs_input" || sess.needs_you === true;
-  const liveNeeds = overlayNeeds || exactAsks.length > 0;
-  let reading;
-  if(liveNeeds){
-    const reason = sess.needs_reason || (exactAsks.length
-      ? `${exactAsks.length} live registered question${exactAsks.length === 1 ? "" : "s"}`
-      : "live session needs-input state");
-    reading = `<strong>Attention requested</strong><span>${esc(reason)}</span>`;
-  }else if(!d.ask){
-    reading = `<strong>Registry unavailable</strong>` +
-      `<span>session overlay has no live needs-input signal</span>`;
-  }else{
-    reading = `<strong>No live needs-captain signal</strong>` +
-      `<span>this is not proof that the session is unblocked</span>`;
+  if(exactAsks.length){
+    return `<div class="pc-mirror-attention attention" data-request-state="ask">` +
+      `<span class="pc-kicker">Needs you</span>` +
+      exactAsks.map(ask => askCard(ask, null, false)).join("") +
+      `<code>AskRegistry · exact focused session</code></div>`;
   }
-  return `<div class="pc-mirror-attention ${liveNeeds ? "attention" : ""}"` +
-    ` data-needs-captain="${liveNeeds ? "requested" : "clear"}">` +
-    `<span class="pc-kicker">Needs captain</span>${reading}` +
-    `<code>session overlay + AskRegistry</code></div>`;
+  if(sess.state === "needs_input" || sess.needs_you === true){
+    return `<div class="pc-mirror-attention attention" data-request-state="overlay">` +
+      `<span class="pc-kicker">Needs you</span>` +
+      `<strong>${esc(sess.needs_reason || "live session requests attention")}</strong>` +
+      `<button type="button" class="quiet" data-calm="project-session-link-copy"` +
+      ` data-arg="${esc(sessKey(sess))}">copy session link</button>` +
+      `<code>live session overlay</code></div>`;
+  }
+  return `<div class="pc-request-none" data-request-state="none">No request detected</div>`;
 }
 
-function projectSessionMirror(d, sess, group, operatorNote){
+function projectSubagentHierarchy(sess){
+  const reported = Array.isArray(sess.subagent_hierarchy)
+    ? sess.subagent_hierarchy
+    : (Array.isArray(sess.subagents) ? sess.subagents.map(agent => Object.assign({
+      depth: 1, parent_name: null
+    }, agent)) : []);
+  if(!reported.length){
+    return `<div class="pc-child-tree"><span class="pc-kicker">Active child hierarchy</span>` +
+      `<span class="pc-child-empty">No active child session reported.</span></div>`;
+  }
+  const rows = reported.slice().sort((a, b) =>
+    (Number(a.depth) || 1) - (Number(b.depth) || 1));
+  return `<div class="pc-child-tree"><span class="pc-kicker">Active child hierarchy</span>` +
+    rows.map(agent => {
+      const depth = Math.max(1, Math.min(6, Number(agent.depth) || 1));
+      const relation = agent.parent_name ? `child of ${agent.parent_name}` : "direct child";
+      return `<div class="pc-child depth-${depth}" data-subagent-depth="${depth}">` +
+        `<span class="pc-child-node"></span><strong>${esc(agent.name || "subagent")}</strong>` +
+        `<span>${esc(relation)} · ${esc(agent.model || "model unavailable")}</span></div>`;
+    }).join("") + `</div>`;
+}
+
+function projectSessionMirror(d, sess, group){
   if(!sess){
     if(!projectQuerySession) return "";
     return `<section class="pc-mirror unavailable">` +
@@ -307,43 +327,26 @@ function projectSessionMirror(d, sess, group, operatorNote){
   }
   const key = sessKey(sess);
   const detail = humanTool(sess.state_detail) || sess.last_prompt || "No current detail";
-  const state = String(sess.state || (sess.active ? "active" : "idle"));
-  const subagents = Array.isArray(sess.subagents) ? sess.subagents.length : 0;
+  const state = sess.state === "working" ? "working now" :
+    ((sess.state === "needs_input" || sess.needs_you === true) ? "needs you" :
+      (sess.active ? "recent · idle" : "idle"));
   return `<section class="pc-mirror" data-session-mirror="${esc(key)}">` +
-    `<div class="pc-mirror-head"><div><span class="pc-kicker">Primary session mirror</span>` +
+    `<div class="pc-mirror-head"><div><span class="pc-kicker">Right now</span>` +
     `<h3>${esc(sess.title || "Untitled Codex session")}</h3></div>` +
     `<div class="pc-mirror-actions">${projectRefreshControl(group.label, false)}` +
     `<button type="button" class="quiet" data-calm="project-session-link-copy"` +
     ` data-arg="${esc(key)}">copy session link</button></div></div>` +
-    `<div class="pc-now"><span class="pc-kicker">Right now</span>` +
-    `<div class="pc-mirror-state"><strong>${esc(state)}</strong><span>${esc(detail)}</span></div>` +
-    `<div class="pc-mirror-outcome"><span class="pc-kicker">Outcome remembered here</span>` +
-    (operatorNote
-      ? `<strong>${esc(operatorNote)}</strong><span>operator note in this browser · precedes inference</span>`
-      : `<strong>Outcome unavailable</strong><span>no operator note is remembered in this browser</span>`) +
-    `</div><div class="pc-mirror-purpose"><span class="pc-kicker">Observer inference</span>` +
-    `${projectObserverSummary(group)}</div>` +
-    projectMirrorAttention(d, sess, group) +
-    projectRecentSteering(sess, group) + `</div>` +
     `<div class="pc-mirror-meta"><code>${esc(key)}</code>` +
-    `<span>project · ${esc(group.label)}</span>` +
-    `<span>model · ${esc(sess.model || "unavailable")}</span>` +
-    `<span>${sess.harness === "codex" ? "running Codex children" : "reported subagents"} · ` +
-    `${subagents}</span></div></section>`;
+    `<span>model · ${esc(sess.model || "unavailable")}</span></div>` +
+    `<div class="pc-now"><div class="pc-mirror-state"><strong>${esc(state)}</strong>` +
+    `<span>${esc(detail)}</span></div>` + projectMirrorAttention(d, sess, group) +
+    projectSubagentHierarchy(sess) +
+    `<div class="pc-mirror-purpose"><span class="pc-kicker">Derived purpose · subordinate</span>` +
+    `${projectObserverSummary(group, true)}</div>` +
+    projectRecentSteering(sess, group) + `</div></section>`;
 }
 
-function projectAttention(d, group){
-  if(!d.ask){
-    return `<div class="pc-empty unavailable">Ask registry unavailable in this run.</div>`;
-  }
-  if(!group.asks.length){
-    return `<div class="pc-empty">No session in this project is asking through Cargento.</div>`;
-  }
-  return `<div class="pc-ask-boundary">Live registry · project and session attribution are caller-supplied</div>` +
-    group.asks.map(a => askCard(a, null, false)).join("");
-}
-
-function projectObserverSummary(group){
+function projectObserverSummary(group, focused){
   const entry = projectContextEntry(group.label);
   if(!entry || entry.state === "loading"){
     return `<div class="pc-observer-empty">Reading project transcripts and entity state…</div>`;
@@ -363,8 +366,10 @@ function projectObserverSummary(group){
     const goal = sidecar.goal && sidecar.goal !== "no goal derived"
       ? `<div class="pc-observer-goal">${esc(sidecar.goal)}</div>`
       : `<div class="pc-observer-empty">No observer goal derived for this session.</div>`;
-    const facts = [sidecar.stage ? `stage · ${sidecar.stage}` : "workflow stage unavailable",
-      sidecar.block ? `open block · ${sidecar.block}` : "open-block reading unavailable"];
+    const facts = focused ? [] : [
+      sidecar.stage ? `stage · ${sidecar.stage}` : "workflow stage unavailable",
+      sidecar.block ? `open block · ${sidecar.block}` : "open-block reading unavailable"
+    ];
     const model = sidecar.model || {};
     const modelLine = model.model
       ? `${model.model} · reasoning ${model.reasoning_effort || "unavailable"} · ${model.status || "unknown"}`
@@ -427,29 +432,73 @@ function projectLoadContext(d, refresh){
   });
 }
 
-/* The mirror prototype's causal-log shape, now fed only by the selected
-   project's timestamped transcript instructions and Spacedock gate records. */
-function projectActivity(d, group){
+function projectTimelineEvents(d, group, focus, sourceEvents){
+  const exact = row => !focus ||
+    (row.harness === focus.harness && row.sid === focus.sid);
+  const events = sourceEvents.filter(exact).map(row => Object.assign({}, row));
+  if(focus && Array.isArray(focus.subagent_events)){
+    for(const row of focus.subagent_events){
+      const labels = {
+        subagent_task_started: ["child task started", "task start"],
+        subagent_complete: ["child completed", "completion"],
+        subagent_interrupted: ["child interrupted", "interruption"]
+      };
+      const label = labels[row.kind];
+      if(!label || !Number(row.at)) continue;
+      events.push({
+        at: Number(row.at), kind: row.kind, phase: `subagent ${label[1]}`,
+        title: `${label[0]} · ${row.name || "subagent"}`,
+        detail: row.parent_name ? `child of ${row.parent_name}` : "direct child",
+        source: row.source || "source unavailable"
+      });
+    }
+  }
+  if(focus && d.ask && Array.isArray(group.asks)){
+    for(const ask of group.asks){
+      if(String(ask && ask.harness || "") !== String(focus.harness || "") ||
+          String(ask && ask.session_id || "") !== String(focus.sid || "")) continue;
+      events.push({
+        at: Math.max(0, (Number(d.generated) || 0) - (Number(ask.age_sec) || 0)),
+        kind: "ask", phase: "exact request", title: ask.question,
+        detail: "awaiting an option", source: "AskRegistry · exact focused session"
+      });
+    }
+  }
+  return events.filter(event => Number(event.at)).sort((a, b) => a.at - b.at).slice(-12);
+}
+
+/* One source-honest sequence for the focused session. Each event keeps the
+   identity its producer can actually prove; generic user-role rows never gain
+   captain authorship here. */
+function projectActivity(d, group, focus){
   const entry = projectContextEntry(group.label);
-  if(!entry || entry.state === "loading" && !entry.data){
-    return `<div class="pc-empty">Reading the gate and instruction sources…</div>`;
-  }
-  if(entry.state === "error" || !entry.data){
-    return `<div class="pc-empty unavailable">Gate and instruction sources are unavailable.</div>`;
-  }
-  const events = Array.isArray(entry.data.events) ? entry.data.events : [];
+  const contextEvents = entry && entry.data && Array.isArray(entry.data.events)
+    ? entry.data.events : [];
+  const events = projectTimelineEvents(
+    d,
+    group,
+    focus,
+    contextEvents
+  );
   if(!events.length){
-    return `<div class="pc-empty">No timestamped gate decision or non-meta user-role message was found.</div>` +
-      projectHistoryBoundary(entry.data.sources);
+    const reading = !entry || entry.state === "loading"
+      ? "Reading the gate and instruction sources…"
+      : (entry.state === "error" || !entry.data
+        ? "Gate and instruction sources are unavailable."
+        : "No timestamped exact-session change was found.");
+    return `<div class="pc-empty${entry && entry.state === "error" ? " unavailable" : ""}">` +
+      `${reading}</div>`;
   }
-  const rows = events.slice(0, 12).map(event => {
+  const rows = events.map(event => {
     const ago = event.at ? fmtDur(Math.max(0, (Number(d.generated) || 0) - event.at)) + " ago" : "time unavailable";
+    const iso = event.at ? new Date(Number(event.at) * 1000).toISOString() : "";
     return `<div class="pc-event"><span class="pc-event-node"></span><div>` +
-      `<div class="pc-event-meta"><span>${esc(event.phase || event.kind)}</span><time>${esc(ago)}</time></div>` +
+      `<div class="pc-event-meta"><span>${esc(event.phase || event.kind)}</span>` +
+      `<time${iso ? ` datetime="${esc(iso)}" title="${esc(iso)}"` : ""}>${esc(ago)}</time></div>` +
       `<div class="pc-event-title">${esc(event.title)}</div>` +
       `<div class="pc-event-detail">${esc(event.detail)} · ${esc(event.source)}</div></div></div>`;
   }).join("");
-  return `<div class="pc-log">${rows}</div>` + projectHistoryBoundary(entry.data.sources);
+  return `<div class="pc-log">${rows}</div>`;
 }
 
 function projectHistoryBoundary(sources){
@@ -491,19 +540,16 @@ function projectView(d, draft){
   const note = `<span id="pc-status" class="pc-goal-note" role="status"` +
     ` aria-live="polite" aria-atomic="true">${esc(projectGoalNote)}</span>`;
   const surrounding = recent.filter(sess => !focus || sessKey(sess) !== sessKey(focus));
-  const surroundingNeeds = surrounding.filter(sess =>
-    sess.state === "needs_input" || sess.needs_you === true);
   const surroundingWorking = surrounding.filter(sess =>
-    sess.state === "working" && sess.needs_you !== true);
+    sess.state === "working" || sess.state === "needs_input" || sess.needs_you === true);
   const surroundingIdle = surrounding.filter(sess =>
     sess.state !== "working" && sess.state !== "needs_input" && sess.needs_you !== true);
   const sessions = surrounding.length
-    ? projectSessionSection("Needs captain now", surroundingNeeds) +
-      projectSessionSection("Working now", surroundingWorking) +
-      projectSessionSection("Recent · idle", surroundingIdle)
+    ? projectSessionSection("Working now", surroundingWorking) +
+      projectSessionSection("Recent and idle", surroundingIdle)
     : `<div class="pc-empty">No other recent sessions in this project.</div>`;
   const workingNow = recent.filter(sess => sess.state === "working").length;
-  const mirror = projectQuerySession ? projectSessionMirror(d, focus, group, goal) : "";
+  const mirror = projectQuerySession ? projectSessionMirror(d, focus, group) : "";
   const aggregateObserver = projectQuerySession ? "" :
     `<div class="pc-observer"><div class="pc-subhead"><h3>Observer context</h3>` +
     `<span>derived · subordinate</span>${projectRefreshControl(group.label, true)}</div>` +
@@ -514,10 +560,9 @@ function projectView(d, draft){
     `<button type="button" class="pc-link" data-calm="project-link-copy"` +
     ` data-arg="${esc(group.label)}">copy link</button></nav>` +
     `<section class="pc-focus"><div class="pc-focus-head"><div>` +
-    `<span class="pc-kicker">Working toward</span><h2>${esc(group.label)}</h2></div>` +
+    `<span class="pc-kicker">Project context</span><h2>${esc(group.label)}</h2></div>` +
     `<div class="pc-counts"><span><b>${workingNow}</b> working now</span>` +
     `<span><b>${recent.length}</b> recent</span>` +
-    `<span class="${group.asks.length ? "attention" : ""}"><b>${group.asks.length}</b> registered asks</span>` +
     `</div></div><div class="pc-goal"><label for="pc-goal">` +
     `Operator note <em>remembered in this browser · precedes inference</em></label>` +
     `<textarea id="pc-goal" data-project="${esc(group.label)}" maxlength="500" rows="3"` +
@@ -530,17 +575,20 @@ function projectView(d, draft){
     ` data-arg="${esc(group.label)}">clear</button>${note}</div>` +
     `<div class="pc-key">browser-local exact-label key · ${esc(goalKey)} · observer inference never overwrites this note</div></div>` +
     `${mirror}${aggregateObserver}` +
-    `<div class="pc-columns"><div class="pc-needs"><h3>Needs you</h3>${projectAttention(d, group)}</div>` +
-    `<div class="pc-active"><div class="pc-active-head"><h3>Surrounding sessions</h3>` +
-    `<span>lightweight project context</span></div>${sessions}</div></div>` +
-    `<div class="pc-activity"><div class="pc-active-head"><h3>Gate and steering evidence</h3>` +
-    `<span>git-log shape · timestamped sources</span></div>${projectActivity(d, group)}</div>` +
+    `<div class="pc-activity"><div class="pc-active-head"><h3>What changed</h3>` +
+    `<span>chronological · verified sources only</span></div>${projectActivity(d, group, focus)}</div>` +
+    `<div class="pc-other"><div class="pc-active-head"><h3>Other project sessions</h3>` +
+    `<span>lightweight surrounding context</span></div>${sessions}</div>` +
     `</section>` +
-    `<details class="pc-sources"><summary>Source and identity details</summary>` +
+    `<details class="pc-sources"><summary>Evidence and limitations</summary>` +
     `<p><b>Live:</b> sessions and asks come from this dashboard's API. Only real AskRegistry entries appear.</p>` +
     `<p><b>Derived:</b> project groups, goal keys, and permalinks use exact display-label equality. The label is not a stable id.</p>` +
     `<p><b>Browser-owned operator note:</b> each exact label has a separate key on this origin. It precedes inference but is not durable project authority; same-label projects collide, and a rename orphans the value.</p>` +
-    `<p><b>Observer:</b> goals come from bounded Claude, Codex, or Pi transcripts. Stages come from declared Spacedock entity state. No project-level synthesis overwrites the operator goal.</p>` +
+    `<p><b>Observer:</b> goals come from bounded Claude, Codex, or Pi transcripts and stay subordinate. For the present handoff, workflow stage unavailable and open-block reading unavailable remain explicit rather than inferred.</p>` +
     `<p><b>History:</b> known meta wrappers are excluded; remaining steering evidence is labeled only as timestamped user-role transcript messages because captain authorship is not recorded. Gate decisions are timestamped entity frontmatter resolutions. Untimestamped prepare and status-transition history stay unavailable.</p>` +
-    `<p><b>Unavailable:</b> verified ask-to-session attribution, ask reassignment, and steering transport.</p></details>`;
+    `<p><b>Child lifecycle:</b> Codex hierarchy follows recorded parent thread ids. Task-start, completion, and interruption events are bounded to typed records in the 24 newest child rollouts; no spawn is inferred from a task start or from file freshness.</p>` +
+    `<p><b>Requests:</b> “No request detected” means neither an exact focused-session AskRegistry row nor a live needs-input overlay is present. It is not proof that this session is unblocked.</p>` +
+    `<p><b>Unavailable:</b> durable project identity, durable operator-note persistence, ask reassignment, steering transport, and unsupported stage, block, gate, or outcome history.</p>` +
+    `${projectContextEntry(group.label) && projectContextEntry(group.label).data
+      ? projectHistoryBoundary(projectContextEntry(group.label).data.sources) : ""}</details>`;
 }
