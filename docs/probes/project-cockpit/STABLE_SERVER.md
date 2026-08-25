@@ -16,8 +16,8 @@ Run this command from the review worktree:
   --public-port 8766 \
   --backend-port-a 18766 \
   --backend-port-b 18767 \
-  --checkout /Users/clkao/.cache/cargento/proto-operator-cockpit \
-  --state-dir /Users/clkao/.cache/cargento/operator-cockpit-server \
+  --checkout /Users/clkao/git/spacedock-research/cargento/.spacedock/runtime/operator-cockpit/checkout \
+  --state-dir /Users/clkao/git/spacedock-research/cargento/.spacedock/runtime/operator-cockpit/state \
   --review-root /Users/clkao/git/spacedock-research/cargento/.worktrees/spacedock-ensign-project-cockpit \
   --review-commit <review-sha> \
   --python /Users/clkao/git/spacedock-research/cargento/.worktrees/spacedock-ensign-project-cockpit/.venv/bin/python
@@ -36,8 +36,8 @@ After the accepted push, record the exact remote checkpoint:
 
 ```bash
 .venv/bin/python scripts/serve_operator_cockpit.py \
-  --checkout /Users/clkao/.cache/cargento/proto-operator-cockpit \
-  --state-dir /Users/clkao/.cache/cargento/operator-cockpit-server \
+  --checkout /Users/clkao/git/spacedock-research/cargento/.spacedock/runtime/operator-cockpit/checkout \
+  --state-dir /Users/clkao/git/spacedock-research/cargento/.spacedock/runtime/operator-cockpit/state \
   --accept-remote <pushed-sha>
 ```
 
@@ -50,8 +50,8 @@ This explicit step supports an accepted change that has a new SHA after a rebase
 ```bash
 .venv/bin/python scripts/serve_operator_cockpit.py \
   --public-port 8766 \
-  --checkout /Users/clkao/.cache/cargento/proto-operator-cockpit \
-  --state-dir /Users/clkao/.cache/cargento/operator-cockpit-server \
+  --checkout /Users/clkao/git/spacedock-research/cargento/.spacedock/runtime/operator-cockpit/checkout \
+  --state-dir /Users/clkao/git/spacedock-research/cargento/.spacedock/runtime/operator-cockpit/state \
   --stop
 ```
 
@@ -68,8 +68,8 @@ After integration, use the last accepted checkout without `--review-root` and `-
   --public-port 8766 \
   --backend-port-a 18766 \
   --backend-port-b 18767 \
-  --checkout /Users/clkao/.cache/cargento/proto-operator-cockpit \
-  --state-dir /Users/clkao/.cache/cargento/operator-cockpit-server \
+  --checkout /Users/clkao/git/spacedock-research/cargento/.spacedock/runtime/operator-cockpit/checkout \
+  --state-dir /Users/clkao/git/spacedock-research/cargento/.spacedock/runtime/operator-cockpit/state \
   --python /Users/clkao/git/spacedock-research/cargento/.worktrees/spacedock-ensign-project-cockpit/.venv/bin/python
 ```
 
@@ -78,6 +78,6 @@ Do not repair the checkout with `git reset --hard`.
 Move the checkout aside.
 Then let the server make a new dedicated clone.
 
-Backend logs are in `/Users/clkao/.cache/cargento/operator-cockpit-server/`.
+Backend logs are in `/Users/clkao/git/spacedock-research/cargento/.spacedock/runtime/operator-cockpit/state/`.
 The proxy keeps the public port during a backend replacement.
 The API and SSE paths use the same proxy as the HTML page.
