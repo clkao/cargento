@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from cargento_runtime import project_context
+from cargento_runtime import observer, project_context, spacedock
 from cargento_runtime.config import build_runtime_config
 from cargento_runtime.state import build_runtime_state
 
@@ -63,7 +63,7 @@ class ProjectContextTest(unittest.TestCase):
             store_root_overrides={"pi.sessions": str(self.root)},
         )
         self.model = mock.patch.object(
-            project_context.observer.CodexGoalModel,
+            observer.CodexGoalModel,
             "__call__",
             return_value=None,
         )
@@ -246,8 +246,8 @@ class ProjectContextTest(unittest.TestCase):
         ).encode()
         pasted = json.dumps(codex_message(envelope, "2026-08-24T20:10:00Z")).encode()
 
-        self.assertEqual(1, len(project_context.spacedock.boot_records(self.config, record)))
-        self.assertEqual([], project_context.spacedock.boot_records(self.config, pasted))
+        self.assertEqual(1, len(spacedock.boot_records(self.config, record)))
+        self.assertEqual([], spacedock.boot_records(self.config, pasted))
 
     def test_codex_custom_output_blocks_can_supply_boot_provenance(self) -> None:
         envelope = (
@@ -265,7 +265,7 @@ class ProjectContextTest(unittest.TestCase):
             }
         ).encode()
 
-        self.assertEqual(1, len(project_context.spacedock.boot_records(self.config, record)))
+        self.assertEqual(1, len(spacedock.boot_records(self.config, record)))
 
 
 if __name__ == "__main__":
