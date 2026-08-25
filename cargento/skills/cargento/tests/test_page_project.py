@@ -224,7 +224,8 @@ console.log(JSON.stringify({
         checks = """
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [{harness: "claude", sid: "aaa1", goal: "Derived session goal",
-    stage: "shaping", block: "waiting for captain"}], events: [],
+    stage: "shaping", block: "waiting for captain", observed_at: 99990,
+    source: "bounded transcript and entity state"}], events: [],
   sources: {gate: {}, steer: {unavailable: []}}
 }};
 render(projectBoard());
@@ -232,9 +233,11 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   operator: h.includes("Operator note <em>remembered in this browser · precedes inference</em>"),
   observed: h.includes("Derived session goal"),
-  scoped: h.includes("derived, subordinate") && h.includes("claude:aaa1"),
+  scoped: h.includes("Derived context snapshot") && h.includes("derived · subordinate"),
   separate: h.indexOf("Operator note") < h.indexOf("Derived session goal"),
-  noOverwrite: h.includes("observer inference never overwrites this note")
+  noOverwrite: h.includes("observer inference never overwrites this note"),
+  once: h.split("Derived session goal").length - 1 === 1 &&
+    !h.includes('class="pc-observer"')
 }));
 """
         out = self.run_project(checks, goal="Operator-owned goal")
@@ -243,6 +246,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["scoped"])
         self.assertTrue(out["separate"])
         self.assertTrue(out["noOverwrite"])
+        self.assertTrue(out["once"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_session_permalink_focuses_one_primary_mirror_inside_the_project(self) -> None:
@@ -325,7 +329,7 @@ console.log(JSON.stringify({
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [{harness: "codex", sid: "focus-1", goal: "Shape the focused mirror",
     stage: null, block: null, model: {model: "gpt-5.6-luna", reasoning_effort: "max",
-      status: "used"}}],
+      status: "used"}, observed_at: 99995, source: "bounded transcript and entity state"}],
   events: [{at: 99990, kind: "steer", phase: "user-role transcript message",
     title: "Keep the project as context", detail: "codex:focus-1",
     source: "transcript user-role message", harness: "codex", sid: "focus-1"}],
@@ -338,17 +342,21 @@ render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   hierarchy: h.indexOf("Operator note") < h.indexOf("Right now") &&
-    h.indexOf("Right now") < h.indexOf("Shape the focused mirror"),
+    h.indexOf("Right now") < h.indexOf("What changed") &&
+    h.indexOf("What changed") < h.indexOf("Shape the focused mirror"),
   motion: h.includes("working now") && h.includes("running exec"),
-  purpose: h.includes("Shape the focused mirror") && h.includes("gpt-5.6-luna") &&
-    h.includes("reasoning max"),
+  purpose: h.includes("Derived context snapshot") && h.includes("Shape the focused mirror") &&
+    h.includes("gpt-5.6-luna") && h.includes("reasoning max") &&
+    h.split("Shape the focused mirror").length - 1 === 1,
   workflowBoundary: h.includes("workflow stage unavailable") &&
     h.includes("open-block reading unavailable"),
   attention: h.includes("No request detected") && !h.includes("Needs captain"),
-  steering: h.includes("Most recent user-role message") && h.includes("Keep the project as context") &&
+  steering: !h.includes("Most recent user-role message") && h.includes("Keep the project as context") &&
     h.includes("transcript user-role message") && h.includes("1970-01-02T03:46:30.000Z"),
   identity: h.includes("codex:focus-1"),
-  operatorPrecedence: h.includes("observer inference never overwrites this note")
+  operatorPrecedence: h.includes("observer inference never overwrites this note"),
+  noDuplicateObserver: !h.includes('class="pc-observer"') &&
+    h.split("Derived context snapshot").length - 1 === 1
 }));
 """
         out = self.run_project(
@@ -365,6 +373,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["steering"])
         self.assertTrue(out["identity"])
         self.assertTrue(out["operatorPrecedence"])
+        self.assertTrue(out["noDuplicateObserver"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_what_changed_separates_real_steering_from_demonstrated_outcomes(self) -> None:

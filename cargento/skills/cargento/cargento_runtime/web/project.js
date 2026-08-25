@@ -340,66 +340,7 @@ function projectSessionMirror(d, sess, group){
     `<span>model · ${esc(sess.model || "unavailable")}</span></div>` +
     `<div class="pc-now"><div class="pc-mirror-state"><strong>${esc(state)}</strong>` +
     `<span>${esc(detail)}</span></div>` + projectMirrorAttention(d, sess, group) +
-    projectSubagentHierarchy(sess) +
-    `<div class="pc-mirror-purpose"><span class="pc-kicker">Derived purpose · subordinate</span>` +
-    `${projectObserverSummary(group, true)}</div>` +
-    projectRecentSteering(sess, group) + `</div></section>`;
-}
-
-function projectObserverSummary(group, focused){
-  const entry = projectContextEntry(group.label);
-  if(!entry || entry.state === "loading"){
-    return `<div class="pc-observer-empty">Reading project transcripts and entity state…</div>`;
-  }
-  if(entry.state === "error" || !entry.data){
-    return `<div class="pc-observer-empty">Project observer source is unavailable.</div>`;
-  }
-  let rows = Array.isArray(entry.data.observers) ? entry.data.observers : [];
-  if(projectQuerySession){
-    rows = rows.filter(sidecar => `${sidecar.harness}:${sidecar.sid}` === projectQuerySession);
-  }
-  if(!rows.length){
-    return `<div class="pc-observer-empty">No readable Claude, Codex, or Pi transcript was found for the focused session.</div>`;
-  }
-  return rows.map(sidecar => {
-    const key = `${sidecar.harness}:${sidecar.sid}`;
-    const goal = sidecar.goal && sidecar.goal !== "no goal derived"
-      ? `<div class="pc-observer-goal">${esc(sidecar.goal)}</div>`
-      : `<div class="pc-observer-empty">No observer goal derived for this session.</div>`;
-    const facts = focused ? [] : [
-      sidecar.stage ? `stage · ${sidecar.stage}` : "workflow stage unavailable",
-      sidecar.block ? `open block · ${sidecar.block}` : "open-block reading unavailable"
-    ];
-    const model = sidecar.model || {};
-    const modelLine = model.model
-      ? `${model.model} · reasoning ${model.reasoning_effort || "unavailable"} · ${model.status || "unknown"}`
-      : "deterministic observer fallback";
-    return `<div class="pc-observer-row">${goal}` + (facts.length
-      ? `<div class="pc-observer-facts">${facts.map(f => `<span>${esc(f)}</span>`).join("")}</div>`
-      : "") + `<div class="pc-observer-source">derived, subordinate · ${esc(modelLine)} · ${esc(key)}</div></div>`;
-  }).join("");
-}
-
-function projectRecentSteering(sess, group){
-  const entry = projectContextEntry(group.label);
-  if(!entry || entry.state === "loading" && !entry.data){
-    return `<div class="pc-mirror-steer unavailable">Reading recent user-role messages…</div>`;
-  }
-  if(entry.state === "error" || !entry.data){
-    return `<div class="pc-mirror-steer unavailable">Recent message source unavailable.</div>`;
-  }
-  const event = (Array.isArray(entry.data.events) ? entry.data.events : []).find(row =>
-    row.kind === "steer" && row.harness === sess.harness && row.sid === sess.sid);
-  if(!event){
-    return `<div class="pc-mirror-steer unavailable">No timestamped user-role message found for this session.</div>`;
-  }
-  const timestamp = Number(event.at);
-  const iso = Number.isFinite(timestamp) ? new Date(timestamp * 1000).toISOString() : "";
-  return `<div class="pc-mirror-steer"><span class="pc-kicker">Most recent user-role message</span>` +
-    `<strong>${esc(event.title)}</strong>` +
-    `<span>${esc(event.source || "source unavailable")}` +
-    (iso ? ` · <time datetime="${esc(iso)}">${esc(iso)}</time>` : " · timestamp unavailable") +
-    `</span></div>`;
+    projectSubagentHierarchy(sess) + `</div></section>`;
 }
 
 function projectLoadContext(d, refresh){
@@ -477,10 +418,33 @@ function projectSemanticLane(d, title, kind, events, steering){
   const empty = kind === "steer"
     ? "No timestamped non-meta user-role instruction found."
     : "No demonstrated outcome found for this session.";
-  return `<section class="pc-semantic-lane" data-semantic-lane="${kind === "steer" ? "steering" : "outcome"}">` +
+  return `<section class="pc-semantic-lane" data-order="newest-first"` +
+    ` data-semantic-lane="${kind === "steer" ? "steering" : "outcome"}">` +
     `<h4>${esc(title)}</h4>` + (events.length
-      ? events.map(event => projectSemanticNode(d, event, kind, steering)).join("")
+      ? events.slice().reverse().map(event => projectSemanticNode(d, event, kind, steering)).join("")
       : `<div class="pc-semantic-empty">${empty}</div>`) + `</section>`;
+}
+
+function projectDerivedContext(d, observers, focus){
+  const rows = observers.filter(row => {
+    if(!Number(row.observed_at) || !row.goal || row.goal === "no goal derived") return false;
+    return !focus || (row.harness === focus.harness && row.sid === focus.sid);
+  });
+  if(!rows.length) return "";
+  return `<section class="pc-derived-context"><h4>Derived context snapshot</h4>` +
+    rows.slice().sort((a, b) => b.observed_at - a.observed_at).map(row => {
+      const ago = fmtDur(Math.max(0, (Number(d.generated) || 0) - Number(row.observed_at))) + " ago";
+      const iso = new Date(Number(row.observed_at) * 1000).toISOString();
+      const model = row.model || {};
+      const modelLine = model.model
+        ? `${model.model} · reasoning ${model.reasoning_effort || "not reported"} · ${model.status || "not reported"}`
+        : "deterministic observer fallback";
+      return `<article class="pc-semantic-node context"><span class="pc-context-kind">derived · subordinate</span>` +
+        `<div class="pc-event-title">${esc(row.goal)}</div>` +
+        `<details class="pc-event-evidence"><summary>${esc(ago)} · source</summary>` +
+        `<div>${esc(row.source || "bounded transcript observation")} · ${esc(modelLine)} · ` +
+        `<time datetime="${esc(iso)}">${esc(iso)}</time></div></details></article>`;
+    }).join("") + `</section>`;
 }
 
 function projectWorkIntervals(steering, outcomes){
@@ -512,6 +476,8 @@ function projectActivity(d, group, focus){
   const entry = projectContextEntry(group.label);
   const contextEvents = entry && entry.data && Array.isArray(entry.data.events)
     ? entry.data.events : [];
+  const observers = entry && entry.data && Array.isArray(entry.data.observers)
+    ? entry.data.observers : [];
   const events = projectTimelineEvents(
     focus,
     contextEvents
@@ -521,7 +487,7 @@ function projectActivity(d, group, focus){
     "gate", "checkpoint", "decision", "test_result", "ask_resolution", "outcome"
   ]);
   const outcomes = events.filter(event => outcomeKinds.has(event.kind));
-  if(!steering.length && !outcomes.length){
+  if(!steering.length && !outcomes.length && !observers.length){
     const reading = !entry || entry.state === "loading"
       ? "Reading the gate and instruction sources…"
       : (entry.state === "error" || !entry.data
@@ -533,6 +499,7 @@ function projectActivity(d, group, focus){
   return `<div class="pc-semantic-graph" data-causal-model="source-only">` +
     projectSemanticLane(d, "What you asked", "steer", steering, steering) +
     projectSemanticLane(d, "What happened", "outcome", outcomes, steering) +
+    projectDerivedContext(d, observers, focus) +
     projectWorkIntervalRows(projectWorkIntervals(steering, outcomes)) + `</div>`;
 }
 
@@ -585,10 +552,6 @@ function projectView(d, draft){
     : `<div class="pc-empty">No other recent sessions in this project.</div>`;
   const workingNow = recent.filter(sess => sess.state === "working").length;
   const mirror = projectQuerySession ? projectSessionMirror(d, focus, group) : "";
-  const aggregateObserver = projectQuerySession ? "" :
-    `<div class="pc-observer"><div class="pc-subhead"><h3>Observer context</h3>` +
-    `<span>derived · subordinate</span>${projectRefreshControl(group.label, true)}</div>` +
-    `${projectObserverSummary(group)}</div>`;
   return top + `<nav class="pc-nav" aria-label="Project being resumed">` +
     `<label class="pc-nav-k" for="pc-project-select">project</label>` +
     `<select id="pc-project-select">${options}</select>` +
@@ -609,9 +572,11 @@ function projectView(d, draft){
     `<button type="button" class="quiet" data-calm="project-goal-clear"` +
     ` data-arg="${esc(group.label)}">clear</button>${note}</div>` +
     `<div class="pc-key">browser-local exact-label key · ${esc(goalKey)} · observer inference never overwrites this note</div></div>` +
-    `${mirror}${aggregateObserver}` +
+    `${mirror}` +
     `<div class="pc-activity"><div class="pc-active-head"><h3>What changed</h3>` +
-    `<span>chronological · verified sources only</span></div>${projectActivity(d, group, focus)}</div>` +
+    `<span>newest first · verified sources only</span>` +
+    `${projectQuerySession ? "" : projectRefreshControl(group.label, true)}</div>` +
+    `${projectActivity(d, group, focus)}</div>` +
     `<div class="pc-other"><div class="pc-active-head"><h3>Other project sessions</h3>` +
     `<span>lightweight surrounding context</span></div>${sessions}</div>` +
     `</section>` +
