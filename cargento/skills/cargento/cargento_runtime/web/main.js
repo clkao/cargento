@@ -59,6 +59,7 @@ function render(d){
     app.innerHTML = modeBar() + usageBanner(d, true) + projectView(d, projectDraft);
     renderInProgress = false;
     projectRestoreFocus(projectDraft);
+    projectObserveSelected(d);
     restoreStopFocus();
     document.title = (queue.length > 0 ? `(${queue.length}!) ` : "") + "Cargento";
     return;

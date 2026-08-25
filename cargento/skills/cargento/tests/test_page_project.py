@@ -51,30 +51,78 @@ const setTimeout = fn => {{ __timers.push(fn); return __timers.length; }};
         )
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
-    def test_first_view_leads_with_one_project_task_and_live_empty_attention(self) -> None:
+    def test_compact_navigation_leads_into_one_selected_project_boundary(self) -> None:
         checks = """
 render(projectBoard());
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   mode: displayMode,
   className: __els.app.className,
-  decision: h.includes("Which project are you working toward?"),
+  compactNav: h.includes('class="pc-nav"') && !h.includes("Which project are you working toward?"),
   chosen: h.includes("Working toward</span><h2>repo/proj</h2>"),
   active: h.includes("1</b> active"),
   empty: h.includes("No session in this project is asking through Cargento."),
   identity: h.includes("claude:aaa1"),
+  goalFirst: h.indexOf("Operator goal") < h.indexOf("Observer context"),
+  mirrorDrilldown: h.includes('data-calm="session" data-arg="claude:aaa1"'),
   secondary: h.indexOf("Source and identity details") > h.indexOf("Active sessions")
 }));
 """
         out = self.run_project(checks)
         self.assertEqual("project", out["mode"])
         self.assertEqual("wrap project", out["className"])
-        self.assertTrue(out["decision"])
+        self.assertTrue(out["compactNav"])
         self.assertTrue(out["chosen"])
         self.assertTrue(out["active"])
         self.assertTrue(out["empty"])
         self.assertTrue(out["identity"])
+        self.assertTrue(out["goalFirst"])
+        self.assertTrue(out["mirrorDrilldown"])
         self.assertTrue(out["secondary"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_real_observer_context_stays_subordinate_to_operator_goal(self) -> None:
+        checks = """
+observerBySid["claude:aaa1"] = {state: "ready", sidecar: {
+  goal: "Derived session goal", stage: "shaping", block: "waiting for captain"
+}};
+render(projectBoard());
+const h = __els.app.innerHTML;
+console.log(JSON.stringify({
+  operator: h.includes("Operator goal <em>authoritative · browser only</em>"),
+  observed: h.includes("Derived session goal"),
+  scoped: h.includes("session-scoped · claude:aaa1"),
+  separate: h.indexOf("Operator goal") < h.indexOf("Derived session goal"),
+  noOverwrite: h.includes("observer text never overwrites this field")
+}));
+"""
+        out = self.run_project(checks, goal="Operator-owned goal")
+        self.assertTrue(out["operator"])
+        self.assertTrue(out["observed"])
+        self.assertTrue(out["scoped"])
+        self.assertTrue(out["separate"])
+        self.assertTrue(out["noOverwrite"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_activity_reuses_causal_log_shape_without_mocked_history(self) -> None:
+        checks = """
+blocked.last_prompt = "Prepare the release path";
+render(projectBoard([liveAsk()]));
+const h = __els.app.innerHTML;
+console.log(JSON.stringify({
+  graph: h.includes('class="pc-log"') && h.includes('class="pc-event-node"'),
+  instruction: h.includes("latest instruction"),
+  decision: h.includes("decision requested") && h.includes("Choose the release path?"),
+  boundary: h.includes("historical steering and gate decisions are unavailable"),
+  noMockTags: !h.includes("generated</span>") && !h.includes("consistency")
+}));
+"""
+        out = self.run_project(checks)
+        self.assertTrue(out["graph"])
+        self.assertTrue(out["instruction"])
+        self.assertTrue(out["decision"])
+        self.assertTrue(out["boundary"])
+        self.assertTrue(out["noMockTags"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_only_real_registry_asks_enter_the_selected_project(self) -> None:
