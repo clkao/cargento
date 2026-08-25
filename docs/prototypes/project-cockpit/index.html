@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cargento · live project cockpit</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">Cargento / shaping checkpoint</p>
+      <h1>Resume a project</h1>
+      <p class="lede">Recover the outcome, the work in motion, and whether a session needs you.</p>
+    </div>
+    <div class="source-card" aria-label="Live source status">
+      <span class="pulse" aria-hidden="true"></span>
+      <div>
+        <strong id="source-state">Connecting</strong>
+        <span id="source-detail">127.0.0.1:4553 · read-only</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="resume" aria-labelledby="resume-heading">
+      <div class="resume-heading">
+        <div>
+          <p class="eyebrow">Your next decision</p>
+          <h2 id="resume-heading">Which project are you working toward?</h2>
+        </div>
+        <label class="project-picker">
+          <span>Project label</span>
+          <select id="project-select" aria-label="Project I'm working toward"></select>
+        </label>
+      </div>
+      <div id="focused-project" aria-live="polite"></div>
+    </section>
+
+    <section class="summary" aria-label="Live snapshot summary">
+      <div><strong id="project-count">—</strong><span>project labels</span></div>
+      <div><strong id="active-count">—</strong><span>active sessions</span></div>
+      <div><strong id="ask-count">—</strong><span>real outstanding asks</span></div>
+      <button type="button" id="refresh">Refresh live snapshot</button>
+    </section>
+
+    <section class="view-control" aria-label="Session view control">
+      <label class="toggle">
+        <input id="active-only" type="checkbox">
+        <span>Show only active sessions in this project</span>
+      </label>
+    </section>
+
+    <details class="identity-note" id="source-details">
+      <summary>Source and identity details</summary>
+      <div>
+        <p><b>Live:</b> session rows and ask registry entries come from the running Cargento API. Ask attribution is caller-supplied and not authoritatively joined to a session.</p>
+        <p><b>Derived:</b> projects use exact display-label grouping. Session identity remains the visible `(harness, sid)` pair.</p>
+        <p><b>Unavailable:</b> stable project identity, project-level observer synthesis, ask reassignment, and steering.</p>
+        <p>The prototype keys each goal by the exact project display label under <code>cargento.prototype.project-goal.v1:&lt;encoded-label&gt;</code>.</p>
+        <p>This proves browser save and reload only. Two unrelated projects with the same label collide. A renamed label loses the association. The server cannot read or reconcile the value, and no observer conflict rule exists.</p>
+      </div>
+    </details>
+  </main>
+
+  <template id="project-template">
+    <article class="project-card">
+      <header>
+        <div>
+          <p class="project-label"></p>
+          <p class="project-meta"></p>
+        </div>
+        <span class="project-signal"></span>
+      </header>
+      <form class="goal-form">
+        <label>
+          <span>Remembered goal <em>browser-only prototype</em></span>
+          <textarea rows="2" maxlength="500" placeholder="Write the outcome you want to recover on reload"></textarea>
+        </label>
+        <div class="goal-actions">
+          <button type="submit">Remember</button>
+          <button type="button" class="reload-page quiet">Reload page</button>
+          <button type="button" class="clear-goal quiet">Clear</button>
+          <span class="goal-status" role="status"></span>
+        </div>
+        <p class="goal-key"></p>
+      </form>
+      <section class="project-attention" aria-label="Sessions needing attention">
+        <h3>Needs you</h3>
+        <div class="project-asks"></div>
+      </section>
+      <div class="sessions"></div>
+    </article>
+  </template>
+
+  <template id="session-template">
+    <article class="session-row">
+      <div class="session-state"></div>
+      <div class="session-copy">
+        <strong class="session-title"></strong>
+        <span class="session-detail"></span>
+      </div>
+      <code class="session-id"></code>
+    </article>
+  </template>
+
+  <script src="model.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
