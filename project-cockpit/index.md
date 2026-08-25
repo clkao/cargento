@@ -147,3 +147,16 @@ Recommend **REJECTED** at checkpoint `45711064de8389bda0e0d42c88b4880516565365`.
 ### Summary
 
 The correction closes the rejected evidence gap by making each live inventory claim mutation-tested rather than prose-audited. It also chooses ask-envelope ownership without relocating the session, preserving bounded context and operator-goal precedence alongside the interaction-origin probe suite. The inherited `e2fdaff` prototype still has its pre-existing Ruff, format, and mypy findings outside this docs-only checkpoint; applicable behavior, frontend, plugin, and serving checks passed.
+
+## Stage Report: breadboard (cycle 3)
+
+- DONE: Inventory every proposed project-cockpit datum and interaction mechanism against current Cargento: source, availability, freshness, project/session identity mapping, persistence owner, and trust boundary.
+  Commit `4f98613fa814a210b1a36c7f9ab4758b03542d5a` adds a sanitized substrate measurement and inventory covering project labels, `(harness, sid)` session identity, active state, ask envelopes, observer output, browser storage, and every proposed project-level write; it distinguishes observed, observed-empty, inferred, unavailable, and historical fixture evidence.
+- DONE: Exercise the real local sources for project grouping, active sessions, outstanding asks, observer output, and browser-owned goal persistence; record missing mechanisms and failure modes without substituting fixtures.
+  The read-only probe measured 13 active sessions across 7 non-empty project labels with no identity collisions, an `ask:true` live registry with zero pending asks, and deterministic goal plus open-block output from a real Pi transcript; shipped browser JavaScript declared 8 local-storage keys but no project-goal key, schema, writer, or conflict rule. A non-empty ask was not synthesized because that would mutate the live registry, so registration, attribution, notification, answer, and withdrawal behavior remain explicitly unexercised rather than fixture-substituted.
+- DONE: Recommend the smallest demonstrated substrate that shaping may build on, with every inferred, unavailable, or fixture-only input explicitly classified.
+  `docs/probes/project-cockpit/SUBSTRATE.md` limits shaping to a read-only grouping over live `/api/data sessions[]`, treats `project` as a fallible display label and `(harness, sid)` as the session key, and permits ask display only for real `asks[]` entries; project goals, ask reassignment, project-level synthesis, and steering remain unavailable pending identity, persistence, conflict, and trust rules. The earlier `docs/breadboards/project-cockpit/` mock is classified as historical fixture evidence only.
+
+### Summary
+
+The corrected breadboard validates the current data plane without producing or serving a UI. It demonstrates a small read-only cockpit substrate while preserving the important negative evidence: no stable project identity, no persisted browser-owned project goal, no trusted ask-to-project authority, and no exercised non-empty live ask. The probe, measurement, inventory, and focused checks are committed at `4f98613fa814a210b1a36c7f9ab4758b03542d5a`; no rolling prototype ref was updated.
