@@ -2,11 +2,11 @@
 title: Project cockpit and remembered goal
 status: breadboard
 source: commission seed
-started:
+started: 2026-08-25T03:31:15Z
 completed:
 verdict:
 score: 0.95
-worktree:
+worktree: .worktrees/spacedock-ensign-project-cockpit
 issue:
 pr:
 parent:
