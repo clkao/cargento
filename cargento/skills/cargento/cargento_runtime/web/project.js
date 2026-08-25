@@ -14,6 +14,7 @@ let projectCockpitLabel = null;
 let projectQueryLabel = null;
 let projectQuerySession = null;
 let projectGoalNote = "";
+let projectGoalEditingLabel = null;
 const projectDraftByLabel = {};
 const projectContextByLabel = {};
 try{
@@ -35,6 +36,15 @@ function projectGoal(label){
   }
   try{ return localStorage.getItem(projectGoalKey(label)) || ""; }
   catch(e){ return ""; }
+}
+
+function projectDerivedGoal(label){
+  const entry = projectContextEntry(label);
+  const observers = entry && entry.data && Array.isArray(entry.data.observers)
+    ? entry.data.observers : [];
+  const latest = observers.filter(row => row.goal && row.goal !== "no goal derived")
+    .sort((a, b) => Number(b.observed_at) - Number(a.observed_at))[0];
+  return latest ? String(latest.goal) : "";
 }
 
 function projectContextKey(label){
@@ -178,12 +188,18 @@ function projectGoalAction(act, label){
     }
     return true;
   }
+  if(act === "project-goal-edit"){
+    projectGoalEditingLabel = label;
+    if(lastData) render(lastData);
+    return true;
+  }
   if(act !== "project-goal-save" && act !== "project-goal-clear") return false;
   const field = document.getElementById("pc-goal");
   try{
     if(act === "project-goal-clear"){
       localStorage.removeItem(key);
       delete projectDraftByLabel[label];
+      projectGoalEditingLabel = null;
       projectGoalNote = "browser goal cleared";
     } else {
       const value = String(field && field.value || "").trim();
@@ -191,6 +207,7 @@ function projectGoalAction(act, label){
       else {
         localStorage.setItem(key, value);
         projectDraftByLabel[label] = value;
+        projectGoalEditingLabel = null;
         projectGoalNote = "remembered in this browser";
       }
     }
@@ -516,14 +533,8 @@ function projectEpisodeRow(d, episode, model){
 }
 
 function projectSteeringRow(d, intent, model){
-  const facts = Array.isArray(model.facts) ? model.facts : [];
-  const fact = facts.find(candidate => candidate.fact_id === intent.derived_from) || {};
   const summary = intent.summary || "Operator direction";
-  const body = `<div class="pc-trail-top"><strong>${esc(summary)}</strong>` +
-    `<span>operator direction</span></div>` +
-    `<details class="pc-trail-history"><summary>unpaired · no causal edge</summary>` +
-    `<div class="pc-trail-event">No demonstrated reaction is linked.</div>` +
-    `${projectFactEvidence(fact)}</details>`;
+  const body = `<div class="pc-trail-top"><strong>${esc(summary)}</strong></div>`;
   return projectGraphRow(d, intent.at, "steering unpaired", 1, body,
     `data-steering-state="unpaired" data-causal-edge="none"`, summary);
 }
@@ -619,9 +630,7 @@ function projectSemanticEvidence(group){
   const activity = projections.activity || {};
   const intents = Array.isArray(projections.operator_intents) ? projections.operator_intents : [];
   const paired = new Set((projections.steering_episodes || []).map(episode => episode.intent_id));
-  const primarySteering = new Set((activity.steering || []).map(intent => intent.projection_id));
-  const unpaired = intents.filter(intent => !paired.has(intent.projection_id) &&
-    !primarySteering.has(intent.projection_id));
+  const unpaired = intents.filter(intent => !paired.has(intent.projection_id));
   const facts = Array.isArray(model.facts) ? model.facts : [];
   const heads = Array.isArray(projections.trail_heads) ? projections.trail_heads : [];
   const currentWork = new Set((activity.nodes || []).flatMap(node => node.work_item_ids || []));
@@ -651,6 +660,24 @@ function projectSemanticEvidence(group){
       contextFacts.map(fact => `<div><b>${fact.type === "observer_snapshot" ? "Derived snapshot" : "Result"}:</b> ` +
         `${esc(fact.summary || fact.type)}${projectFactEvidence(fact)}</div>`).join("") +
       `</details>` : "") + `</li>`;
+}
+
+function projectGoalBlock(group, goal, note){
+  const derived = projectDerivedGoal(group.label);
+  const editing = projectGoalEditingLabel === group.label;
+  const primary = goal ? `<b>Goal</b> — ${esc(goal)}` :
+    `<b>Goal · derived</b> — ${esc(derived || "not available")}`;
+  const subordinate = goal && derived ? `<small>Derived — ${esc(derived)}</small>` : "";
+  const editor = editing ? `<div class="pc-goal-editor"><textarea id="pc-goal"` +
+    ` data-project="${esc(group.label)}" maxlength="500" rows="3"` +
+    ` placeholder="Project outcome">${esc(goal)}</textarea>` +
+    `<div class="pc-goal-actions"><button type="button" data-calm="project-goal-save"` +
+    ` data-arg="${esc(group.label)}">save</button>` +
+    `<button type="button" class="quiet" data-calm="project-goal-clear"` +
+    ` data-arg="${esc(group.label)}">clear</button></div></div>` : "";
+  return `<div class="pc-goal"><div class="pc-goal-line"><span>${primary}${subordinate}</span>` +
+    `<button type="button" class="quiet" data-calm="project-goal-edit"` +
+    ` data-arg="${esc(group.label)}">edit</button>${note}</div>${editor}</div>`;
 }
 
 function projectActivity(d, group, focus){
@@ -732,20 +759,10 @@ function projectView(d, draft){
     `<span class="pc-kicker">Project context</span><h2>${esc(group.label)}</h2></div>` +
     `<div class="pc-counts"><span><b>${workingNow}</b> working now</span>` +
     `<span><b>${recent.length}</b> recent</span>` +
-    `</div></div><div class="pc-goal"><label for="pc-goal">` +
-    `Operator note <em>remembered in this browser · precedes inference</em></label>` +
-    `<textarea id="pc-goal" data-project="${esc(group.label)}" maxlength="500" rows="3"` +
-    ` placeholder="What outcome do you want to remember here?">${esc(goal)}</textarea>` +
-    `<div class="pc-goal-actions"><button type="button" data-calm="project-goal-save"` +
-    ` data-arg="${esc(group.label)}">remember</button>` +
-    `<button type="button" class="quiet" data-calm="project-reload"` +
-    ` data-arg="${esc(group.label)}">reload page</button>` +
-    `<button type="button" class="quiet" data-calm="project-goal-clear"` +
-    ` data-arg="${esc(group.label)}">clear</button>${note}</div>` +
-    `</div>` +
+    `</div></div>${projectGoalBlock(group, goal, note)}` +
     `${mirror}` +
-    `<div class="pc-activity"><div class="pc-active-head"><h3>What changed</h3>` +
-    `<span>newest first · verified sources only</span></div>` +
+    `<div class="pc-activity"><div class="pc-active-head"><h3>Work & steering</h3>` +
+    `<span>newest first</span></div>` +
     `${projectActivity(d, group, focus)}</div>` +
     `<div class="pc-other"><div class="pc-active-head"><h3>Other project sessions</h3>` +
     `<span>lightweight surrounding context</span></div>${sessions}</div>` +

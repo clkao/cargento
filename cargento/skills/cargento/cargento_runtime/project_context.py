@@ -1402,9 +1402,49 @@ def _recent_steering_nodes(intents: list[dict[str, Any]]) -> list[dict[str, Any]
         if directive.match(str(intent.get("summary") or "").strip())
         or _TASK_DIRECTIVE_RE.match(str(intent.get("summary") or "").strip())
     ]
-    return sorted(candidates, key=lambda row: float(row.get("at") or 0), reverse=True)[
-        :MAX_PRIMARY_STEERING_NODES
-    ]
+    selected: list[dict[str, Any]] = []
+    selected_tokens: list[tuple[float, list[str]]] = []
+    for candidate in sorted(
+        candidates, key=lambda row: float(row.get("at") or 0), reverse=True
+    ):
+        summary = str(candidate.get("summary") or "").casefold().strip()
+        at = float(candidate.get("at") or 0)
+        tokens = [
+            token
+            for token in re.findall(r"[a-z0-9]+", summary)
+            if token
+            not in {
+                "a",
+                "again",
+                "an",
+                "can",
+                "could",
+                "let",
+                "please",
+                "the",
+                "this",
+                "us",
+                "would",
+                "you",
+            }
+        ]
+        duplicate = any(
+            prior_at - at <= SEMANTIC_CURRENT_HORIZON_SEC
+            and tokens
+            and prior_tokens
+            and tokens[0] == prior_tokens[0]
+            and (
+                len(set(tokens) & set(prior_tokens))
+                / min(len(set(tokens)), len(set(prior_tokens)))
+            )
+            >= 0.8
+            for prior_at, prior_tokens in selected_tokens
+        )
+        if duplicate:
+            continue
+        selected_tokens.append((at, tokens))
+        selected.append(candidate)
+    return selected[:MAX_PRIMARY_STEERING_NODES]
 
 
 def _semantic_model(

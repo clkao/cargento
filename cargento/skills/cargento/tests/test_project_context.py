@@ -550,6 +550,7 @@ class ProjectContextTest(unittest.TestCase):
         intents = [
             {"at": 1.0, "summary": "before running benchmark, validate model size"},
             {"at": 2.0, "summary": "redispatch the causal bug fix worker"},
+            {"at": 2.5, "summary": "please redispatch the causal bug fix worker again"},
             {"at": 3.0, "summary": "how far are we?"},
             {"at": 4.0, "summary": "is this a raw subagent?"},
         ]

@@ -203,7 +203,7 @@ console.log(JSON.stringify({
   chosen: h.includes("Project context</span><h2>repo/proj</h2>"),
   active: h.includes("1</b> recent"),
   identity: h.includes("claude:aaa1"),
-  goalFirst: h.indexOf("Operator note") < h.indexOf("What changed"),
+  goalFirst: h.indexOf("Goal · derived") < h.indexOf("Work & steering"),
   mirrorDrilldown: h.includes('data-calm="project-session-focus" data-arg="claude:aaa1"'),
   secondary: h.indexOf("Evidence / limits") > h.indexOf("Other project sessions")
 }));
@@ -236,12 +236,12 @@ projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
 render(projectBoard());
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  operator: h.includes("Operator note <em>remembered in this browser · precedes inference</em>"),
+  operator: h.includes("<b>Goal</b> — Operator-owned goal"),
   observed: h.includes("Derived session goal"),
   scoped: h.includes("Derived snapshot") && h.includes("cached observer snapshot"),
-  separate: h.indexOf("Operator note") < h.indexOf("Derived session goal"),
+  separate: h.indexOf("<b>Goal</b>") < h.indexOf("Derived — Derived session goal"),
   noOverwrite: h.includes("Operator note overrides derived context"),
-  once: h.split("Derived session goal").length - 1 === 1 &&
+  once: h.split("Derived session goal").length - 1 === 2 &&
     !h.includes('class="pc-observer"')
 }));
 """
@@ -252,6 +252,36 @@ console.log(JSON.stringify({
         self.assertTrue(out["separate"])
         self.assertTrue(out["noOverwrite"])
         self.assertTrue(out["once"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_derived_goal_is_one_compact_line_before_the_mirror(self) -> None:
+        checks = """
+projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
+  observers: [{harness: "codex", sid: "focus-1", goal: "Keep the exact work visible",
+    observed_at: 99990, source: "bounded transcript and entity state"}],
+  events: [], semantic: {facts: [], work_items: [], relations: [], projections: {
+    operator_intents: [], trail_heads: [], steering_episodes: [], candidate_goal_shifts: []}},
+  sources: {gate: {}, steer: {unavailable: []}}
+}};
+render(projectBoard());
+const h = __els.app.innerHTML;
+const primary = h.slice(0, h.indexOf("Evidence / limits"));
+console.log(JSON.stringify({
+  oneLine: primary.split("Goal · derived").length - 1 === 1 &&
+    primary.includes("Goal · derived</b> — Keep the exact work visible"),
+  sourceLabel: !primary.includes("<b>Goal</b>") && primary.includes("Goal · derived"),
+  placed: primary.indexOf("Goal · derived") < primary.indexOf("Right now"),
+  hiddenEditor: !primary.includes('<textarea id="pc-goal"') &&
+    primary.includes('data-calm="project-goal-edit"'),
+  compact: !primary.includes("Operator note <em>")
+}));
+"""
+        out = self.run_project(checks, query_session="claude:aaa1")
+        self.assertTrue(out["oneLine"])
+        self.assertTrue(out["sourceLabel"])
+        self.assertTrue(out["placed"])
+        self.assertTrue(out["hiddenEditor"])
+        self.assertTrue(out["compact"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_session_permalink_focuses_one_primary_mirror_inside_the_project(self) -> None:
@@ -267,7 +297,7 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   mirror: h.includes('data-session-mirror="codex:focus-1"') && h.includes("running exec"),
   identity: h.includes("codex:focus-1") && h.includes("model · gpt-5.6-sol"),
-  hierarchy: h.indexOf("Operator note") < h.indexOf("Right now"),
+  hierarchy: h.indexOf("Goal · derived") < h.indexOf("Right now"),
   surrounding: h.includes("Other project sessions") && h.includes("claude:around-1"),
   noDuplicate: !h.slice(h.indexOf("Other project sessions"),
     h.indexOf("Evidence / limits")).includes("codex:focus-1"),
@@ -417,13 +447,13 @@ Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  hierarchy: h.indexOf("Operator note") < h.indexOf("Right now") &&
-    h.indexOf("Right now") < h.indexOf("What changed") &&
-    h.indexOf("What changed") < h.indexOf("Shape the focused mirror"),
+  hierarchy: h.indexOf("<b>Goal</b>") < h.indexOf("Right now") &&
+    h.indexOf("Right now") < h.indexOf("Work & steering") &&
+    h.indexOf("Derived — Shape the focused mirror") < h.indexOf("Right now"),
   motion: h.includes("working now") && h.includes("running exec"),
   purpose: h.includes("Derived snapshot") && h.includes("Shape the focused mirror") &&
     !h.includes("reasoning max") &&
-    h.split("Shape the focused mirror").length - 1 === 1,
+    h.split("Shape the focused mirror").length - 1 === 2,
   workflowBoundary: !h.includes("workflow stage unavailable") &&
     !h.includes("open-block reading unavailable") &&
     h.includes("Stage and block are omitted when absent"),
@@ -642,7 +672,7 @@ const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const graph = h.slice(h.indexOf("What changed"), h.indexOf("Other project sessions"));
+const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Other project sessions"));
 const visibleText = graph;
 const primaryText = Array.from(visibleText.matchAll(
   /<div class="pc-trail-top">([\\s\\S]*?)<\\/div>/g
@@ -663,6 +693,9 @@ console.log(JSON.stringify({
   noCausalGuess: (graph.match(/data-causal-edge="none"/g) || []).length === 2 &&
     !graph.includes('data-causal-edge="solid"') &&
     !graph.includes('data-causal-edge="derived"'),
+  noRepeatedUnpairedProse: !primaryText.includes("unpaired") &&
+    !graph.includes("No demonstrated reaction is linked") &&
+    !graph.includes("unpaired · no causal edge"),
   lifecycleSuppressed: !graph.includes("task_started") && !graph.includes("task_complete") &&
     !graph.includes("raw lifecycle")
 }));
@@ -679,6 +712,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["quietPrimary"])
         self.assertTrue(out["supportedTagOnly"])
         self.assertTrue(out["noCausalGuess"])
+        self.assertTrue(out["noRepeatedUnpairedProse"])
         self.assertTrue(out["lifecycleSuppressed"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
@@ -707,7 +741,7 @@ const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const graph = h.slice(h.indexOf("What changed"),
+const graph = h.slice(h.indexOf("Work & steering"),
   __els.app.innerHTML.indexOf("Other project sessions"));
 const primary = graph.split('<details class="pc-semantic-overflow">')[0];
 console.log(JSON.stringify({
@@ -795,7 +829,7 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const graph = h.slice(h.indexOf("What changed"), h.indexOf("Other project sessions"));
+const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Other project sessions"));
 const evidence = h.slice(h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
   tree: h.includes("Assignments") && h.includes("Working now") &&
@@ -899,8 +933,8 @@ const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const rightNow = h.slice(h.indexOf("Right now"), h.indexOf("What changed"));
-const graph = h.slice(h.indexOf("What changed"), h.indexOf("Other project sessions"));
+const rightNow = h.slice(h.indexOf("Right now"), h.indexOf("Work & steering"));
+const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Other project sessions"));
 const evidence = h.slice(h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
   noFalseRoster: !rightNow.includes("Assignments") &&
@@ -1019,6 +1053,10 @@ console.log(JSON.stringify({
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_browser_goal_saves_under_the_provisional_label_key_and_reloads(self) -> None:
         checks = """
+render(projectBoard());
+const hiddenBeforeEdit = !__els.app.innerHTML.includes('<textarea id="pc-goal"');
+projectGoalAction("project-goal-edit", "repo/proj");
+const revealed = __els.app.innerHTML.includes('<textarea id="pc-goal"');
 __els["pc-goal"] = {value: "Ship the smallest useful cockpit", focus(){}};
 projectGoalAction("project-goal-save", "repo/proj");
 const key = projectGoalKey("repo/proj");
@@ -1026,11 +1064,14 @@ const saved = __store[key];
 render(projectBoard());
 const shown = __els.app.innerHTML.includes("Ship the smallest useful cockpit");
 projectGoalAction("project-goal-clear", "repo/proj");
-console.log(JSON.stringify({key, saved, shown, cleared: !(key in __store)}));
+console.log(JSON.stringify({key, saved, hiddenBeforeEdit, revealed, shown,
+  cleared: !(key in __store)}));
 """
         out = self.run_project(checks)
         self.assertEqual("cargento.projectGoal.v1:repo%2Fproj", out["key"])
         self.assertEqual("Ship the smallest useful cockpit", out["saved"])
+        self.assertTrue(out["hiddenBeforeEdit"])
+        self.assertTrue(out["revealed"])
         self.assertTrue(out["shown"])
         self.assertTrue(out["cleared"])
 

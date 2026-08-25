@@ -654,10 +654,16 @@
   .pc-counts b{font-size:var(--fs-sm);color:var(--ink)}
   .pc-counts .attention{border-color:color-mix(in oklab,var(--alert) 48%,var(--line2));color:var(--alert)}
   .pc-counts .attention b{color:var(--alert)}
-  .pc-goal{padding:18px 20px;min-width:0}
+  .pc-goal{padding:10px 20px;min-width:0}
   .pc-goal{border-bottom:1px solid var(--line2);background:var(--sunk)}
-  .pc-goal label{display:block;font-size:var(--fs-xs);font-weight:700;color:var(--ink2);margin-bottom:7px}
-  .pc-goal label em{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;font-style:normal;color:var(--accent-ink);margin-left:6px}
+  .pc-goal-line{display:flex;align-items:flex-start;gap:10px;color:var(--ink2);font-size:var(--fs-xs);line-height:1.45}
+  .pc-goal-line>span:first-child{min-width:0;flex:1}
+  .pc-goal-line b{color:var(--ink)}
+  .pc-goal-line small{display:block;margin-top:2px;color:var(--ink3);font-size:var(--fs-2xs)}
+  .pc-goal-line>button{flex:none;border:0;padding:1px 3px;background:transparent;color:var(--ink3);font-family:var(--mono);font-size:var(--fs-2xs);cursor:pointer}
+  .pc-goal-line>button:hover{color:var(--accent-ink)}
+  .pc-goal-line>button:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
+  .pc-goal-editor{margin-top:9px}
   .pc-goal textarea{display:block;width:100%;resize:vertical;border:1px solid var(--line2);border-radius:9px;padding:10px 11px;background:var(--panel);color:var(--ink);font:inherit;line-height:1.45}
   .pc-goal textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 20%,transparent)}
   .pc-goal-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:9px}
