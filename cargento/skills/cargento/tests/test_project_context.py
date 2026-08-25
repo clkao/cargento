@@ -510,6 +510,15 @@ class ProjectContextTest(unittest.TestCase):
             }
             for index in range(8)
         )
+        events.append(
+            {
+                "at": 5_000.0,
+                "kind": "steer",
+                "title": "Later conversation must not erase work",
+                "source": "user row",
+                "intent_promotable": True,
+            }
+        )
 
         activity = project_context._semantic_model(events, [])["projections"]["activity"]
 

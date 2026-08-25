@@ -1321,9 +1321,14 @@ def _semantic_activity_projection(
     """Bound the primary graph without turning old requests into current state."""
     if not facts:
         return {"nodes": [], "historical_unresolved": 0}
-    newest_at = max(float(fact.get("at") or 0) for fact in facts)
-    current_after = newest_at - SEMANTIC_CURRENT_HORIZON_SEC
     fact_by_id = {str(fact["fact_id"]): fact for fact in facts}
+    head_facts = [
+        fact_by_id[str(head["latest_meaningful_event"])]
+        for head in trail_heads
+        if str(head.get("latest_meaningful_event")) in fact_by_id
+    ]
+    newest_work_at = max((float(fact.get("at") or 0) for fact in head_facts), default=0)
+    current_after = newest_work_at - SEMANTIC_CURRENT_HORIZON_SEC
 
     def label_key(work_item_id: str) -> str:
         label = str(work_items.get(work_item_id, {}).get("label") or "")
