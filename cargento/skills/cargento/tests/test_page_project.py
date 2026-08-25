@@ -371,10 +371,10 @@ console.log(JSON.stringify({
         checks = """
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [], events: [
-    {at: 99990, kind: "steer", phase: "user-role transcript message",
+    {at: 99980, kind: "steer", phase: "user-role transcript message",
       title: "Prepare release path", detail: "claude:aaa1",
       source: "transcript user-role message", harness: "claude", sid: "aaa1"},
-    {at: 99980, kind: "gate", phase: "gate decision · application consumed",
+    {at: 99990, kind: "gate", phase: "gate decision · application consumed",
       title: "project-cockpit · shaping · approve", detail: "explore · claude:aaa1",
       source: "Spacedock entity gate frontmatter", harness: "claude", sid: "aaa1"},
     {at: 99985, kind: "activity", phase: "unrelated activity",
@@ -393,7 +393,7 @@ console.log(JSON.stringify({
   decision: h.slice(h.indexOf("What happened")).includes("application consumed") &&
     h.includes("shaping · approve"),
   unrelated: !h.includes("unrelated read") && !h.includes("caused") &&
-    !h.includes('data-causal-link="supported"'),
+    !h.includes('data-causal-link="supported"') && h.includes("relationship unverified"),
   boundary: h.indexOf("status-transition history unavailable") >
     h.indexOf("Evidence and limitations"),
   noMockTags: !h.includes("generated</span>") && !h.includes("consistency")
@@ -406,6 +406,46 @@ console.log(JSON.stringify({
         self.assertTrue(out["unrelated"])
         self.assertTrue(out["boundary"])
         self.assertTrue(out["noMockTags"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_work_intervals_link_only_when_source_names_the_instruction(self) -> None:
+        checks = """
+projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
+  observers: [], events: [
+    {id: "instruction:1", at: 99970, kind: "steer", phase: "user-role transcript message",
+      title: "Prepare checkpoint", detail: "codex:focus-1",
+      source: "transcript user-role message", harness: "codex", sid: "focus-1"},
+    {at: 99980, kind: "activity", phase: "read", title: "Unrelated activity",
+      source: "activity source", harness: "codex", sid: "focus-1"},
+    {at: 99990, kind: "checkpoint", phase: "checkpoint",
+      title: "Checkpoint recorded", detail: "verified checkpoint",
+      source: "checkpoint manifest", harness: "codex", sid: "focus-1",
+      related_to: "instruction:1", relation_source: "checkpoint manifest relation"}
+  ], sources: {gate: {}, steer: {live: 1, unavailable: []}}
+}};
+const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
+  active: true, state: "working"})]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+console.log(JSON.stringify({
+  linked: h.includes('data-causal-link="supported"') &&
+    h.includes("linked by checkpoint manifest relation"),
+  interval: h.includes("Work interval") && h.includes("source-linked interval") &&
+    h.includes("20s"),
+  noAutonomyClaim: !h.includes("autonomous") && !h.includes("autonomy phase"),
+  unrelatedHidden: !h.includes("Unrelated activity")
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["linked"])
+        self.assertTrue(out["interval"])
+        self.assertTrue(out["noAutonomyClaim"])
+        self.assertTrue(out["unrelatedHidden"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_live_child_hierarchy_stays_primary_while_lifecycle_is_suppressed(self) -> None:

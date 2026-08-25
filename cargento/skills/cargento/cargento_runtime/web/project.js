@@ -450,14 +450,19 @@ function projectLifecycleEvidence(focus){
     `they do not enter What happened.</p>`;
 }
 
-function projectSemanticNode(d, event, kind){
+function projectRelationTarget(event, steering){
+  if(!event.related_to || !event.relation_source) return null;
+  return steering.find(item => item.id && item.id === event.related_to) || null;
+}
+
+function projectSemanticNode(d, event, kind, steering){
   const ago = event.at
     ? fmtDur(Math.max(0, (Number(d.generated) || 0) - event.at)) + " ago"
     : "time unavailable";
   const iso = event.at ? new Date(Number(event.at) * 1000).toISOString() : "";
   const intent = kind === "steer" && event.intent && event.intent_source
     ? `<span class="pc-intent">intent · ${esc(event.intent)}</span>` : "";
-  const relation = kind === "outcome" && event.related_to && event.relation_source
+  const relation = kind === "outcome" && projectRelationTarget(event, steering)
     ? `<span class="pc-relation" data-causal-link="supported">linked by ${esc(event.relation_source)}</span>`
     : "";
   return `<article class="pc-semantic-node ${kind}">` +
@@ -468,14 +473,36 @@ function projectSemanticNode(d, event, kind){
     (event.detail ? ` · ${esc(event.detail)}` : "") + `</div></details></article>`;
 }
 
-function projectSemanticLane(d, title, kind, events){
+function projectSemanticLane(d, title, kind, events, steering){
   const empty = kind === "steer"
     ? "No timestamped non-meta user-role instruction found."
     : "No demonstrated outcome found for this session.";
   return `<section class="pc-semantic-lane" data-semantic-lane="${kind === "steer" ? "steering" : "outcome"}">` +
     `<h4>${esc(title)}</h4>` + (events.length
-      ? events.map(event => projectSemanticNode(d, event, kind)).join("")
+      ? events.map(event => projectSemanticNode(d, event, kind, steering)).join("")
       : `<div class="pc-semantic-empty">${empty}</div>`) + `</section>`;
+}
+
+function projectWorkIntervals(steering, outcomes){
+  const rows = [];
+  for(const outcome of outcomes){
+    const linked = projectRelationTarget(outcome, steering);
+    const prior = steering.filter(event => event.at <= outcome.at);
+    const start = linked || prior[prior.length - 1];
+    if(!start) continue;
+    rows.push({start:start, outcome:outcome, linked:!!linked});
+  }
+  return rows;
+}
+
+function projectWorkIntervalRows(intervals){
+  if(!intervals.length) return "";
+  return `<section class="pc-work-intervals"><h4>Work intervals</h4>` + intervals.map(row => {
+    const elapsed = fmtDur(Math.max(0, Number(row.outcome.at) - Number(row.start.at)));
+    const relation = row.linked ? "source-linked interval" : "chronology only · relationship unverified";
+    return `<div class="pc-work-interval" data-interval-relation="${row.linked ? "supported" : "unverified"}">` +
+      `<strong>Work interval · ${esc(elapsed)}</strong><span>${relation}</span></div>`;
+  }).join("") + `</section>`;
 }
 
 /* One source-honest sequence for the focused session. Each event keeps the
@@ -504,8 +531,9 @@ function projectActivity(d, group, focus){
       `${reading}</div>`;
   }
   return `<div class="pc-semantic-graph" data-causal-model="source-only">` +
-    projectSemanticLane(d, "What you asked", "steer", steering) +
-    projectSemanticLane(d, "What happened", "outcome", outcomes) + `</div>`;
+    projectSemanticLane(d, "What you asked", "steer", steering, steering) +
+    projectSemanticLane(d, "What happened", "outcome", outcomes, steering) +
+    projectWorkIntervalRows(projectWorkIntervals(steering, outcomes)) + `</div>`;
 }
 
 function projectHistoryBoundary(sources){

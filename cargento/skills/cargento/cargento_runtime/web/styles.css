@@ -744,6 +744,11 @@
   .pc-event-evidence summary{cursor:pointer;color:var(--ink3)}
   .pc-event-evidence div{margin-top:5px;overflow-wrap:anywhere}
   .pc-intent,.pc-relation{display:block;margin-top:5px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .pc-work-intervals{grid-column:1/-1;border-top:1px solid var(--line2);padding-top:11px}
+  .pc-work-intervals h4{margin:0 0 7px;font-size:var(--fs-xs);color:var(--ink3)}
+  .pc-work-interval{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .pc-work-interval+.pc-work-interval{margin-top:5px}
+  .pc-work-interval strong{color:var(--ink2)}
   .pc-log{position:relative;padding-left:5px}
   .pc-event{position:relative;display:grid;grid-template-columns:16px minmax(0,1fr);gap:9px;padding:4px 0 13px}
   .pc-event::before{content:"";position:absolute;left:7px;top:13px;bottom:-3px;width:1px;background:var(--line2)}
