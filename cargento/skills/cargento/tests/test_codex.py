@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from cargento_runtime import records as runtime_records
 from cargento_runtime import transcripts as runtime_transcripts
@@ -311,7 +312,12 @@ class CodexCollectorTest(RuntimeTestCase):
                 },
             }
 
-        def collect_with(message: str) -> dict[str, Any]:
+        def collect_with(
+            message: str,
+            *,
+            artifact_lines: tuple[str, ...] = (),
+            agent_path: str = "/root/roster_worker",
+        ) -> dict[str, Any]:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp) / "2026" / "01" / "01"
                 root.mkdir(parents=True)
@@ -342,7 +348,7 @@ class CodexCollectorTest(RuntimeTestCase):
                                         "subagent": {
                                             "thread_spawn": {
                                                 "parent_thread_id": root_id,
-                                                "agent_path": "/root/roster_worker",
+                                                "agent_path": agent_path,
                                             }
                                         }
                                     },
@@ -354,7 +360,14 @@ class CodexCollectorTest(RuntimeTestCase):
                 )
                 os.utime(parent, (now, now))
                 os.utime(child, (now, now))
-                with store_patch(CODEX_SESSIONS_DIR=tmp):
+                with (
+                    store_patch(CODEX_SESSIONS_DIR=tmp),
+                    mock.patch.object(
+                        codex_collector.runtime_io,
+                        "iter_bounded_text_lines",
+                        return_value=iter(artifact_lines),
+                    ),
+                ):
                     config, state = runtime()
                     (session,) = codex_collector.collect(config, state, now, 24, False)
             row = session["subagent_hierarchy"][0]
@@ -363,10 +376,17 @@ class CodexCollectorTest(RuntimeTestCase):
 
         visible = collect_with("Make subagent and ensign assignments visible. Preserve evidence.")
         unavailable = collect_with("gAAAA-encrypted")
+        recovered = collect_with(
+            "gAAAA-encrypted",
+            artifact_lines=("You are working on: Project cockpit and remembered goal\n",),
+            agent_path="/root/spacedock_ensign_project_cockpit_shaping_cycle2",
+        )
         self.assertEqual("Make subagent and ensign assignments visible", visible["assignment"])
         self.assertEqual("exact parent dispatch", visible["assignment_status"])
         self.assertIsNone(unavailable["assignment"])
         self.assertEqual("unavailable", unavailable["assignment_status"])
+        self.assertEqual("Project cockpit and remembered goal", recovered["assignment"])
+        self.assertEqual("structured dispatch artifact", recovered["assignment_status"])
 
     def test_codex_meta_tolerates_malformed_payload_types(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

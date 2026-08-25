@@ -667,6 +667,18 @@
   .pc-goal-note{margin-left:auto;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--accent-ink)}
   .pc-mirror{padding:24px 20px;border-top:1px solid var(--line2);border-bottom:1px solid var(--line2);background:color-mix(in oklab,var(--accent) 7%,var(--panel));box-shadow:inset 4px 0 0 color-mix(in oklab,var(--accent) 75%,var(--line2))}
   .pc-mirror.unavailable{background:var(--sunk);color:var(--ink3)}
+  .pc-recovery{margin:-8px 0 22px;padding:16px;border:1px solid color-mix(in oklab,var(--accent) 35%,var(--line2));border-radius:10px;background:color-mix(in oklab,var(--accent) 5%,var(--panel))}
+  .pc-recovery-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+  .pc-recovery-head strong{font-size:var(--fs-md);color:var(--ink)}
+  .pc-recovery-head code{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--accent-ink);overflow-wrap:anywhere;text-align:right}
+  .pc-recovery-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:13px}
+  .pc-recovery-grid>div{display:flex;flex-direction:column;gap:3px;min-width:0;padding:11px 12px;border:1px solid var(--line2);border-radius:8px;background:var(--panel)}
+  .pc-recovery-grid small{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink)}
+  .pc-recovery-grid strong{font-size:var(--fs-xs);color:var(--ink2)}
+  .pc-recovery-grid span{font-size:var(--fs-xs);line-height:1.45;color:var(--ink3);overflow-wrap:anywhere}
+  .pc-resume{display:flex;align-items:baseline;gap:9px;margin-top:11px;padding-top:10px;border-top:1px solid var(--line);font-size:var(--fs-xs)}
+  .pc-resume b{font-family:var(--mono);font-size:var(--fs-2xs);text-transform:uppercase;letter-spacing:.08em;color:var(--accent-ink)}
+  .pc-resume span{color:var(--ink2);overflow-wrap:anywhere}
   .pc-mirror-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
   .pc-mirror-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
   .pc-mirror h3{font-size:var(--fs-xl);letter-spacing:-.025em;margin:2px 0 0}
@@ -803,6 +815,9 @@
   @media(max-width:520px){
     .pc-nav{flex-wrap:wrap}
     .pc-nav select{width:100%;max-width:100%}
+    .pc-recovery-head{flex-direction:column}
+    .pc-recovery-head code{text-align:left}
+    .pc-recovery-grid{grid-template-columns:1fr}
     .pc-mirror-head{flex-direction:column}
     .pc-mirror-actions{justify-content:flex-start}
     .pc-mirror-state{align-items:flex-start;flex-direction:column}

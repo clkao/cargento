@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import TYPE_CHECKING, Any
 
 # Absolute on the canonical top-level package: a sub-package cannot use
@@ -30,6 +31,10 @@ _CHILD_LIFECYCLE_FILE_CAP = 24
 _CHILD_LIFECYCLE_BYTES = 128 * 1024
 _CHILD_LIFECYCLE_EVENT_CAP = 12
 _CHILD_ASSIGNMENT_CAP = 140
+_ENSIGN_AGENT_PATH_RE = re.compile(
+    r"^/root/spacedock_ensign_([a-z0-9][a-z0-9_]*?)(?:_cycle[0-9]+)?$"
+)
+_DISPATCH_DIRECTORY = "/tmp/spacedock-dispatch"  # noqa: S108
 
 
 def _usage_window(now: float, raw: Any) -> tuple[str, dict[str, Any]] | None:
@@ -212,6 +217,25 @@ def _assignment_summary(message: str) -> str:
     return ""
 
 
+def _ensign_dispatch_assignment(agent_path: str) -> str:
+    """Human title from the durable artifact named by a Codex ensign path."""
+    match = _ENSIGN_AGENT_PATH_RE.fullmatch(agent_path)
+    if match is None or not match.group(1):
+        return ""
+    slug = match.group(1).replace("_", "-")
+    artifact = f"{_DISPATCH_DIRECTORY}/spacedock-ensign-{slug}.md"
+    prefix = "You are working on:"
+    for raw in runtime_io.iter_bounded_text_lines(
+        artifact,
+        max_lines=40,
+        per_line_bytes=2048,
+    ):
+        line = raw.strip()
+        if line.startswith(prefix):
+            return records.safe_text(line[len(prefix) :].strip(), _CHILD_ASSIGNMENT_CAP)
+    return ""
+
+
 def _child_assignment(
     config: RuntimeConfig,
     parent_path: str,
@@ -246,7 +270,12 @@ def _child_assignment(
             latest = None
             continue
         latest = _assignment_summary(message) or None
-    return (latest, "exact parent dispatch" if latest else "unavailable")
+    if latest:
+        return latest, "exact parent dispatch"
+    artifact_assignment = _ensign_dispatch_assignment(agent_path)
+    if artifact_assignment:
+        return artifact_assignment, "structured dispatch artifact"
+    return None, "unavailable"
 
 
 def _rollouts(
