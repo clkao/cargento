@@ -118,8 +118,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "b6d833f4aacda7b1e7cb24f8abf9dd66949272e3fc80e8d3118a9b6441a8265e",
             ),
             "mode.js": (
-                4_678,
-                "e1f094827eb97846e27ba069e047b404bd4fd70f0e974f2f20e5430aef081352",
+                5_216,
+                "68e907f63b29569466e4085b89d915426168459136aceefdc83def5101a9141b",
             ),
             "usage.js": (
                 52_855,
@@ -134,8 +134,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "7ff71070fabf53c55754a3263825eb3c330ed1457bc8661d983d694df97ea218",
             ),
             "project.js": (
-                23_849,
-                "5bef60758488c1de7f974faffcd8bb096b8b1133cd4816317a419586aac1c1dc",
+                26_890,
+                "36ce50759eabf1b462b8bbab6d164da0424927d034bcd2d0ba6e46975cd25adb",
             ),
             "calm.js": (
                 57_092,
@@ -154,8 +154,8 @@ class FrontendAssetContractTest(unittest.TestCase):
                 "aeef4f2ad3d702d434bfdafbc5123dec0f216a858b197b6ae00bc61fcf1873d9",
             ),
             "main.js": (
-                12_490,
-                "9ff15e03a31f9afbe63ea4b136d019ddd19a0c9e1bc2dab6f49d6b85534380cc",
+                12_581,
+                "24f1f525eba7c607e50e073a8911d9170227f82ba84951e71781955b1ca319fa",
             ),
             "live.js": (
                 6_176,
@@ -170,16 +170,16 @@ class FrontendAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.asset_path("styles.css").read_bytes()
-        self.assertEqual(71_025, len(styles))
+        self.assertEqual(71_677, len(styles))
         self.assertEqual(
-            "a7e20788cc3d6d9af2d14b1f42d750182be3a642323460c9f08c7c8187aac533",
+            "5e8a5df3eef0cb49074b0d0076c3d6fa161417e1bc8aa77df5669af92f4841fd",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_page()
-        self.assertEqual(357_008, len(assembled))
+        self.assertEqual(361_330, len(assembled))
         self.assertEqual(
-            "c78b3f778ea4a3acf5fdcbd158f484e1808f2acc0d1fdaca0e8eb6b369511c4f",
+            "7d496fe69baf8964da112271246e7b41d6564213fc38e9775992770f378bb61e",
             hashlib.sha256(assembled).hexdigest(),
         )
 

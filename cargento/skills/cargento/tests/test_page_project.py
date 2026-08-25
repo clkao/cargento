@@ -31,11 +31,11 @@ const liveAsk = o => Object.assign({id: "ask-live", harness: "claude",
         goals: dict[str, str] | None = None,
         query_project: str | None = None,
         query_session: str | None = None,
+        stored_mode: str | None = "project",
     ) -> str:
-        values = {
-            "cargento.displayMode": "project",
-            "cargento.projectCockpitProject": project,
-        }
+        values = {"cargento.projectCockpitProject": project}
+        if stored_mode is not None:
+            values["cargento.displayMode"] = stored_mode
         seeded_goals = dict(goals or {})
         if goal is not None:
             seeded_goals[project] = goal
@@ -77,6 +77,7 @@ const setTimeout = fn => {{ __timers.push(fn); return __timers.length; }};
         goals: dict[str, str] | None = None,
         query_project: str | None = None,
         query_session: str | None = None,
+        stored_mode: str | None = "project",
     ) -> Any:
         return self._run_page_js(
             self.FIXTURE + checks,
@@ -86,8 +87,107 @@ const setTimeout = fn => {{ __timers.push(fn); return __timers.length; }};
                 goals=goals,
                 query_project=query_project,
                 query_session=query_session,
+                stored_mode=stored_mode,
             ),
         )
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_cold_permalink_route_overrides_browser_fallback(self) -> None:
+        checks = """
+const d = payload([
+  mk({project: "repo/proj", harness: "codex", sid: "focus-1", active: true}),
+  mk({project: "repo/proj", harness: "claude", sid: "around-1", active: true})
+]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const cold = __els.app.innerHTML;
+projectAction("project-session-focus", "claude:around-1");
+const focused = __els.app.innerHTML;
+const pushed = __historyUrls[__historyUrls.length - 1] || "";
+location.search = "?mode=project&project=repo%2Fproj&session=codex%3Afocus-1";
+(__listeners["window:popstate"] || []).forEach(fn => fn({}));
+const returned = __els.app.innerHTML;
+console.log(JSON.stringify({
+  coldMode: displayMode,
+  coldFocus: cold.includes('data-session-mirror="codex:focus-1"'),
+  siblingStayedProject: focused.includes('data-session-mirror="claude:around-1"') &&
+    displayMode === "project",
+  pushed,
+  backReturned: returned.includes('data-session-mirror="codex:focus-1"')
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+            stored_mode="regular",
+        )
+        self.assertEqual("project", out["coldMode"])
+        self.assertTrue(out["coldFocus"])
+        self.assertTrue(out["siblingStayedProject"])
+        self.assertIn("mode=project", out["pushed"])
+        self.assertIn("project=repo%2Fproj", out["pushed"])
+        self.assertIn("session=claude%3Aaround-1", out["pushed"])
+        self.assertTrue(out["backReturned"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_project_temporal_labels_separate_now_from_recent(self) -> None:
+        checks = """
+const d = payload([
+  mk({project: "repo/proj", harness: "codex", sid: "focus-1", active: true,
+    state: "working"}),
+  mk({project: "repo/proj", harness: "claude", sid: "work-1", active: true,
+    state: "working"}),
+  mk({project: "repo/proj", harness: "pi", sid: "idle-1", active: true,
+    state: "idle"})
+]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+console.log(JSON.stringify({
+  recentCount: h.includes("3</b> recent"),
+  workingSection: h.includes("Working now") && h.includes("claude:work-1"),
+  recentIdleSection: h.includes("Recent · idle") && h.includes("pi:idle-1"),
+  noActiveClaim: !h.includes("</b> active") && !h.includes("other active sessions")
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["recentCount"])
+        self.assertTrue(out["workingSection"])
+        self.assertTrue(out["recentIdleSection"])
+        self.assertTrue(out["noActiveClaim"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_project_feedback_is_live_and_refresh_keeps_keyboard_focus(self) -> None:
+        checks = """
+__fetchImpl = () => Promise.resolve({ok: true, json: () => Promise.resolve({
+  observers: [], events: [], sources: {gate: {}, steer: {unavailable: []}}
+})});
+lastData = projectBoard();
+render(lastData);
+await __settle(); await __settle();
+const refresh = __controls().find(c => c.getAttribute("data-calm") === "project-context-refresh");
+document.activeElement = refresh;
+__focused = null;
+projectAction("project-context-refresh", "repo/proj");
+const busyHtml = __els.app.innerHTML;
+await __settle(); await __settle();
+const settled = __els.app.innerHTML;
+console.log(JSON.stringify({
+  busy: busyHtml.includes("refreshing context…") && busyHtml.includes('aria-busy="true"'),
+  focus: __focused === "project-context-refresh:repo/proj",
+  live: settled.includes('role="status"') && settled.includes('aria-live="polite"') &&
+    settled.includes("context refreshed")
+}));
+"""
+        out = self.run_project(checks)
+        self.assertTrue(out["busy"])
+        self.assertTrue(out["focus"])
+        self.assertTrue(out["live"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_compact_navigation_leads_into_one_selected_project_boundary(self) -> None:
@@ -100,12 +200,12 @@ console.log(JSON.stringify({
   compactNav: h.includes('id="pc-project-select"') && h.includes('class="pc-link"') &&
     !h.includes('class="pc-project'),
   chosen: h.includes("Working toward</span><h2>repo/proj</h2>"),
-  active: h.includes("1</b> active"),
+  active: h.includes("1</b> recent"),
   empty: h.includes("No session in this project is asking through Cargento."),
   identity: h.includes("claude:aaa1"),
   goalFirst: h.indexOf("Operator goal") < h.indexOf("Observer context"),
-  mirrorDrilldown: h.includes('data-calm="session" data-arg="claude:aaa1"'),
-  secondary: h.indexOf("Source and identity details") > h.indexOf("Active sessions")
+  mirrorDrilldown: h.includes('data-calm="project-session-focus" data-arg="claude:aaa1"'),
+  secondary: h.indexOf("Source and identity details") > h.indexOf("Surrounding sessions")
 }));
 """
         out = self.run_project(checks)
@@ -131,11 +231,11 @@ projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
 render(projectBoard());
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  operator: h.includes("Operator goal <em>authoritative · browser only</em>"),
+  operator: h.includes("Operator note <em>remembered in this browser · precedes inference</em>"),
   observed: h.includes("Derived session goal"),
   scoped: h.includes("derived, subordinate") && h.includes("claude:aaa1"),
   separate: h.indexOf("Operator goal") < h.indexOf("Derived session goal"),
-  noOverwrite: h.includes("observer text never overwrites this field")
+  noOverwrite: h.includes("observer inference never overwrites this note")
 }));
 """
         out = self.run_project(checks, goal="Operator-owned goal")
@@ -238,10 +338,10 @@ console.log(JSON.stringify({
   workflowBoundary: h.includes("workflow stage unavailable") &&
     h.includes("open-block reading unavailable"),
   attention: h.includes("No live needs-captain signal"),
-  steering: h.includes("Most recent steering") && h.includes("Keep the project as context") &&
+  steering: h.includes("Most recent user-role message") && h.includes("Keep the project as context") &&
     h.includes("transcript user message") && h.includes("1970-01-02T03:46:30.000Z"),
   identity: h.includes("codex:focus-1"),
-  operatorPrecedence: h.includes("observer text never overwrites this field")
+  operatorPrecedence: h.includes("observer inference never overwrites this note")
 }));
 """
         out = self.run_project(

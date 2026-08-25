@@ -12,6 +12,12 @@ try{
     displayMode = saved;
   }
 }catch(e){ /* private mode, or a context with no storage — regular it is */ }
+try{
+  const routed = new URLSearchParams(location.search || "").get("mode");
+  if(routed === "calm" || routed === "project" || routed === "regular" || routed === "session"){
+    displayMode = routed;
+  }
+}catch(e){ /* a URL-less embed keeps the browser fallback */ }
 
 let calmSort = "attention";   /* attention | recent | repo | burn */
 let calmStateOnly = null;     /* needs | work | idle */
@@ -98,6 +104,13 @@ function setDisplayMode(mode){
   displayMode = mode;
   if(mode !== "session") sessionViewKey = null;
   try{ localStorage.setItem(DISPLAY_MODE_KEY, mode); }catch(e){ /* nothing to persist to */ }
+  try{
+    const url = new URL(location.href);
+    url.searchParams.set("mode", mode);
+    if(typeof history !== "undefined" && history.pushState){
+      history.pushState({}, "", url.toString());
+    }
+  }catch(e){ /* the mode still changes without a routable URL */ }
   syncSessionHash();
   calmResetScroll = true;
   if(lastData) render(lastData);

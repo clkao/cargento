@@ -58,6 +58,20 @@ _GENERIC_OPENER_PREFIXES = (
     "skill(",
 )
 
+# Harness-owned context records that Codex serializes with role=user. Their
+# role is transport shape, not operator authorship. The wrapper names are the
+# closed tags observed in the live interface; an unknown wrapper remains a
+# user-role message rather than being silently discarded.
+_META_USER_PREFIXES = (
+    "<environment_context>",
+    "<permissions instructions>",
+    "<skills_instructions>",
+    "<apps_instructions>",
+    "<plugins_instructions>",
+    "<recommended_plugins>",
+    "# agents.md instructions for ",
+)
+
 # Block indicators, scanned in the newest assistant message only. Self-state
 # phrases, and not the bare words this started with: `cannot`, `can't`,
 # `unable`, `failed to` and `error:` match ordinary reporting prose — "I can't
@@ -239,7 +253,7 @@ def parse_message_record(record: Any) -> dict[str, str] | None:
     ):
         return None
     text = records.extract_text(content).strip()
-    if not text:
+    if not text or (role == "user" and text.lower().startswith(_META_USER_PREFIXES)):
         return None
     return {"role": role, "text": text}
 

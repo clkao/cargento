@@ -226,8 +226,22 @@ class ProjectContextTest(unittest.TestCase):
         self.assertIsNotNone(event)
         assert event is not None
         self.assertEqual("Captain changed the shape", event["title"])
+        self.assertEqual("user-role transcript message", event["phase"])
         self.assertEqual("codex:project-session", event["detail"])
-        self.assertEqual("transcript user message", event["source"])
+        self.assertEqual("transcript user-role message", event["source"])
+
+    def test_environment_context_is_not_steering(self) -> None:
+        event = project_context._instruction_event(
+            self.config,
+            codex_message(
+                "<environment_context>\n  <cwd>/private/project</cwd>\n</environment_context>",
+                "2026-08-24T20:10:00Z",
+            ),
+            "codex",
+            self.SID,
+        )
+
+        self.assertIsNone(event)
 
     def test_codex_function_output_can_supply_boot_provenance(self) -> None:
         envelope = (

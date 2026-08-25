@@ -127,6 +127,60 @@ class CodexCollectorTest(RuntimeTestCase):
         self.assertEqual(runtime_records.parse_ts(timestamp(-10)), sessions[0]["started_at"])
         self.assertIsNone(sessions[0]["model"])
 
+    def test_completed_or_interrupted_child_clears_before_freshness_expires(self) -> None:
+        now = time.time()
+        parent_id = "33333333-3333-3333-3333-333333333333"
+
+        def event(kind: str, offset: float) -> dict[str, Any]:
+            return {
+                "type": "event_msg",
+                "timestamp": datetime.fromtimestamp(now + offset, UTC).isoformat(),
+                "payload": {"type": kind, "started_at": now + offset},
+            }
+
+        def write(path: Path, entries: list[dict[str, Any]], mtime: float) -> None:
+            path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+            os.utime(path, (mtime, mtime))
+
+        for terminal in ("task_complete", "turn_aborted"):
+            with self.subTest(terminal=terminal), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "2026" / "01" / "01"
+                root.mkdir(parents=True)
+                write(
+                    root / "rollout-parent.jsonl",
+                    [
+                        {"type": "session_meta", "payload": {"id": parent_id, "cwd": "/tmp/p"}},
+                        event("task_started", -30),
+                    ],
+                    now - 10,
+                )
+                write(
+                    root / "rollout-child.jsonl",
+                    [
+                        {
+                            "type": "session_meta",
+                            "payload": {
+                                "id": "child",
+                                "thread_source": "subagent",
+                                "agent_nickname": "canary",
+                                "source": {
+                                    "subagent": {"thread_spawn": {"parent_thread_id": parent_id}}
+                                },
+                            },
+                        },
+                        event("task_started", -20),
+                        event(terminal, -2),
+                    ],
+                    now,
+                )
+                with store_patch(CODEX_SESSIONS_DIR=tmp):
+                    config, state = runtime()
+                    (session,) = codex_collector.collect(config, state, now, 24, False)
+
+                self.assertEqual([], session["subagents"])
+                self.assertNotIn("subagent", session["state_detail"])
+                self.assertEqual(now, session["last_activity"])
+
     def test_codex_meta_tolerates_malformed_payload_types(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             non_dict = Path(tmp) / "rollout-a.jsonl"

@@ -103,7 +103,7 @@ def _instruction_event(
     harness: str,
     sid: str,
 ) -> dict[str, Any] | None:
-    """One timestamped external user message, excluding tool and meta records."""
+    """One timestamped user-role message, excluding known tool/meta records."""
     if not isinstance(record, dict):
         return None
     message = observer.parse_message_record(record)
@@ -117,10 +117,10 @@ def _instruction_event(
     return {
         "at": at,
         "kind": "steer",
-        "phase": "captain instruction",
+        "phase": "user-role transcript message",
         "title": title,
         "detail": f"{harness}:{sid}",
-        "source": "transcript user message",
+        "source": "transcript user-role message",
         "harness": harness,
         "sid": sid,
     }
@@ -132,7 +132,7 @@ def instruction_events(
     harness: str,
     sid: str,
 ) -> list[dict[str, Any]]:
-    """Timestamped user instructions from the bounded transcript tail."""
+    """Timestamped non-meta user-role messages from the bounded transcript tail."""
     events: list[dict[str, Any]] = []
     seen: set[tuple[float, str]] = set()
     for raw in runtime_io.read_tail(config, transcript_path):

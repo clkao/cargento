@@ -129,7 +129,7 @@ def collect(
     # Resumes and subagent threads each write their own rollout file, so group
     # by the session_meta session_id rather than by file.
     found: dict[str, tuple[float, str]] = {}  # session_id -> (mtime, path)
-    # parent session_id -> {"agents": [(label, mtime, model, started_at)], "rate": int}
+    # parent session_id -> running agents, recent child activity, and rate
     agent_data: dict[str, dict[str, Any]] = {}
     for fp in runtime_io.glob_stores(
         config,
@@ -147,7 +147,7 @@ def collect(
         sid = meta.get("session_id") or os.path.basename(fp)[: -len(".jsonl")][-36:]
         if meta.get("subagent"):
             parent_sid = meta.get("parent_session_id") or sid
-            data = agent_data.setdefault(parent_sid, {"agents": [], "rate": 0})
+            data = agent_data.setdefault(parent_sid, {"agents": [], "activity": [], "rate": 0})
             # One scan, above both branches. The rate window is wider than the
             # working window today, so the rate branch happens to have scanned
             # every child the second branch renders — but that is two config
@@ -157,11 +157,17 @@ def collect(
             charged = sessions.is_fresh(config, now, mtime, config.rate_window_sec)
             rendered = sessions.is_fresh(config, now, mtime, config.working_threshold_sec)
             scan = turns.scan_turns(config, state, fp, "codex") if charged or rendered else None
+            data["activity"].extend(
+                [mtime] if sessions.is_fresh(config, now, mtime, window_hours * 3600) else []
+            )
             if charged:
                 data["rate"] += _subagent_rate(config, fp, now, scan)
-            if rendered:
+            if rendered and scan and scan.get("turn_start") is not None:
                 # The child's own rollout declares its own model; the page, not
                 # the collector, decides whether it differs from the parent's.
+                # Membership is present lifecycle, not mtime inference: Codex
+                # writes task_complete/turn_aborted and scan_turns retires the
+                # active turn on either boundary.
                 data["agents"].append(
                     (
                         (meta.get("agent_label") or "subagent")[:70],
@@ -176,9 +182,9 @@ def collect(
 
     out: list[Session] = []
     for sid, (mtime, fp) in found.items():
-        data = agent_data.get(sid) or {"agents": [], "rate": 0}
+        data = agent_data.get(sid) or {"agents": [], "activity": [], "rate": 0}
         agents = sorted(data["agents"], key=lambda a: -a[1])
-        activity_sources = (mtime, *(a[1] for a in agents))
+        activity_sources = (mtime, *data["activity"])
         last_activity = sessions.newest_plausible(config, now, activity_sources)
         active = sessions.is_fresh(config, now, last_activity, window_hours * 3600)
         if not (active or show_all):

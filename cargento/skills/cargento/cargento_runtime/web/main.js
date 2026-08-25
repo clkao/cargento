@@ -54,11 +54,13 @@ function render(d){
        A saved goal survives through localStorage; this draft exists only to
        stop the refresh loop from erasing text while the operator is typing. */
     const projectDraft = projectCaptureDraft();
+    const projectControlFocus = calmFocusKey();
     renderInProgress = true;
     app.className = "wrap project";
     app.innerHTML = modeBar() + usageBanner(d, true) + projectView(d, projectDraft);
     renderInProgress = false;
     projectRestoreFocus(projectDraft);
+    calmRestoreFocus(projectControlFocus);
     projectLoadContext(d);
     restoreStopFocus();
     document.title = (queue.length > 0 ? `(${queue.length}!) ` : "") + "Cargento";
