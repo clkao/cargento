@@ -1,6 +1,6 @@
 ---
 title: Project cockpit and remembered goal
-status: shaping
+status: review
 source: commission seed
 started: 2026-08-25T03:31:15Z
 completed:
