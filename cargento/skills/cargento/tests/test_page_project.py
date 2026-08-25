@@ -323,7 +323,7 @@ console.log(JSON.stringify({
     primary.includes("Observed goal</b> — Keep the exact work visible"),
   sourceLabel: !primary.includes("Goal · derived") && !primary.includes("<b>Focus</b>") &&
     primary.includes("Observed goal"),
-  placed: primary.indexOf("Observed goal") < primary.indexOf("Right now"),
+  placed: primary.indexOf("Observed goal") < primary.indexOf('class="pc-operator"'),
   hiddenEditor: !primary.includes('<textarea id="pc-goal"') &&
     primary.includes('>add focus</button>'),
   compact: !primary.includes("Operator note <em>") && !primary.includes("not available")
@@ -350,7 +350,7 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   mirror: h.includes('data-session-mirror="codex:focus-1"') && h.includes("running exec"),
   identity: h.includes("codex:focus-1") && h.includes("model · gpt-5.6-sol"),
-  hierarchy: h.indexOf("add focus") < h.indexOf("Right now"),
+  hierarchy: h.indexOf("add focus") < h.indexOf('class="pc-operator"'),
   surrounding: h.includes("Other project sessions") && h.includes("claude:around-1"),
   noDuplicate: !h.slice(h.indexOf("Other project sessions"),
     h.indexOf("Evidence / limits")).includes("codex:focus-1"),
@@ -397,7 +397,7 @@ render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   ordinary: !h.includes("Recovery mirror") && !h.includes("Safe resume") &&
-    !h.includes("checkpoint") && h.includes("Project context") && h.includes("Right now"),
+    !h.includes("checkpoint") && h.includes("Project context") && h.includes('class="pc-operator"'),
   toward: h.includes("Maintain orientation from ordinary project context"),
   assignments: h.includes('data-work-item="project-cockpit"') &&
     h.includes('data-work-item="session-interaction-origin"') &&
@@ -417,7 +417,7 @@ console.log(JSON.stringify({
     !h.includes('class="pc-work-item') && !h.includes("<details><summary>source</summary>"),
   changed: h.includes("Assignment roster restored") && h.includes("5s ago") &&
     h.includes('data-trail-head="outcome"'),
-  freshness: h.includes("latest session evidence · 10s ago"),
+  freshness: h.includes("WORKING") && h.includes("3 children · no request · 10s"),
   continueAt: h.includes("codex:focus-1") && h.includes("copy session link")
 }));
 """
@@ -457,10 +457,10 @@ d.sessions[0].needs_reason = "approval required";
 render(d);
 const overlay = __els.app.innerHTML;
 console.log(JSON.stringify({
-  clear: clear.includes("No request detected") && !clear.includes('class="pc-needs"') &&
+  clear: clear.includes("no request") && !clear.includes('class="pc-needs"') &&
     clear.indexOf("does not prove unblocked") >
       clear.indexOf("Evidence / limits") &&
-    clear.includes('data-request-state="none"'),
+    clear.includes('data-operator-state="working"'),
   exactOnly: !clear.includes("Choose the release path?") && asked.includes("Needs you") &&
     asked.includes("Choose the release path?") && asked.includes(">safe</button>") &&
     asked.includes('data-request-state="ask"'),
@@ -508,17 +508,17 @@ Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  hierarchy: h.indexOf("<b>Focus</b>") < h.indexOf("Right now") &&
-    h.indexOf("Right now") < h.indexOf("Work & steering") &&
-    h.indexOf("Observed goal</b> — Shape the focused mirror") < h.indexOf("Right now"),
-  motion: h.includes("working now") && h.includes("running exec"),
+  hierarchy: h.indexOf("<b>Focus</b>") < h.indexOf('class="pc-operator"') &&
+    h.indexOf('class="pc-operator"') < h.indexOf("Work & steering") &&
+    h.indexOf("Observed goal</b> — Shape the focused mirror") < h.indexOf('class="pc-operator"'),
+  motion: h.includes("WORKING") && h.includes("running exec · no request"),
   purpose: h.includes("Derived snapshot") && h.includes("Shape the focused mirror") &&
     !h.includes("reasoning max") &&
     h.split("Shape the focused mirror").length - 1 === 2,
   workflowBoundary: !h.includes("workflow stage unavailable") &&
     !h.includes("open-block reading unavailable") &&
     h.includes("Stage and block are omitted when absent"),
-  attention: h.includes("No request detected") && !h.includes("Needs captain"),
+  attention: h.includes("no request") && !h.includes("Needs captain"),
   steering: h.includes("Operator intent") && h.includes("Keep the project as context") &&
     h.includes("timestamped non-meta user-role record") && h.includes("1970-01-02T03:46:30.000Z"),
   identity: h.includes("codex:focus-1"),
@@ -542,6 +542,57 @@ console.log(JSON.stringify({
         self.assertTrue(out["identity"])
         self.assertTrue(out["operatorPrecedence"])
         self.assertTrue(out["noDuplicateObserver"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_operator_strip_answers_wait_or_steer_without_repeating_lane_state(self) -> None:
+        checks = """
+const cargento = payload([mk({project: "repo/proj", harness: "codex", sid: "cargento",
+  title: "Shape cockpit", active: true, state: "working", last_activity: 99999,
+  subagent_hierarchy: [
+    {name: "Einstein", depth: 1, assignment: "Project cockpit", workflow_entity: "project-cockpit",
+      workflow_stage: "shaping"},
+    {name: "Ampere", depth: 1, assignment: "Session origin", workflow_entity: "session-origin",
+      workflow_stage: "shaping"},
+    {name: "Gauss", depth: 1, assignment: "Review operator state"}
+  ]})]);
+Object.assign(cargento, {ask: true, asks: []});
+projectQueryLabel = "repo/proj";
+projectQuerySession = "codex:cargento";
+projectCockpitLabel = "repo/proj";
+render(cargento);
+const c = __els.app.innerHTML;
+const cOperator = c.slice(c.indexOf('class="pc-operator"'), c.indexOf("Work & steering"));
+const cGraph = c.slice(c.indexOf("Work & steering"), c.indexOf("Evidence / limits"));
+
+const asr = payload([mk({project: "git/asr", harness: "pi", sid: "asr", title: "ASR work",
+  active: true, state: "working", state_detail: "running bash", last_activity: 99940,
+  subagent_hierarchy: []})]);
+Object.assign(asr, {ask: true, asks: []});
+projectQueryLabel = "git/asr";
+projectQuerySession = "pi:asr";
+projectCockpitLabel = "git/asr";
+render(asr);
+const a = __els.app.innerHTML;
+const aOperator = a.slice(a.indexOf('class="pc-operator"'), a.indexOf("Work & steering"));
+console.log(JSON.stringify({
+  cargento: cOperator.includes("WORKING</strong><span>3 children · no request · now"),
+  asr: aOperator.includes("WORKING</strong><span>running bash · no request · 1m"),
+  disclosure: cOperator.indexOf("<details") < cOperator.indexOf("Shape cockpit") &&
+    aOperator.indexOf("<details") < aOperator.indexOf("ASR work"),
+  noLaneRepeat: !cGraph.includes("working now"),
+  next: c.includes('</section><div class="pc-activity"') &&
+    a.includes('</section><div class="pc-activity"'),
+  noEmptySurroundings: !c.includes("Other project sessions") &&
+    !c.includes("No other recent sessions") && !a.includes("Other project sessions")
+}));
+"""
+        out = self.run_project(checks)
+        self.assertTrue(out["cargento"])
+        self.assertTrue(out["asr"])
+        self.assertTrue(out["disclosure"])
+        self.assertTrue(out["noLaneRepeat"])
+        self.assertTrue(out["next"])
+        self.assertTrue(out["noEmptySurroundings"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_what_changed_separates_real_steering_from_demonstrated_outcomes(self) -> None:
@@ -733,7 +784,7 @@ const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Other project sessions"));
+const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
 const visibleText = graph;
 const primaryText = Array.from(visibleText.matchAll(
   /<div class="pc-trail-top">([\\s\\S]*?)<\\/div>/g
@@ -802,7 +853,7 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Other project sessions"));
+const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
   visible: graph.includes("Show current intents") && graph.includes("Keep the lane grammar"),
   diamonds: (graph.match(/data-steering-state="unpaired"/g) || []).length === 2,
@@ -845,8 +896,7 @@ const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const graph = h.slice(h.indexOf("Work & steering"),
-  __els.app.innerHTML.indexOf("Other project sessions"));
+const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
 const primary = graph.split('<details class="pc-semantic-overflow">')[0];
 console.log(JSON.stringify({
   finalPrimary: primary.includes("Search index shipped") && primary.includes('data-trail-head="outcome"'),
@@ -886,10 +936,9 @@ console.log(JSON.stringify({
   omittedEmpty: !primary.includes("Active child hierarchy") &&
     !primary.includes("model unavailable") && !primary.includes("workflow stage unavailable") &&
     !primary.includes("open-block reading unavailable"),
-  concisePrimary: primary.includes("No request detected") &&
+  concisePrimary: primary.includes("no request") &&
     !primary.includes("not proof") && !primary.includes("source unavailable"),
   limitsOnce: count("Browser focus is operator-authored") === 1 &&
-    count("No request detected") === 1 &&
     count("does not prove unblocked") === 1 &&
     count("chronology alone is not causality") === 1 &&
     count("Stage and block are omitted when absent") === 1,
@@ -933,7 +982,7 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Other project sessions"));
+const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
 const evidence = h.slice(h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
   tree: graph.split('data-assignment-lane="current"').length - 1 === 2 &&
@@ -1040,12 +1089,12 @@ const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const rightNow = h.slice(h.indexOf("Right now"), h.indexOf("Work & steering"));
-const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Other project sessions"));
+const operator = h.slice(h.indexOf('class="pc-operator"'), h.indexOf("Work & steering"));
+const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
 const evidence = h.slice(h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
-  noFalseRoster: !rightNow.includes("Assignments") &&
-    !rightNow.includes('data-assignment-state="awaiting_result"'),
+  noFalseRoster: !operator.includes("Assignments") &&
+    !operator.includes('data-assignment-state="awaiting_result"'),
   currentWork: graph.includes("Fix current encoder fault") &&
     graph.includes("recently dispatched · current state not confirmed"),
   historyCollapsed: evidence.includes("Past dispatches without observed result · 12") &&
@@ -1080,10 +1129,10 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const row = h.slice(h.indexOf('data-assignment-lane="current"'), h.indexOf("Other project sessions"));
+const row = h.slice(h.indexOf('data-assignment-lane="current"'), h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
   visible: row.includes("Volta") && row.includes("Improve the assignment roster") &&
-    row.includes("working now"),
+    !row.includes("working now"),
   derivedSecondary: row.includes("cached child observer snapshot · cached-stale") &&
     row.indexOf("<details") < row.indexOf("cached child observer snapshot"),
   noGuess: !row.includes("exact parent dispatch") && !row.includes("gpt-")
@@ -1105,7 +1154,7 @@ console.log(JSON.stringify({
         self.assertIn("@media(max-width:520px)", styles)
         self.assertIn(".pc-nav{flex-wrap:nowrap}", styles)
         self.assertIn(".pc-project-tabs{overflow-x:auto;white-space:nowrap}", styles)
-        self.assertIn(".pc-mirror-head{flex-direction:column}", styles)
+        self.assertIn(".pc-operator{padding-inline:14px}", styles)
         self.assertIn(".pc-event-meta{align-items:flex-start;flex-wrap:wrap}", styles)
         self.assertIn("overflow-wrap:anywhere", styles)
 

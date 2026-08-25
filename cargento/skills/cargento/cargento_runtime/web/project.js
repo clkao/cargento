@@ -305,11 +305,15 @@ function projectSessionSection(title, rows){
     rows.map(projectSessionRow).join("") + `</div>`;
 }
 
-function projectMirrorAttention(d, sess, group){
-  const exactAsks = d.ask && Array.isArray(group.asks)
+function projectExactAsks(d, sess, group){
+  return d.ask && Array.isArray(group.asks)
     ? group.asks.filter(ask => String(ask && ask.harness || "") === String(sess.harness || "") &&
       String(ask && ask.session_id || "") === String(sess.sid || ""))
     : [];
+}
+
+function projectMirrorAttention(d, sess, group){
+  const exactAsks = projectExactAsks(d, sess, group);
   if(exactAsks.length){
     return `<div class="pc-mirror-attention attention" data-request-state="ask">` +
       `<span class="pc-kicker">Needs you</span>` +
@@ -324,7 +328,7 @@ function projectMirrorAttention(d, sess, group){
       ` data-arg="${esc(sessKey(sess))}">copy session link</button>` +
       `<code>live session overlay</code></div>`;
   }
-  return `<div class="pc-request-none" data-request-state="none">No request detected</div>`;
+  return "";
 }
 
 function projectDelegationLanes(sess, group){
@@ -356,32 +360,37 @@ function projectDelegationLanes(sess, group){
 function projectSessionMirror(d, sess, group){
   if(!sess){
     if(!projectQuerySession) return "";
-    return `<section class="pc-mirror unavailable">` +
-      `<div class="pc-kicker">Focused session unavailable</div>` +
-      `<p>The requested session is not present in this project's live dashboard payload.</p>` +
-      `<code>${esc(projectQuerySession)}</code></section>`;
+    return `<section class="pc-operator unavailable">` +
+      `<div class="pc-operator-line"><strong>UNAVAILABLE</strong>` +
+      `<span>focused session · state unknown · now</span></div>` +
+      `<details><summary>session</summary><code>${esc(projectQuerySession)}</code></details></section>`;
   }
   const key = sessKey(sess);
-  const detail = humanTool(sess.state_detail) || sess.last_prompt || "No current detail";
-  const state = sess.state === "working" ? "working now" :
-    ((sess.state === "needs_input" || sess.needs_you === true) ? "needs you" :
-      (sess.active ? "recent · idle" : "idle"));
+  const hierarchy = Array.isArray(sess.subagent_hierarchy) ? sess.subagent_hierarchy :
+    (Array.isArray(sess.subagents) ? sess.subagents : []);
+  const childCount = hierarchy.length;
+  const detail = childCount
+    ? `${childCount} ${childCount === 1 ? "child" : "children"}`
+    : (humanTool(sess.state_detail) || sess.last_prompt || "no current detail");
+  const exactAsks = projectExactAsks(d, sess, group);
+  const needs = exactAsks.length || sess.state === "needs_input" || sess.needs_you === true;
+  const state = needs ? "NEEDS YOU" : (sess.state === "working" ? "WORKING" : "IDLE");
+  const request = needs ? "request" : "no request";
   const activityAt = Number(sess.last_activity) || 0;
-  const freshness = activityAt && Number(d.generated)
-    ? `latest session evidence · ${fmtDur(Math.max(0, Number(d.generated) - activityAt))} ago`
-    : "latest session evidence · time unavailable";
-  return `<section class="pc-mirror" data-session-mirror="${esc(key)}">` +
-    `<div class="pc-mirror-head"><div><span class="pc-kicker">Right now</span>` +
-    `<h3>${esc(sess.title || "Untitled Codex session")}</h3></div>` +
-    `<div class="pc-mirror-actions">${projectRefreshControl(group.label, false)}` +
-    `<button type="button" class="quiet" data-calm="project-session-link-copy"` +
-    ` data-arg="${esc(key)}">copy session link</button></div></div>` +
-    `<div class="pc-mirror-meta"><code>${esc(key)}</code>` +
+  const age = activityAt && Number(d.generated)
+    ? Math.max(0, Number(d.generated) - activityAt) : null;
+  const freshness = age === null ? "time unknown" : (age < 10 ? "now" : fmtDur(age));
+  return `<section class="pc-operator" data-session-mirror="${esc(key)}"` +
+    ` data-operator-state="${esc(state.toLowerCase().replace(/ /g, "-"))}">` +
+    `<div class="pc-operator-line"><strong>${esc(state)}</strong>` +
+    `<span>${esc(detail)} · ${esc(request)} · ${esc(freshness)}</span></div>` +
+    `<details><summary>session</summary><div class="pc-operator-detail">` +
+    `<strong>${esc(sess.title || "Untitled Codex session")}</strong><code>${esc(key)}</code>` +
     (sess.model ? `<span>model · ${esc(sess.model)}</span>` : "") +
-    `<span>${esc(freshness)}</span></div>` +
-    `<div class="pc-now"><div class="pc-mirror-state"><strong>${esc(state)}</strong>` +
-    `<span>${esc(detail)}</span></div>` + projectMirrorAttention(d, sess, group) +
-    `</div></section>`;
+    `<div class="pc-operator-actions">${projectRefreshControl(group.label, false)}` +
+    `<button type="button" class="quiet" data-calm="project-session-link-copy"` +
+    ` data-arg="${esc(key)}">copy session link</button></div>` +
+    projectMirrorAttention(d, sess, group) + `</div></details></section>`;
 }
 
 function projectLoadContext(d, refresh){
@@ -525,7 +534,8 @@ function projectWorkflowLaneRow(d, row, lane){
   const body = `<div class="pc-trail-top"><strong>${esc(heading)}</strong>` +
     `<span>${status}</span></div>` +
     (workflow ? `<div class="pc-trail-result">${esc(row.assignment)}</div>` : "") +
-    `<div class="pc-trail-quiet">${esc(row.worker)} · working now · ${esc(row.relation)}</div>` +
+    `<div class="pc-trail-quiet">${esc(row.worker)}` +
+    (row.relation === "direct child" ? "" : ` · ${esc(row.relation)}`) + `</div>` +
     `<details class="pc-trail-history"><summary>source</summary>${esc(row.source)}</details>`;
   return projectGraphRow(d, row.at, kind, lane, body,
     `data-assignment-lane="current" data-subagent-depth="${row.depth}"` +
@@ -718,7 +728,7 @@ function projectView(d, draft){
   const sessions = surrounding.length
     ? projectSessionSection("Working now", surroundingWorking) +
       projectSessionSection("Recent and idle", surroundingIdle)
-    : `<div class="pc-empty">No other recent sessions in this project.</div>`;
+    : "";
   const workingNow = recent.filter(sess => sess.state === "working").length;
   const mirror = projectQuerySession ? projectSessionMirror(d, focus, group) : "";
   return top + `<nav class="pc-nav" aria-label="Projects">` +
@@ -727,15 +737,16 @@ function projectView(d, draft){
     ` data-arg="${esc(group.label)}">copy link</button></nav>` +
     `<section class="pc-focus"><div class="pc-focus-head"><div>` +
     `<span class="pc-kicker">Project context</span><h2>${esc(group.label)}</h2></div>` +
-    `<div class="pc-counts"><span><b>${workingNow}</b> working now</span>` +
+    `<div class="pc-counts">` +
+    (projectQuerySession ? "" : `<span><b>${workingNow}</b> working now</span>`) +
     `<span><b>${recent.length}</b> recent</span>` +
     `</div></div>${projectGoalBlock(group, goal, note)}` +
     `${mirror}` +
     `<div class="pc-activity"><div class="pc-active-head"><h3>Work & steering</h3>` +
     `<span>newest first</span></div>` +
     `${projectActivity(d, group, focus)}</div>` +
-    `<div class="pc-other"><div class="pc-active-head"><h3>Other project sessions</h3>` +
-    `<span>lightweight surrounding context</span></div>${sessions}</div>` +
+    (sessions ? `<div class="pc-other"><div class="pc-active-head"><h3>Other project sessions</h3>` +
+      `<span>surrounding context</span></div>${sessions}</div>` : "") +
     `</section>` +
     `<details class="pc-sources"><summary>Evidence / limits</summary>` +
     `${projectEvidenceLimits(group, focus)}</details>`;
