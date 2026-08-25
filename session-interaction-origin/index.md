@@ -82,3 +82,16 @@ Verified by: exercises for acknowledged, explicitly rejected, stale, and transpo
 Verified by: an adversarial request containing an unregistered tmux locator and shell metacharacters; the registered-channel resolver must reject the locator or deliver the text literally without command interpolation.
 
 ### Feedback Cycles
+
+## Stage Report: breadboard
+
+- DONE: Compare registered tmux delivery with a transport-neutral registered mailbox contract, leaving small inspectable artifacts and naming the choices that still matter.
+  Commit `cdb253b` adds the mechanism note, executable spike, stable result, comparison, recommendation, and eight open review choices.
+- DONE: Exercise two disposable candidate sessions with only one registered: prove intact exact-target delivery and refusal with zero delivered bytes for the unregistered target.
+  The runner starts one isolated tmux server with two candidates, registers one, proves exact text, and asserts zero bytes for the second.
+- DONE: Exercise acknowledged, rejected, stale, disconnected, and adversarial shell-metacharacter cases while touching no existing real session or private transcript content.
+  The runner fails on a wrong state, changed text, new bytes after refusal, a shell marker, or a result that differs from the committed JSON.
+
+### Summary
+
+The tmux spike proved server-owned resolution and literal delivery through a registered receiver. It also proved that tmux transport success cannot support an acknowledgement label without an application receipt. The breadboard recommends a registered long-poll mailbox, pending captain review of authentication, payload power, consent lifetime, queueing, and retry semantics.
