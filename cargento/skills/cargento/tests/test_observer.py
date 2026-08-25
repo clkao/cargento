@@ -15,6 +15,7 @@ import http.client
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -219,6 +220,41 @@ class ObserverAnalyzerTest(unittest.TestCase):
         self.assertEqual("implementation", result["stage"])
         # The block comes from recent assistant text containing a block indicator.
         self.assertIn("blocked", result["block"])
+
+    def test_claude_outer_role_records_supply_a_real_goal(self) -> None:
+        """Claude writes `type: user`, while Pi writes `type: message`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_transcript(
+                tmp,
+                [
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "uuid": "captain-1",
+                            "timestamp": "2026-08-24T20:00:00Z",
+                            "message": {
+                                "role": "user",
+                                "content": "Show the project observer goal",
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "uuid": "meta-1",
+                            "isMeta": True,
+                            "message": {
+                                "role": "user",
+                                "content": [{"type": "text", "text": "Injected skill body"}],
+                            },
+                        }
+                    ),
+                ],
+            )
+
+            result = self.analyze(path)
+
+        self.assertEqual("Show the project observer goal", result["goal"])
 
     def _fo_transcript(
         self, tmp: str, *, stage: str, declared: list[str], age_sec: float = 0.0
@@ -450,6 +486,53 @@ class ObserverAnalyzerTest(unittest.TestCase):
         # The deterministic goal survives the model crash.
         self.assertIn("Review the PR", result["goal"])
         self.assertIsNone(result["reason"])
+
+    def test_codex_goal_model_pins_luna_max_and_runs_ephemerally(self) -> None:
+        recorded: dict[str, Any] = {}
+
+        def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            recorded["command"] = command
+            recorded["prompt"] = kwargs["input"]
+            output = Path(command[command.index("--output-last-message") + 1])
+            output.write_text("Resume the accepted project checkpoint\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = dataclasses.replace(
+                self.config,
+                state_dir=Path(tmp),
+                state_home=tmp,
+            )
+            caller = observer.CodexGoalModel(
+                config,
+                runner=run,
+                binary_resolver=lambda _name: "/opt/bin/codex",
+            )
+
+            result = caller("Captain requested the exact checkpoint", "shaping")
+
+        command = recorded["command"]
+        self.assertEqual("Resume the accepted project checkpoint", result)
+        self.assertEqual("gpt-5.6-luna", command[command.index("--model") + 1])
+        self.assertIn("model_reasoning_effort=max", command)
+        self.assertIn("--ephemeral", command)
+        self.assertEqual("read-only", command[command.index("--sandbox") + 1])
+        self.assertIn("<transcript_excerpt>", recorded["prompt"])
+        self.assertEqual("used", caller.metadata()["status"])
+
+    def test_codex_no_goal_output_keeps_the_deterministic_goal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_transcript(
+                tmp,
+                [
+                    _pi_session("model-empty-001"),
+                    _pi_message("m1", None, "user", "Review the release checkpoint"),
+                ],
+            )
+
+            result = self.analyze(path, model=lambda _recent, _stage: observer.NO_GOAL + ".")
+
+        self.assertEqual("Review the release checkpoint", result["goal"])
 
     def test_no_goal_sentinel_not_overridden_by_model(self) -> None:
         """The deterministic short-circuit bypasses the model entirely: a

@@ -6,6 +6,7 @@ import json
 import shutil
 import unittest
 from typing import Any
+from urllib.parse import quote, urlencode
 
 from . import test_page_calm
 from .page_harness import PageJsHarness
@@ -23,13 +24,26 @@ const liveAsk = o => Object.assign({id: "ask-live", harness: "claude",
     )
 
     @staticmethod
-    def prelude(*, project: str = "repo/proj", goal: str | None = None) -> str:
+    def prelude(
+        *,
+        project: str = "repo/proj",
+        goal: str | None = None,
+        goals: dict[str, str] | None = None,
+        query_project: str | None = None,
+    ) -> str:
         values = {
             "cargento.displayMode": "project",
             "cargento.projectCockpitProject": project,
         }
+        seeded_goals = dict(goals or {})
         if goal is not None:
-            values[f"cargento.projectGoal.v1:{project.replace('/', '%2F')}"] = goal
+            seeded_goals[project] = goal
+        for label, value in seeded_goals.items():
+            values[f"cargento.projectGoal.v1:{quote(label, safe='')}"] = value
+        query_items = [("mode", "project")]
+        if query_project:
+            query_items.append(("project", query_project))
+        query = "?" + urlencode(query_items)
         return f"""
 let __store = {json.dumps(values)};
 const localStorage = {{
@@ -37,17 +51,37 @@ const localStorage = {{
   setItem(k, v){{ __store[k] = String(v); }},
   removeItem(k){{ delete __store[k]; }}
 }};
-const navigator = {{}};
+location.search = {json.dumps(query)};
+location.href = "http://127.0.0.1:8766/" + location.search + location.hash;
+let __historyUrls = [];
+const history = {{
+  pushState(_s, _t, u){{ __historyUrls.push(String(u)); const x = new URL(String(u), location.href);
+    location.href = x.toString(); location.search = x.search; location.hash = x.hash; }},
+  replaceState(_s, _t, u){{ this.pushState(_s, _t, u); }}
+}};
+let __links = [];
+const navigator = {{clipboard: {{writeText(s){{ __links.push(String(s)); return Promise.resolve(); }}}}}};
 let __timers = [];
 const setTimeout = fn => {{ __timers.push(fn); return __timers.length; }};
 """
 
     def run_project(
-        self, checks: str, *, project: str = "repo/proj", goal: str | None = None
+        self,
+        checks: str,
+        *,
+        project: str = "repo/proj",
+        goal: str | None = None,
+        goals: dict[str, str] | None = None,
+        query_project: str | None = None,
     ) -> Any:
         return self._run_page_js(
             self.FIXTURE + checks,
-            prelude=self.prelude(project=project, goal=goal),
+            prelude=self.prelude(
+                project=project,
+                goal=goal,
+                goals=goals,
+                query_project=query_project,
+            ),
         )
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
@@ -58,7 +92,8 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   mode: displayMode,
   className: __els.app.className,
-  compactNav: h.includes('class="pc-nav"') && !h.includes("Which project are you working toward?"),
+  compactNav: h.includes('id="pc-project-select"') && h.includes('class="pc-link"') &&
+    !h.includes('class="pc-project'),
   chosen: h.includes("Working toward</span><h2>repo/proj</h2>"),
   active: h.includes("1</b> active"),
   empty: h.includes("No session in this project is asking through Cargento."),
@@ -83,15 +118,17 @@ console.log(JSON.stringify({
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_real_observer_context_stays_subordinate_to_operator_goal(self) -> None:
         checks = """
-observerBySid["claude:aaa1"] = {state: "ready", sidecar: {
-  goal: "Derived session goal", stage: "shaping", block: "waiting for captain"
+projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
+  observers: [{harness: "claude", sid: "aaa1", goal: "Derived session goal",
+    stage: "shaping", block: "waiting for captain"}], events: [],
+  sources: {gate: {}, steer: {unavailable: []}}
 }};
 render(projectBoard());
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   operator: h.includes("Operator goal <em>authoritative · browser only</em>"),
   observed: h.includes("Derived session goal"),
-  scoped: h.includes("session-scoped · claude:aaa1"),
+  scoped: h.includes("derived, subordinate") && h.includes("claude:aaa1"),
   separate: h.indexOf("Operator goal") < h.indexOf("Derived session goal"),
   noOverwrite: h.includes("observer text never overwrites this field")
 }));
@@ -106,14 +143,24 @@ console.log(JSON.stringify({
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_activity_reuses_causal_log_shape_without_mocked_history(self) -> None:
         checks = """
-blocked.last_prompt = "Prepare the release path";
-render(projectBoard([liveAsk()]));
+projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
+  observers: [], events: [
+    {at: 99990, kind: "steer", phase: "captain instruction", title: "Prepare release path",
+      detail: "claude:aaa1", source: "transcript user message"},
+    {at: 99980, kind: "gate", phase: "gate decision · application consumed",
+      title: "project-cockpit · shaping · approve", detail: "explore · claude:aaa1",
+      source: "Spacedock entity gate frontmatter"}
+  ], sources: {gate: {live: 1, untimestamped_prepare: 2, status_history: "unavailable"},
+    steer: {live: 1, unavailable: []}}
+}};
+render(projectBoard());
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   graph: h.includes('class="pc-log"') && h.includes('class="pc-event-node"'),
-  instruction: h.includes("latest instruction"),
-  decision: h.includes("decision requested") && h.includes("Choose the release path?"),
-  boundary: h.includes("historical steering and gate decisions are unavailable"),
+  instruction: h.includes("captain instruction") && h.includes("transcript user message"),
+  decision: h.includes("application consumed") && h.includes("shaping · approve"),
+  boundary: h.includes("2 gate preparations lack timestamps") &&
+    h.includes("status-transition history unavailable"),
   noMockTags: !h.includes("generated</span>") && !h.includes("consistency")
 }));
 """
@@ -153,6 +200,7 @@ const d = payload([mk({project: '<img src=x onerror="boom">',
   harness: 'codex" data-calm="stop', sid: "sid<em>owned</em>", active: true})]);
 Object.assign(d, {ask: true, asks: []});
 projectCockpitLabel = '<img src=x onerror="boom">';
+projectQueryLabel = projectCockpitLabel;
 render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
@@ -190,6 +238,7 @@ console.log(JSON.stringify({key, saved, shown, cleared: !(key in __store)}));
     def test_live_refresh_preserves_a_focused_unsaved_goal_draft(self) -> None:
         checks = """
 const field = {value: "draft not saved yet", focus(){},
+  getAttribute(k){ return k === "data-project" ? "repo/proj" : null; },
   setSelectionRange(){ this.restored = true; }};
 __els["pc-goal"] = field;
 document.activeElement = field;
@@ -204,6 +253,85 @@ console.log(JSON.stringify({
         self.assertTrue(out["draft"])
         self.assertTrue(out["restored"])
         self.assertTrue(out["notStored"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_project_goals_stay_distinct_across_switching_and_permalink_reload(self) -> None:
+        checks = """
+render(projectBoard());
+const first = __els.app.innerHTML;
+setProjectCockpit("repo/other");
+const second = __els.app.innerHTML;
+projectQueryLabel = "repo/proj";
+render(projectBoard());
+const returned = __els.app.innerHTML;
+console.log(JSON.stringify({
+  first: first.includes("Goal for project A") && !first.includes("Goal for project B"),
+  second: second.includes("Goal for project B") && !second.includes("Goal for project A"),
+  returned: returned.includes("Goal for project A") && !returned.includes("Goal for project B"),
+  routed: __historyUrls.some(u => u.includes("mode=project") && u.includes("project=repo%2Fother"))
+}));
+"""
+        goals = {"repo/proj": "Goal for project A", "repo/other": "Goal for project B"}
+        out = self.run_project(checks, goals=goals, query_project="repo/proj")
+        self.assertTrue(out["first"])
+        self.assertTrue(out["second"])
+        self.assertTrue(out["returned"])
+        self.assertTrue(out["routed"])
+
+        reloaded = self.run_project(
+            """
+render(projectBoard());
+const h = __els.app.innerHTML;
+console.log(JSON.stringify({chosen: h.includes("Working toward</span><h2>repo/other</h2>"),
+  goal: h.includes("Goal for project B"), noLeak: !h.includes("Goal for project A")}));
+""",
+            goals=goals,
+            query_project="repo/other",
+        )
+        self.assertTrue(reloaded["chosen"])
+        self.assertTrue(reloaded["goal"])
+        self.assertTrue(reloaded["noLeak"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_direct_permalink_selects_project_and_copy_preserves_other_query_state(self) -> None:
+        checks = """
+render(projectBoard());
+projectGoalAction("project-link-copy", "repo/other");
+await __settle();
+console.log(JSON.stringify({
+  selected: __els.app.innerHTML.includes("Working toward</span><h2>repo/other</h2>"),
+  copied: __links[0],
+  note: __els.app.innerHTML.includes("project link copied")
+}));
+"""
+        out = self.run_project(checks, query_project="repo/other")
+        self.assertTrue(out["selected"])
+        self.assertIn("mode=project", out["copied"])
+        self.assertIn("project=repo%2Fother", out["copied"])
+        self.assertTrue(out["note"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_observer_runs_on_selection_and_only_repeats_for_explicit_refresh(self) -> None:
+        checks = """
+__fetchImpl = () => Promise.resolve({ok: true, json: () => Promise.resolve({
+  observers: [], events: [], sources: {gate: {}, steer: {unavailable: []}}
+})});
+lastData = projectBoard();
+render(lastData);
+await __settle(); await __settle();
+render(lastData);
+projectAction("project-context-refresh", "repo/proj");
+await __settle(); await __settle();
+console.log(JSON.stringify({
+  calls: __fetchCalls.map(call => call[0]).filter(url => url.includes("/api/project-context")),
+  refreshControl: __els.app.innerHTML.includes('data-calm="project-context-refresh"')
+}));
+"""
+        out = self.run_project(checks)
+        self.assertEqual(2, len(out["calls"]))
+        self.assertNotIn("refresh=1", out["calls"][0])
+        self.assertIn("refresh=1", out["calls"][1])
+        self.assertTrue(out["refreshControl"])
 
 
 if __name__ == "__main__":

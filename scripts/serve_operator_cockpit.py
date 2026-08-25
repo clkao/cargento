@@ -189,9 +189,12 @@ class BackendPool:
             raise IntegrationError(f"checkpoint has no Cargento launcher: {server}")
         self.log_dir.mkdir(parents=True, exist_ok=True)
         log_handle = (self.log_dir / f"backend-{port}.log").open("ab")
+        environment = os.environ.copy()
+        environment["CARGENTO_HOME"] = str(self.log_dir / "cargento-home")
         process = subprocess.Popen(  # noqa: S603 - argv is fully controlled here
             [str(self.python), str(server), "--port", str(port), "--no-usage"],
             cwd=root,
+            env=environment,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             start_new_session=True,

@@ -19,6 +19,7 @@ from cargento_runtime import dismissals, notifications, quota, records
 from cargento_runtime import events as runtime_events
 from cargento_runtime import io as runtime_io
 from cargento_runtime import observer as runtime_observer
+from cargento_runtime import project_context as runtime_project_context
 from cargento_runtime import snapshot as runtime_snapshot
 from cargento_runtime import stream as runtime_stream
 
@@ -426,9 +427,35 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._health()
         elif url.path == "/api/observe":
             self._observe(url)
+        elif url.path == "/api/project-context":
+            self._project_context(url)
         else:
             return False
         return True
+
+    def _project_context(self, url: ParseResult) -> None:
+        """Read the observer and timestamped event sources for one project."""
+        if not self._local_ok():
+            self.send_error(403)
+            return
+        project = parse_qs(url.query).get("project", [""])[0]
+        application = self.server.application
+        if not project or len(project) > application.config.ask_project_cap_chars:
+            self.send_error(400, "a bounded project label is required")
+            return
+        collected = application.collect(show_all=False)
+        result = runtime_project_context.collect(
+            application.config,
+            application.state,
+            collected["sessions"],
+            project,
+            now=application.clock(),
+            refresh=parse_qs(url.query).get("refresh", ["0"])[0] == "1",
+        )
+        self._send(
+            json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode(),
+            "application/json",
+        )
 
     def _data(self, url: ParseResult) -> None:
         query = parse_qs(url.query)
