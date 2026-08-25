@@ -27,6 +27,17 @@ gates:
                 digest: sha256:b8ad2a22b4f31d30d1b69dab5130d4c948d927fa6dfdb28793d78196da181872
                 request-digest: sha256:41bbe156aa2e19d5cb5b6ab9271942720b5b12f4bb0ef4d8b1f8eac57c5d6541
                 room-ref: ./review/backlog/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:a1wk3a7zaz8zdqv0d3r01wcm:backlog:1
+                briefing: briefing:a1wk3a7zaz8zdqv0d3r01wcm:backlog:attempt-1:revision-1
+                by: person:captain
+                at: "2026-08-25T03:33:24.288251Z"
+                decision: approve
+                reason: Captain approved the bounded interaction-origin probe using only disposable registered sessions; existing real sessions and private transcript content remain out of scope.
+              application:
+                target-stage: breadboard
+                state: pending
 ---
 
 Discover a safe, explicit channel through which the Cargento UI can steer the intended active session and report delivery honestly.
