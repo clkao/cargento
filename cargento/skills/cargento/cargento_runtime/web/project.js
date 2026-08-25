@@ -432,39 +432,22 @@ function projectLoadContext(d, refresh){
   });
 }
 
-function projectTimelineEvents(d, group, focus, sourceEvents){
+function projectTimelineEvents(focus, sourceEvents){
   const exact = row => !focus ||
     (row.harness === focus.harness && row.sid === focus.sid);
   const events = sourceEvents.filter(exact).map(row => Object.assign({}, row));
-  if(focus && Array.isArray(focus.subagent_events)){
-    for(const row of focus.subagent_events){
-      const labels = {
-        subagent_task_started: ["child task started", "task start"],
-        subagent_complete: ["child completed", "completion"],
-        subagent_interrupted: ["child interrupted", "interruption"]
-      };
-      const label = labels[row.kind];
-      if(!label || !Number(row.at)) continue;
-      events.push({
-        at: Number(row.at), kind: row.kind, phase: `subagent ${label[1]}`,
-        title: `${label[0]} · ${row.name || "subagent"}`,
-        detail: row.parent_name ? `child of ${row.parent_name}` : "direct child",
-        source: row.source || "source unavailable"
-      });
-    }
-  }
-  if(focus && d.ask && Array.isArray(group.asks)){
-    for(const ask of group.asks){
-      if(String(ask && ask.harness || "") !== String(focus.harness || "") ||
-          String(ask && ask.session_id || "") !== String(focus.sid || "")) continue;
-      events.push({
-        at: Math.max(0, (Number(d.generated) || 0) - (Number(ask.age_sec) || 0)),
-        kind: "ask", phase: "exact request", title: ask.question,
-        detail: "awaiting an option", source: "AskRegistry · exact focused session"
-      });
-    }
-  }
   return events.filter(event => Number(event.at)).sort((a, b) => a.at - b.at).slice(-12);
+}
+
+function projectLifecycleEvidence(focus){
+  const events = focus && Array.isArray(focus.subagent_events) ? focus.subagent_events : [];
+  if(!events.length) return "";
+  const count = kind => events.filter(event => event.kind === kind).length;
+  return `<p data-lifecycle-suppressed="${events.length}"><b>Suppressed child telemetry:</b> ` +
+    `${events.length} typed child lifecycle records · ` +
+    `${count("subagent_task_started")} task starts · ${count("subagent_complete")} completions · ` +
+    `${count("subagent_interrupted")} interruptions. Lifecycle labels without demonstrated results stay telemetry; ` +
+    `they do not enter What happened.</p>`;
 }
 
 function projectSemanticNode(d, event, kind){
@@ -503,8 +486,6 @@ function projectActivity(d, group, focus){
   const contextEvents = entry && entry.data && Array.isArray(entry.data.events)
     ? entry.data.events : [];
   const events = projectTimelineEvents(
-    d,
-    group,
     focus,
     contextEvents
   );
@@ -613,6 +594,7 @@ function projectView(d, draft){
     `<p><b>Observer:</b> goals come from bounded Claude, Codex, or Pi transcripts and stay subordinate. For the present handoff, workflow stage unavailable and open-block reading unavailable remain explicit rather than inferred.</p>` +
     `<p><b>History:</b> known meta wrappers are excluded; remaining steering evidence is labeled only as timestamped user-role transcript messages because captain authorship is not recorded. Gate decisions are timestamped entity frontmatter resolutions. Untimestamped prepare and status-transition history stay unavailable.</p>` +
     `<p><b>Child lifecycle:</b> Codex hierarchy follows recorded parent thread ids. Task-start, completion, and interruption events are bounded to typed records in the 24 newest child rollouts; no spawn is inferred from a task start or from file freshness.</p>` +
+    `${projectLifecycleEvidence(focus)}` +
     `<p><b>Requests:</b> “No request detected” means neither an exact focused-session AskRegistry row nor a live needs-input overlay is present. It is not proof that this session is unblocked.</p>` +
     `<p><b>Unavailable:</b> durable project identity, durable operator-note persistence, ask reassignment, steering transport, and unsupported stage, block, gate, or outcome history.</p>` +
     `${projectContextEntry(group.label) && projectContextEntry(group.label).data

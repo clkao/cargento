@@ -408,7 +408,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["noMockTags"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
-    def test_nested_child_hierarchy_and_lifecycle_join_the_focused_timeline(self) -> None:
+    def test_live_child_hierarchy_stays_primary_while_lifecycle_is_suppressed(self) -> None:
         checks = """
 projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generated: 100000,
   data: {observers: [], events: [], sources: {gate: {}, steer: {unavailable: []}}}};
@@ -421,20 +421,29 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
   subagent_events: [
     {at: 99985, kind: "subagent_task_started", name: "Turing", model: "gpt-5.6-sol",
       depth: 2, parent_name: "Volta", source: "Codex child rollout lifecycle"},
+    {at: 99986, kind: "subagent_task_started", name: "Turing", task_label: "Compile release",
+      depth: 2, parent_name: "Volta", source: "Codex child rollout lifecycle"},
     {at: 99995, kind: "subagent_complete", name: "Turing", model: "gpt-5.6-sol",
+      depth: 2, parent_name: "Volta", source: "Codex child rollout lifecycle"},
+    {at: 99996, kind: "subagent_complete", name: "Turing", model: "gpt-5.6-sol",
       depth: 2, parent_name: "Volta", source: "Codex child rollout lifecycle"}
   ]
 })]);
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
+const graph = h.slice(h.indexOf("What changed"), h.indexOf("Other project sessions"));
+const evidence = h.slice(h.indexOf("Evidence and limitations"));
 console.log(JSON.stringify({
   tree: h.includes("Active child hierarchy") &&
     h.includes('data-subagent-depth="1"') && h.includes('data-subagent-depth="2"'),
   nested: h.indexOf("Volta") < h.indexOf("Turing") && h.includes("child of Volta"),
-  lifecycle: h.includes("child task started") && h.includes("child completed") &&
-    h.includes("Codex child rollout lifecycle"),
-  order: h.indexOf("child task started") < h.indexOf("child completed")
+  lifecycleHidden: !graph.includes("child task started") && !graph.includes("child completed") &&
+    !graph.includes("Compile release") && !graph.includes("Codex child rollout lifecycle"),
+  collapsed: evidence.includes("4 typed child lifecycle records") &&
+    evidence.includes("2 task starts · 2 completions · 0 interruptions"),
+  labelWithoutOutcome: !graph.includes("Compile release") &&
+    evidence.includes("Lifecycle labels without demonstrated results stay telemetry")
 }));
 """
         out = self.run_project(
@@ -444,8 +453,9 @@ console.log(JSON.stringify({
         )
         self.assertTrue(out["tree"])
         self.assertTrue(out["nested"])
-        self.assertTrue(out["lifecycle"])
-        self.assertTrue(out["order"])
+        self.assertTrue(out["lifecycleHidden"])
+        self.assertTrue(out["collapsed"])
+        self.assertTrue(out["labelWithoutOutcome"])
 
     def test_project_narrow_width_rules_keep_primary_content_wrappable(self) -> None:
         styles = (
