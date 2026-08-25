@@ -298,24 +298,76 @@ function projectMirrorAttention(d, sess, group){
   return `<div class="pc-request-none" data-request-state="none">No request detected</div>`;
 }
 
-function projectSubagentHierarchy(sess){
+function projectLiveAssignments(sess, group){
   const reported = Array.isArray(sess.subagent_hierarchy)
     ? sess.subagent_hierarchy
     : (Array.isArray(sess.subagents) ? sess.subagents.map(agent => Object.assign({
       depth: 1, parent_name: null
     }, agent)) : []);
   if(!reported.length) return "";
+  const entry = projectContextEntry(group.label);
+  const observed = entry && entry.data && Array.isArray(entry.data.child_assignments)
+    ? entry.data.child_assignments : [];
   const rows = reported.slice().sort((a, b) =>
     (Number(a.depth) || 1) - (Number(b.depth) || 1));
-  return `<div class="pc-child-tree"><span class="pc-kicker">Active child hierarchy</span>` +
+  return `<div class="pc-assignment-group" data-assignment-group="working">` +
+    `<div class="pc-assignment-head"><strong>Working now</strong><b>${rows.length}</b></div>` +
     rows.map(agent => {
       const depth = Math.max(1, Math.min(6, Number(agent.depth) || 1));
       const relation = agent.parent_name ? `child of ${agent.parent_name}` : "direct child";
-      const model = agent.model ? ` · ${agent.model}` : "";
-      return `<div class="pc-child depth-${depth}" data-subagent-depth="${depth}">` +
-        `<span class="pc-child-node"></span><strong>${esc(agent.name || "subagent")}</strong>` +
-        `<span>${esc(relation + model)}</span></div>`;
+      const fallback = observed.find(row => row.observer_sid && row.observer_sid === agent.observer_sid) || {};
+      const assignment = agent.assignment || fallback.assignment || "assignment unavailable";
+      const source = agent.assignment ? (agent.assignment_status || "exact parent dispatch") :
+        (fallback.assignment ? `${fallback.source || "child observer snapshot"} · ${fallback.snapshot_status || "derived"}` :
+          "no readable parent dispatch or cached child snapshot");
+      const observedAt = Number(fallback.observed_at)
+        ? ` · ${new Date(Number(fallback.observed_at) * 1000).toISOString()}` : "";
+      return `<div class="pc-assignment depth-${depth}" data-subagent-depth="${depth}"` +
+        ` data-assignment-state="working"><span class="pc-child-node"></span>` +
+        `<div class="pc-assignment-copy"><strong>${esc(agent.name || "Subagent")}</strong>` +
+        `<span>${esc(assignment)}</span><small>${esc(relation)}</small>` +
+        `<details><summary>source</summary>${esc(source + observedAt)}</details></div>` +
+        `<em>working now</em></div>`;
     }).join("") + `</div>`;
+}
+
+function projectAssignmentRow(row, model){
+  const facts = Array.isArray(model.facts) ? model.facts : [];
+  const items = Array.isArray(model.work_items) ? model.work_items : [];
+  const fact = facts.find(candidate => candidate.fact_id === row.assignment_fact) || {};
+  const item = items.find(candidate => candidate.work_item_id === row.work_item_id) || {};
+  const worker = row.worker_kind === "ensign" ? "Ensign" : "Subagent";
+  const itemLabel = item.label || "";
+  const assignment = row.assignment || itemLabel || "assignment unavailable";
+  const distinctLabel = itemLabel && itemLabel !== assignment;
+  return `<div class="pc-assignment" data-assignment-state="${esc(row.state || "unknown")}">` +
+    `<span class="pc-child-node"></span><div class="pc-assignment-copy"><strong>${esc(worker)}</strong>` +
+    (distinctLabel ? `<b>${esc(itemLabel)}</b>` : "") + `<span>${esc(assignment)}</span>` +
+    projectFactEvidence(fact) + `</div>` +
+    `<em>${row.state === "completed" ? "completed" : "awaiting result"}</em></div>`;
+}
+
+function projectAssignmentRoster(group, sess){
+  const entry = projectContextEntry(group.label);
+  const model = entry && entry.data && entry.data.semantic || {};
+  const projections = model.projections || {};
+  const assignments = Array.isArray(projections.assignments) ? projections.assignments : [];
+  const awaiting = assignments.filter(row => row.state === "awaiting_result");
+  const completed = assignments.filter(row => row.state === "completed");
+  const live = projectLiveAssignments(sess, group);
+  const pending = awaiting.length ? `<div class="pc-assignment-group" data-assignment-group="awaiting">` +
+    `<div class="pc-assignment-head"><strong>Dispatched / awaiting result</strong><b>${awaiting.length}</b></div>` +
+    awaiting.map(row => projectAssignmentRow(row, model)).join("") + `</div>` : "";
+  const doneRows = completed.map(row => projectAssignmentRow(row, model)).join("");
+  const done = completed.length ? ((live || awaiting.length)
+    ? `<details class="pc-assignment-completed"><summary>Completed · ${completed.length}</summary>${doneRows}</details>`
+    : `<div class="pc-assignment-group" data-assignment-group="completed"><div class="pc-assignment-head">` +
+      `<strong>Completed</strong><b>${completed.length}</b></div>${doneRows}</div>`) : "";
+  const loading = !entry || entry.state === "loading"
+    ? `<div class="pc-child-empty">Reading assignment evidence…</div>` : "";
+  if(!live && !pending && !done && !loading) return "";
+  return `<div class="pc-assignment-roster"><span class="pc-kicker">Assignments</span>` +
+    live + pending + done + loading + `</div>`;
 }
 
 function projectSessionMirror(d, sess, group){
@@ -341,7 +393,7 @@ function projectSessionMirror(d, sess, group){
     (sess.model ? `<span>model · ${esc(sess.model)}</span>` : "") + `</div>` +
     `<div class="pc-now"><div class="pc-mirror-state"><strong>${esc(state)}</strong>` +
     `<span>${esc(detail)}</span></div>` + projectMirrorAttention(d, sess, group) +
-    projectSubagentHierarchy(sess) + `</div></section>`;
+    projectAssignmentRoster(group, sess) + `</div></section>`;
 }
 
 function projectLoadContext(d, refresh){

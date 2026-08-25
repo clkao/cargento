@@ -44,6 +44,7 @@ class CodexCollectorTest(RuntimeTestCase):
         self.assertEqual("root-session", meta["session_id"])
         self.assertEqual("child-thread", meta["thread_id"])
         self.assertEqual("parent-thread", meta["parent_session_id"])
+        self.assertIsNone(meta["agent_path"])
 
     def test_codex_subagent_usage_is_added_after_own_start_boundary(self) -> None:
         now = time.time()
@@ -203,7 +204,14 @@ class CodexCollectorTest(RuntimeTestCase):
                         "session_id": root_id,
                         "thread_source": "subagent",
                         "agent_nickname": name,
-                        "source": {"subagent": {"thread_spawn": {"parent_thread_id": parent}}},
+                        "source": {
+                            "subagent": {
+                                "thread_spawn": {
+                                    "parent_thread_id": parent,
+                                    "agent_path": f"/root/{str(name).casefold()}",
+                                }
+                            }
+                        },
                     }
                 )
             return {"type": "session_meta", "payload": payload}
@@ -237,8 +245,24 @@ class CodexCollectorTest(RuntimeTestCase):
         self.assertEqual("running 2 subagents", running["state_detail"])
         self.assertEqual(
             [
-                {"name": "Volta", "model": None, "depth": 1, "parent_name": None},
-                {"name": "Turing", "model": None, "depth": 2, "parent_name": "Volta"},
+                {
+                    "name": "Volta",
+                    "model": None,
+                    "depth": 1,
+                    "parent_name": None,
+                    "assignment": None,
+                    "assignment_status": "unavailable",
+                    "observer_sid": worker_id,
+                },
+                {
+                    "name": "Turing",
+                    "model": None,
+                    "depth": 2,
+                    "parent_name": "Volta",
+                    "assignment": None,
+                    "assignment_status": "unavailable",
+                    "observer_sid": "nested",
+                },
             ],
             running["subagent_hierarchy"],
         )
@@ -260,6 +284,89 @@ class CodexCollectorTest(RuntimeTestCase):
         self.assertEqual("Volta", terminal["parent_name"])
         self.assertEqual(2, terminal["depth"])
         self.assertEqual("Codex child rollout lifecycle", terminal["source"])
+
+    def test_live_child_assignment_requires_latest_exact_plaintext_parent_call(self) -> None:
+        now = time.time()
+        root_id = "55555555-5555-5555-5555-555555555555"
+
+        def event(kind: str) -> dict[str, Any]:
+            return {
+                "type": "event_msg",
+                "timestamp": datetime.fromtimestamp(now - 1, UTC).isoformat(),
+                "payload": {"type": kind, "started_at": now - 1},
+            }
+
+        def call(message: str) -> dict[str, Any]:
+            return {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "spawn_agent",
+                    "arguments": json.dumps(
+                        {
+                            "task_name": "roster_worker",
+                            "message": message,
+                        }
+                    ),
+                },
+            }
+
+        def collect_with(message: str) -> dict[str, Any]:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "2026" / "01" / "01"
+                root.mkdir(parents=True)
+                parent = root / "rollout-parent.jsonl"
+                child = root / "rollout-child.jsonl"
+                parent.write_text(
+                    "".join(
+                        json.dumps(row) + "\n"
+                        for row in [
+                            {"type": "session_meta", "payload": {"id": root_id, "cwd": "/tmp/p"}},
+                            call(message),
+                            event("task_started"),
+                        ]
+                    )
+                )
+                child.write_text(
+                    "".join(
+                        json.dumps(row) + "\n"
+                        for row in [
+                            {
+                                "type": "session_meta",
+                                "payload": {
+                                    "id": "child",
+                                    "session_id": root_id,
+                                    "thread_source": "subagent",
+                                    "agent_nickname": "Volta",
+                                    "source": {
+                                        "subagent": {
+                                            "thread_spawn": {
+                                                "parent_thread_id": root_id,
+                                                "agent_path": "/root/roster_worker",
+                                            }
+                                        }
+                                    },
+                                },
+                            },
+                            event("task_started"),
+                        ]
+                    )
+                )
+                os.utime(parent, (now, now))
+                os.utime(child, (now, now))
+                with store_patch(CODEX_SESSIONS_DIR=tmp):
+                    config, state = runtime()
+                    (session,) = codex_collector.collect(config, state, now, 24, False)
+            row = session["subagent_hierarchy"][0]
+            self.assertIsInstance(row, dict)
+            return dict(row)
+
+        visible = collect_with("Make subagent and ensign assignments visible. Preserve evidence.")
+        unavailable = collect_with("gAAAA-encrypted")
+        self.assertEqual("Make subagent and ensign assignments visible", visible["assignment"])
+        self.assertEqual("exact parent dispatch", visible["assignment_status"])
+        self.assertIsNone(unavailable["assignment"])
+        self.assertEqual("unavailable", unavailable["assignment_status"])
 
     def test_codex_meta_tolerates_malformed_payload_types(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

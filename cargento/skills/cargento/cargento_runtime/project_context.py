@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 MAX_PROJECT_EVENTS = 100
 MAX_PROJECT_OBSERVERS = 3
+MAX_ACTIVE_CHILD_OBSERVERS = 3
 MAX_SEMANTIC_LINE = 112
 
 _DIRECTIVE_PREFIX_RE = re.compile(
@@ -31,6 +32,11 @@ _DIRECTIVE_TAGS = (
     ("reframed", ("reframe", "refinement", "clarification", "change direction")),
     ("answered", ("answer to", "answered")),
     ("generated", ("new acceptance", "add a new", "create a new")),
+)
+_TASK_DIRECTIVE_RE = re.compile(
+    r"^(?:add|append|build|compare|create|design|diagnose|fix|implement|inspect|make|"
+    r"prepare|remove|replace|review|revise|run|test|update|verify|write)\b",
+    re.IGNORECASE,
 )
 _SEMANTIC_FACT_TYPES = {
     "steer": "user_message",
@@ -82,6 +88,7 @@ def _observe_session(
     *,
     now: float,
     refresh: bool,
+    child_activity_fallback: bool = False,
 ) -> dict[str, Any] | None:
     signature = _transcript_signature(transcript_path)
     cached = observer.read_sidecar(config, harness, sid)
@@ -107,7 +114,7 @@ def _observe_session(
             "snapshot_status": model_metadata["status"],
         }
 
-    caller = observer.CodexGoalModel(config)
+    caller = observer.CodexGoalModel(config, child_assignment=child_activity_fallback)
     result = observer.analyze(
         config,
         state,
@@ -116,6 +123,10 @@ def _observe_session(
         window_sec=config.window_hours * 3600,
         model=caller,
     )
+    if child_activity_fallback and result.get("goal") == observer.NO_GOAL:
+        result["goal"] = observer.derive_child_assignment(config, transcript_path, caller)
+        if result["goal"] != observer.NO_GOAL:
+            result["reason"] = "derived-from-readable-child-activity"
     model_metadata = caller.metadata()
     sidecar = {
         **result,
@@ -224,6 +235,28 @@ def _semantic_line(text: str, limit: int) -> str:
     return records.safe_text(sentence, limit)
 
 
+def _task_assignment(text: str, artifact: str) -> str:
+    """Select the current task directive, not a preceding status sentence."""
+    if artifact:
+        return ""
+    candidates: list[tuple[int, int, str]] = []
+    for index, raw in enumerate(text.splitlines()):
+        line = raw.strip().lstrip("#*- ").strip()
+        if not line or line.startswith(("```", "Message Type:", "Task name:", "Sender:")):
+            continue
+        task_match = re.match(r"^Task:\s*(.+)$", line, re.IGNORECASE)
+        if task_match:
+            candidates.append((4, index, task_match.group(1)))
+            continue
+        if _TASK_DIRECTIVE_RE.match(line):
+            priority = 5 if "stage report" in line.casefold() else 3
+            candidates.append((priority, index, line))
+    if candidates:
+        _priority, _index, chosen = max(candidates, key=lambda item: (item[0], -item[1]))
+        return _semantic_line(chosen, MAX_SEMANTIC_LINE)
+    return _semantic_line(text, MAX_SEMANTIC_LINE)
+
+
 def _record_timestamp(record: dict[str, Any]) -> float | None:
     message = record.get("message")
     message_ts = message.get("timestamp") if isinstance(message, dict) else None
@@ -294,6 +327,22 @@ def _dispatch_artifact_identity(artifact: str) -> tuple[str, str] | None:
     if not spacedock.SD_STAGE_RE.fullmatch(stage):
         return None
     return slug, stage
+
+
+def _dispatch_file_assignment(artifact: str) -> str:
+    """Read the bounded human work title from one exact dispatch artifact."""
+    if _dispatch_artifact_identity(artifact) is None:
+        return ""
+    prefix = "You are working on:"
+    for raw in runtime_io.iter_bounded_text_lines(
+        artifact,
+        max_lines=40,
+        per_line_bytes=2048,
+    ):
+        line = raw.strip()
+        if line.startswith(prefix):
+            return records.safe_text(line[len(prefix) :].strip(), MAX_SEMANTIC_LINE)
+    return ""
 
 
 def _subagent_specs(arguments: dict[str, Any]) -> list[tuple[str, str, str, str]]:
@@ -504,7 +553,8 @@ def _subagent_events(
         return []
     rows: list[dict[str, Any]] = []
     for index, (task, contributor, binding, artifact) in enumerate(specs):
-        title = _semantic_line(task, MAX_SEMANTIC_LINE)
+        assignment = _task_assignment(task, artifact)
+        title = assignment or _semantic_line(task, MAX_SEMANTIC_LINE)
         if not title:
             continue
         rows.append(
@@ -520,6 +570,8 @@ def _subagent_events(
                 "work_item_binding": binding,
                 "contributor_ref": contributor,
                 "dispatch_artifact": artifact,
+                "assignment": assignment,
+                "worker_kind": "ensign" if artifact else "subagent",
                 "stage": "started",
             }
         )
@@ -553,6 +605,8 @@ def _subagent_events(
                     "work_item_binding": binding,
                     "contributor_ref": contributor,
                     "dispatch_artifact": artifact,
+                    "assignment": _task_assignment(task, artifact),
+                    "worker_kind": "ensign" if artifact else "subagent",
                     "stage": "completed",
                 }
             )
@@ -679,6 +733,14 @@ def _work_evidence(
             harness=harness,
             sid=sid,
         )
+        for event in found:
+            artifact = str(event.get("dispatch_artifact") or "")
+            assignment = _dispatch_file_assignment(artifact)
+            if assignment:
+                event["assignment"] = assignment
+                event["source"] = (
+                    str(event.get("source") or "") + " and bounded dispatch artifact title"
+                )
         events.extend(found)
         if not found:
             stats["suppressed_tool_calls"] += 1
@@ -1016,7 +1078,7 @@ def _semantic_fact_from_event(
         "work_item_id": work_item_id or None,
         "evidence": {"source": source_event.get("source"), "confidence": "exact"},
     }
-    for key in ("stage", "decision", "by", "target_stage"):
+    for key in ("stage", "decision", "by", "target_stage", "assignment", "worker_kind"):
         if source_event.get(key) not in (None, ""):
             fact[key] = source_event[key]
     return fact
@@ -1141,6 +1203,35 @@ def _semantic_trail_heads(
     )
 
 
+def _semantic_assignments(
+    fact_by_work_item: dict[str, list[dict[str, Any]]],
+    work_items: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    assignments: list[dict[str, Any]] = []
+    for work_item_id, item_facts in fact_by_work_item.items():
+        births = [fact for fact in item_facts if fact.get("type") == "work_birth"]
+        if not births:
+            continue
+        birth = max(births, key=lambda fact: float(fact.get("at") or 0))
+        latest = max(item_facts, key=lambda fact: float(fact.get("at") or 0))
+        completed = latest.get("type") == "work_result"
+        work_item = work_items[work_item_id]
+        assignments.append(
+            {
+                "projection_id": _semantic_id("assignment", work_item_id, birth["fact_id"]),
+                "work_item_id": work_item_id,
+                "assignment_fact": birth["fact_id"],
+                "state_fact": latest["fact_id"],
+                "at": latest.get("at"),
+                "state": "completed" if completed else "awaiting_result",
+                "worker_kind": birth.get("worker_kind") or "subagent",
+                "assignment": birth.get("assignment") or work_item.get("label"),
+                "contributor_refs": list(work_item.get("contributor_refs") or []),
+            }
+        )
+    return sorted(assignments, key=lambda row: float(row.get("at") or 0), reverse=True)
+
+
 def _semantic_model(
     events: list[dict[str, Any]], observers: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -1216,6 +1307,7 @@ def _semantic_model(
     facts.extend(_semantic_observer_facts(observers))
     facts.sort(key=lambda fact: float(fact.get("at") or 0), reverse=True)
     trail_heads = _semantic_trail_heads(fact_by_work_item, facts)
+    assignments = _semantic_assignments(fact_by_work_item, work_items)
     return {
         "facts": facts,
         "work_items": list(work_items.values()),
@@ -1224,10 +1316,86 @@ def _semantic_model(
         "projections": {
             "operator_intents": intent_projections,
             "trail_heads": trail_heads,
+            "assignments": assignments,
             "steering_episodes": [],
             "candidate_goal_shifts": [],
         },
     }
+
+
+def _active_child_assignments(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    session: Mapping[str, Any],
+    *,
+    now: float,
+    refresh: bool,
+) -> list[dict[str, Any]]:
+    hierarchy = session.get("subagent_hierarchy")
+    if not isinstance(hierarchy, list):
+        return []
+    assignments: list[dict[str, Any]] = []
+    for raw_child in hierarchy[:MAX_ACTIVE_CHILD_OBSERVERS]:
+        if not isinstance(raw_child, dict):
+            continue
+        child = records.as_dict(raw_child)
+        row: dict[str, Any] = {
+            "name": records.safe_text(child.get("name") or "subagent", 70),
+            "depth": child.get("depth"),
+            "parent_name": child.get("parent_name"),
+            "observer_sid": child.get("observer_sid"),
+        }
+        exact = child.get("assignment")
+        if isinstance(exact, str) and exact:
+            assignments.append(
+                {
+                    **row,
+                    "assignment": exact,
+                    "confidence": "exact",
+                    "source": child.get("assignment_status") or "exact parent dispatch",
+                }
+            )
+            continue
+        child_sid = child.get("observer_sid")
+        if not isinstance(child_sid, str) or not child_sid:
+            assignments.append({**row, "assignment": None, "confidence": "unavailable"})
+            continue
+        transcript_path = observer.resolve_transcript(config, state, "codex", child_sid)
+        if transcript_path is None:
+            assignments.append({**row, "assignment": None, "confidence": "unavailable"})
+            continue
+        observed = _observe_session(
+            config,
+            state,
+            transcript_path,
+            "codex",
+            child_sid,
+            now=now,
+            refresh=refresh,
+            child_activity_fallback=True,
+        )
+        if observed is None:
+            assignments.append({**row, "assignment": None, "confidence": "unavailable"})
+            continue
+        goal = observed.get("goal")
+        if not isinstance(goal, str) or not goal or goal == observer.NO_GOAL:
+            assignments.append({**row, "assignment": None, "confidence": "unavailable"})
+            continue
+        assignments.append(
+            {
+                **row,
+                "assignment": goal,
+                "confidence": "derived",
+                "source": (
+                    "bounded child observer snapshot"
+                    if observed.get("snapshot_status") == "refreshed"
+                    else "cached child observer snapshot"
+                ),
+                "observed_at": observed.get("observed_at"),
+                "snapshot_status": observed.get("snapshot_status"),
+            }
+        )
+    return assignments
 
 
 def collect(
@@ -1269,6 +1437,7 @@ def collect(
     events: list[dict[str, Any]] = []
     unavailable: list[dict[str, str]] = []
     briefings = 0
+    child_assignments: list[dict[str, Any]] = []
     support_totals = {
         "tool_calls": 0,
         "dispatch_builds": 0,
@@ -1289,6 +1458,14 @@ def collect(
         harness = str(session.get("harness") or "")
         sid = str(session.get("sid") or "")
         identity = {"harness": harness, "sid": sid}
+        if focus is not None and harness == "codex":
+            child_assignments = _active_child_assignments(
+                config,
+                state,
+                session,
+                now=now,
+                refresh=refresh,
+            )
         transcript_path = observer.resolve_transcript(config, state, harness, sid)
         if transcript_path is None:
             unavailable.append({**identity, "reason": "transcript reader unavailable"})
@@ -1356,6 +1533,7 @@ def collect(
         "observers": observers,
         "events": timeline,
         "semantic": _semantic_model(timeline, observers),
+        "child_assignments": child_assignments,
         "sources": {
             "scope": scope,
             "surrounding_active": surrounding_active,

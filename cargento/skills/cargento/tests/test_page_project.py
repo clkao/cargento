@@ -704,8 +704,10 @@ projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generat
 const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
   active: true, state: "working", state_detail: "running 2 subagents",
   subagent_hierarchy: [
-    {name: "Volta", model: "gpt-5.6-sol", depth: 1, parent_name: null},
-    {name: "Turing", model: "gpt-5.6-sol", depth: 2, parent_name: "Volta"}
+    {name: "Volta", model: "gpt-5.6-sol", depth: 1, parent_name: null,
+      assignment: "Make assignments visible"},
+    {name: "Turing", model: "gpt-5.6-sol", depth: 2, parent_name: "Volta",
+      assignment: null}
   ],
   subagent_events: [
     {at: 99985, kind: "subagent_task_started", name: "Turing", model: "gpt-5.6-sol",
@@ -724,9 +726,11 @@ const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("What changed"), h.indexOf("Other project sessions"));
 const evidence = h.slice(h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
-  tree: h.includes("Active child hierarchy") &&
+  tree: h.includes("Assignments") && h.includes("Working now") &&
     h.includes('data-subagent-depth="1"') && h.includes('data-subagent-depth="2"'),
-  nested: h.indexOf("Volta") < h.indexOf("Turing") && h.includes("child of Volta"),
+  nested: h.indexOf("Volta") < h.indexOf("Turing") && h.includes("child of Volta") &&
+    h.includes("Make assignments visible") && h.includes("assignment unavailable") &&
+    !h.includes("gpt-5.6-sol"),
   lifecycleHidden: !graph.includes("child task started") && !graph.includes("child completed") &&
     !graph.includes("Compile release") && !graph.includes("Codex child rollout lifecycle"),
   collapsed: evidence.includes("4 typed child lifecycle records") &&
@@ -745,6 +749,98 @@ console.log(JSON.stringify({
         self.assertTrue(out["lifecycleHidden"])
         self.assertTrue(out["collapsed"])
         self.assertTrue(out["labelWithoutOutcome"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_assignment_roster_separates_awaiting_and_completed_source_backed_work(self) -> None:
+        checks = """
+projectContextByLabel[projectContextKey("git/asr")] = {state: "ready", generated: 100000,
+  data: {observers: [], events: [], semantic: {facts: [
+    {fact_id: "stage-report", at: 99999, type: "work_birth",
+      summary: "Append the missing Stage Report", work_item_id: "ordinary",
+      assignment: "Append the missing Stage Report", worker_kind: "subagent",
+      evidence: {source: "Pi subagent task label", confidence: "exact"}},
+    {fact_id: "ensign-birth", at: 99998, type: "work_birth",
+      summary: "release-cockpit · implementation dispatched", work_item_id: "ensign",
+      assignment: "Implement the assignment roster", worker_kind: "ensign",
+      evidence: {source: "structured dispatch artifact", confidence: "exact"}},
+    {fact_id: "done", at: 99990, type: "work_result", summary: "Review completed",
+      work_item_id: "review", assignment: "Review the roster", worker_kind: "subagent",
+      evidence: {source: "paired result", confidence: "exact"}}
+  ], work_items: [
+    {work_item_id: "ordinary", label: "Append the missing Stage Report", kind: "one_off"},
+    {work_item_id: "ensign", label: "release-cockpit · implementation", kind: "workflow_item"},
+    {work_item_id: "review", label: "Review the roster", kind: "one_off"}
+  ], contributors: [], relations: [], projections: {assignments: [
+    {work_item_id: "ordinary", assignment_fact: "stage-report", state_fact: "stage-report",
+      state: "awaiting_result", worker_kind: "subagent", assignment: "Append the missing Stage Report"},
+    {work_item_id: "ensign", assignment_fact: "ensign-birth", state_fact: "ensign-birth",
+      state: "awaiting_result", worker_kind: "ensign", assignment: "Implement the assignment roster"},
+    {work_item_id: "review", assignment_fact: "done", state_fact: "done",
+      state: "completed", worker_kind: "subagent", assignment: "Review the roster"}
+  ], operator_intents: [], trail_heads: [], steering_episodes: [], candidate_goal_shifts: []}},
+  sources: {gate: {}, steer: {unavailable: []}}}};
+const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
+  active: true, state: "idle", subagent_hierarchy: []})]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+console.log(JSON.stringify({
+  groups: h.includes("Dispatched / awaiting result") && h.includes("Completed · 1"),
+  assignments: h.includes("Append the missing Stage Report") &&
+    h.includes("release-cockpit · implementation") && h.includes("Implement the assignment roster"),
+  workerKinds: h.includes("Ensign") && h.includes("Subagent"),
+  states: h.includes('data-assignment-state="awaiting_result"') &&
+    h.includes('data-assignment-state="completed"'),
+  transportHidden: !h.includes("/tmp/spacedock-dispatch") && !h.includes("task is DONE") &&
+    !h.includes("gpt-") && !h.includes("toolCall")
+}));
+"""
+        out = self.run_project(
+            checks,
+            project="git/asr",
+            query_project="git/asr",
+            query_session="pi:asr-root",
+        )
+        self.assertTrue(out["groups"])
+        self.assertTrue(out["assignments"])
+        self.assertTrue(out["workerKinds"])
+        self.assertTrue(out["states"])
+        self.assertTrue(out["transportHidden"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_live_child_uses_cached_derived_assignment_only_as_a_labeled_fallback(self) -> None:
+        checks = """
+projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generated: 100000,
+  data: {child_assignments: [
+    {name: "Volta", observer_sid: "child-1", assignment: "Improve the assignment roster",
+      confidence: "derived", source: "cached child observer snapshot",
+      snapshot_status: "cached-stale", observed_at: 99990}
+  ], observers: [], events: [], sources: {gate: {}, steer: {unavailable: []}}}};
+const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
+  active: true, state: "working", subagent_hierarchy: [
+    {name: "Volta", depth: 1, parent_name: null, observer_sid: "child-1",
+      assignment: null, assignment_status: "unavailable"}
+  ]})]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+const row = h.slice(h.indexOf('data-assignment-state="working"'), h.indexOf("</div></div></section>"));
+console.log(JSON.stringify({
+  visible: row.includes("Volta") && row.includes("Improve the assignment roster") &&
+    row.includes("working now"),
+  derivedSecondary: row.includes("cached child observer snapshot · cached-stale") &&
+    row.indexOf("<details") < row.indexOf("cached child observer snapshot"),
+  noGuess: !row.includes("exact parent dispatch") && !row.includes("gpt-")
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["visible"])
+        self.assertTrue(out["derivedSecondary"])
+        self.assertTrue(out["noGuess"])
 
     def test_project_narrow_width_rules_keep_primary_content_wrappable(self) -> None:
         styles = (

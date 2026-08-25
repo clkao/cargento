@@ -590,6 +590,91 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual("requested", model["projections"]["trail_heads"][0]["status"])
         self.assertFalse(any(fact["type"] == "work_result" for fact in model["facts"]))
 
+    def test_dispatch_artifact_title_supplies_assignment_without_claiming_result(self) -> None:
+        artifact = "/tmp/spacedock-dispatch/spacedock-ensign-search-review.md"
+        with mock.patch(
+            "cargento_runtime.project_context.runtime_io.iter_bounded_text_lines",
+            return_value=iter(
+                [
+                    "You are working on: Review the search release evidence\n",
+                    "Stage: review\n",
+                ]
+            ),
+        ):
+            assignment = project_context._dispatch_file_assignment(artifact)
+
+        self.assertEqual("Review the search release evidence", assignment)
+        self.assertEqual("", project_context._dispatch_file_assignment("/tmp/unrelated.md"))
+
+    def test_active_child_assignment_uses_refreshable_snapshot_or_unavailable(self) -> None:
+        session = {
+            "subagent_hierarchy": [
+                {
+                    "name": "Volta",
+                    "depth": 1,
+                    "parent_name": None,
+                    "observer_sid": "child-thread",
+                    "assignment": None,
+                    "assignment_status": "unavailable",
+                }
+            ]
+        }
+        with (
+            mock.patch.object(observer, "resolve_transcript", return_value="/tmp/child.jsonl"),
+            mock.patch.object(
+                project_context,
+                "_observe_session",
+                return_value={
+                    "goal": "Improve the assignment roster",
+                    "observed_at": 12.0,
+                    "snapshot_status": "refreshed",
+                },
+            ) as observe,
+        ):
+            refreshed = project_context._active_child_assignments(
+                self.config,
+                mock.Mock(),
+                session,
+                now=self.NOW,
+                refresh=True,
+            )
+
+        self.assertEqual("Improve the assignment roster", refreshed[0]["assignment"])
+        self.assertEqual("derived", refreshed[0]["confidence"])
+        self.assertTrue(observe.call_args.kwargs["refresh"])
+
+        with (
+            mock.patch.object(observer, "resolve_transcript", return_value="/tmp/child.jsonl"),
+            mock.patch.object(
+                project_context,
+                "_observe_session",
+                return_value={
+                    "goal": "Earlier assignment",
+                    "observed_at": 10.0,
+                    "snapshot_status": "cached-stale",
+                },
+            ),
+        ):
+            stale = project_context._active_child_assignments(
+                self.config,
+                mock.Mock(),
+                session,
+                now=self.NOW,
+                refresh=False,
+            )
+        self.assertEqual("cached-stale", stale[0]["snapshot_status"])
+
+        with mock.patch.object(observer, "resolve_transcript", return_value=None):
+            unavailable = project_context._active_child_assignments(
+                self.config,
+                mock.Mock(),
+                session,
+                now=self.NOW,
+                refresh=False,
+            )
+        self.assertIsNone(unavailable[0]["assignment"])
+        self.assertEqual("unavailable", unavailable[0]["confidence"])
+
     def test_subagent_result_category_uses_directive_and_rejects_unavailable_review(self) -> None:
         succeeded = {"succeeded": True, "text": "A substantive result was returned."}
         unavailable = {

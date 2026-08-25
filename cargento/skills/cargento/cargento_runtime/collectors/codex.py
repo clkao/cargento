@@ -29,6 +29,7 @@ _USAGE_FILE_CAP = 8
 _CHILD_LIFECYCLE_FILE_CAP = 24
 _CHILD_LIFECYCLE_BYTES = 128 * 1024
 _CHILD_LIFECYCLE_EVENT_CAP = 12
+_CHILD_ASSIGNMENT_CAP = 140
 
 
 def _usage_window(now: float, raw: Any) -> tuple[str, dict[str, Any]] | None:
@@ -201,6 +202,53 @@ def _child_lifecycle(
     return list(reversed(events))
 
 
+def _assignment_summary(message: str) -> str:
+    for raw in message.splitlines():
+        line = raw.strip().lstrip("#*- ").strip()
+        if not line or line.startswith(("<", "```", "Message Type:", "Task name:", "Sender:")):
+            continue
+        sentence = line.split(". ", 1)[0].strip().rstrip(".")
+        return records.safe_text(sentence, _CHILD_ASSIGNMENT_CAP)
+    return ""
+
+
+def _child_assignment(
+    config: RuntimeConfig,
+    parent_path: str,
+    agent_path: str,
+) -> tuple[str | None, str]:
+    """Latest exact plaintext parent assignment for one child path."""
+    if not parent_path or not agent_path:
+        return None, "unavailable"
+    task_name = agent_path.rstrip("/").rsplit("/", 1)[-1]
+    latest: str | None = None
+    for raw in runtime_io.read_tail(config, parent_path):
+        try:
+            row = records.as_dict(json.loads(raw))
+        except (ValueError, json.JSONDecodeError):
+            continue
+        payload = records.as_dict(row.get("payload"))
+        if row.get("type") != "response_item" or payload.get("type") != "function_call":
+            continue
+        name = payload.get("name")
+        arguments = payload.get("arguments")
+        try:
+            args = records.as_dict(json.loads(arguments)) if isinstance(arguments, str) else {}
+        except (ValueError, json.JSONDecodeError):
+            continue
+        matches = (name == "spawn_agent" and args.get("task_name") == task_name) or (
+            name == "followup_task" and args.get("target") == agent_path
+        )
+        if not matches:
+            continue
+        message = args.get("message")
+        if not isinstance(message, str) or message.startswith("gAAAA"):
+            latest = None
+            continue
+        latest = _assignment_summary(message) or None
+    return (latest, "exact parent dispatch" if latest else "unavailable")
+
+
 def _rollouts(
     config: RuntimeConfig,
     state: RuntimeState,
@@ -247,6 +295,8 @@ def collect(
     # parent session_id -> running agents, recent child activity, and rate
     agent_data: dict[str, dict[str, Any]] = {}
     found, rollouts, meta_by_sid = _rollouts(config, state)
+    path_by_sid = {sid: fp for sid, _, fp, _ in rollouts}
+    assignment_cache: dict[tuple[str, str], tuple[str | None, str]] = {}
     lifecycle_paths = set(
         [
             fp
@@ -257,7 +307,8 @@ def collect(
 
     for sid, mtime, fp, meta in rollouts:
         if meta.get("subagent"):
-            parent_sid = meta.get("parent_session_id") or sid
+            immediate_parent_sid = meta.get("parent_session_id") or sid
+            parent_sid = immediate_parent_sid
             # Codex nests worker threads. Only top-level sessions are dashboard
             # rows, so walk the recorded parent links and attach each descendant
             # to the real row that owns it. The previous direct-parent lookup
@@ -309,6 +360,13 @@ def collect(
                 # Membership is present lifecycle, not mtime inference: Codex
                 # writes task_complete/turn_aborted and scan_turns retires the
                 # active turn on either boundary.
+                assignment_key = (
+                    path_by_sid.get(immediate_parent_sid, ""),
+                    str(meta.get("agent_path") or ""),
+                )
+                if assignment_key not in assignment_cache:
+                    assignment_cache[assignment_key] = _child_assignment(config, *assignment_key)
+                assignment = assignment_cache[assignment_key]
                 data["agents"].append(
                     (
                         name,
@@ -317,6 +375,9 @@ def collect(
                         turns.started_at(scan),
                         depth,
                         parent_name,
+                        assignment[0],
+                        assignment[1],
+                        sid,
                     )
                 )
             continue
@@ -344,7 +405,7 @@ def collect(
         last_event_sources = (info["last_event_ts"] if info else 0, *activity_sources)
         subagents = [
             {"name": label, "model": model, "started_at": started_at}
-            for label, _, model, started_at, _, _ in agents
+            for label, _, model, started_at, *_ in agents
         ]
         hierarchy = [
             {
@@ -353,8 +414,21 @@ def collect(
                 "started_at": started_at,
                 "depth": depth,
                 "parent_name": parent_name,
+                "assignment": assignment,
+                "assignment_status": assignment_status,
+                "observer_sid": observer_sid,
             }
-            for label, _, model, started_at, depth, parent_name in sorted(
+            for (
+                 label,
+                 _,
+                 model,
+                 started_at,
+                 depth,
+                 parent_name,
+                assignment,
+                assignment_status,
+                 observer_sid,
+             ) in sorted(
                 agents,
                 key=lambda agent: (agent[4], -agent[1], agent[0]),
             )

@@ -60,7 +60,7 @@ def codex_meta(config: RuntimeConfig, state: RuntimeState, path: str) -> dict[st
             records.as_dict(records.as_dict(p.get("source")).get("subagent")).get("thread_spawn")
         )
         nickname = p.get("agent_nickname")
-        agent_path = p.get("agent_path")
+        agent_path = p.get("agent_path") or spawn.get("agent_path")
         label = (
             nickname
             if isinstance(nickname, str) and nickname
@@ -83,6 +83,7 @@ def codex_meta(config: RuntimeConfig, state: RuntimeState, path: str) -> dict[st
             "cwd": p.get("cwd"),
             "subagent": p.get("thread_source") == "subagent",
             "agent_label": label or None,
+            "agent_path": agent_path if isinstance(agent_path, str) and agent_path else None,
         }
 
     return first_line_meta(config, state, path, parse)

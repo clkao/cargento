@@ -298,6 +298,35 @@ class ObserverAnalyzerTest(unittest.TestCase):
         self.assertEqual("Shape my session mirror", result["goal"])
         self.assertIn("blocked", result["block"])
 
+    def test_child_assignment_can_be_model_derived_from_readable_assistant_activity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_transcript(
+                tmp,
+                [
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "id": "assistant-1",
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": "I am revising the assignment roster.",
+                                    }
+                                ],
+                            },
+                        }
+                    )
+                ],
+            )
+            model = mock.Mock(return_value="Improve the assignment roster")
+            result = observer.derive_child_assignment(self.config, path, model)
+
+        self.assertEqual("Improve the assignment roster", result)
+        model.assert_called_once()
+
     def _fo_transcript(
         self, tmp: str, *, stage: str, declared: list[str], age_sec: float = 0.0
     ) -> str:
@@ -655,6 +684,36 @@ class ObserverTranscriptResolutionTest(RuntimeTestCase):
             with store_patch(CODEX_SESSIONS_DIR=str(sessions)):
                 config, state = runtime()
                 found = observer.resolve_transcript(config, state, "codex", sid)
+
+        self.assertEqual(str(rollout), found)
+
+    def test_a_codex_child_thread_id_resolves_to_its_rollout(self) -> None:
+        root_sid = "11111111-1111-1111-1111-111111111111"
+        child_sid = "22222222-2222-2222-2222-222222222222"
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = Path(tmp) / "sessions"
+            rollout = sessions / "2026" / "01" / "01" / "rollout-child.jsonl"
+            rollout.parent.mkdir(parents=True)
+            rollout.write_text(
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": child_sid,
+                            "session_id": root_sid,
+                            "thread_source": "subagent",
+                            "source": {
+                                "subagent": {"thread_spawn": {"parent_thread_id": root_sid}}
+                            },
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with store_patch(CODEX_SESSIONS_DIR=str(sessions)):
+                config, state = runtime()
+                found = observer.resolve_transcript(config, state, "codex", child_sid)
 
         self.assertEqual(str(rollout), found)
 
