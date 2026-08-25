@@ -1,0 +1,24 @@
+{
+  "type": "Briefing",
+  "version": "1",
+  "id": "briefing:yehhw3jcrd6j7eb2zazad25s:backlog:attempt-1:revision-1",
+  "question": "Should this probe advance to breadboard the by-project cockpit and browser-persisted operator goal?",
+  "artifacts": [
+    {
+      "id": "artifact:yehhw3jcrd6j7eb2zazad25s:backlog:attempt-1:revision-1:item-1",
+      "uri": "git-root://state/4a897330d76af02d884403598e4cabcbfca1a1fa/project-cockpit/index.md",
+      "rev": "sha256:b767a5e71f4718aadd29ed6d8b9f0a100bf638faefb97ec750d9647b4f4f91f2",
+      "mediaType": "text/markdown",
+      "summary": "Explore at least two project-overview shapes that let the captain recover each project goal, active sessions, and the session needing attention. Limit the breadboard to browser-local operator goals and the existing ask lane; exclude server persistence, real steering transport, and production integration."
+    }
+  ],
+  "context": [
+    {
+      "type": "Reference",
+      "id": "reference:yehhw3jcrd6j7eb2zazad25s:backlog:attempt-1:revision-1:item-2",
+      "uri": "git-root://state/c0b23faa9ada2581dbf46b7c598ac667425069e8/explore/README.md",
+      "mediaType": "text/markdown",
+      "rev": "sha256:b456b9009026aac17dfbf4e4893394b2d2f68e0c9ad191d1a0cde045212ea637"
+    }
+  ]
+}
