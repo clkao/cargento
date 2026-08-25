@@ -198,8 +198,8 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   mode: displayMode,
   className: __els.app.className,
-  compactNav: h.includes('id="pc-project-select"') && h.includes('class="pc-link"') &&
-    !h.includes('class="pc-project'),
+  compactNav: h.includes('role="tablist"') && h.includes('class="pc-project-tab selected"') &&
+    h.includes('class="pc-link"') && !h.includes('id="pc-project-select"'),
   chosen: h.includes("Project context</span><h2>repo/proj</h2>"),
   active: h.includes("1</b> recent"),
   identity: h.includes("claude:aaa1"),
@@ -219,6 +219,57 @@ console.log(JSON.stringify({
         self.assertTrue(out["goalFirst"])
         self.assertTrue(out["mirrorDrilldown"])
         self.assertTrue(out["secondary"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_project_tabs_use_exact_working_state_and_keep_permalink_navigation(self) -> None:
+        checks = """
+const d = payload([
+  mk({project: "repo/a", harness: "codex", sid: "work-a", active: true,
+    state: "working", last_activity: 99990}),
+  mk({project: "repo/b", harness: "claude", sid: "idle-b", active: true,
+    state: "idle", last_activity: 99999})
+]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const cold = __els.app.innerHTML;
+const aStart = cold.indexOf(`id="${projectTabId("repo/a")}"`);
+const bStart = cold.indexOf(`id="${projectTabId("repo/b")}"`);
+const aTab = cold.slice(aStart, cold.indexOf("</button>", aStart));
+const bTab = cold.slice(bStart, cold.indexOf("</button>", bStart));
+let focused = "";
+__els[projectTabId("repo/a")] = {focus(){ focused = "repo/a"; }};
+let prevented = false;
+__fire("keydown", {key: "ArrowLeft", preventDefault(){ prevented = true; }, target: {
+  getAttribute(key){ return key === "role" ? "tab" :
+    (key === "data-arg" ? "repo/b" : null); }
+}});
+const keyed = __els.app.innerHTML;
+projectAction("project-cockpit", "repo/b");
+const clicked = __els.app.innerHTML;
+const lastUrl = __historyUrls[__historyUrls.length - 1] || "";
+console.log(JSON.stringify({
+  stableOrder: aStart >= 0 && aStart < bStart,
+  distinctDots: aTab.includes('pc-project-dot working') &&
+    bTab.includes('class="pc-project-dot"') && !bTab.includes('pc-project-dot working'),
+  exactState: !cold.includes('id="live-dot"') && bTab.includes("no demonstrated work now"),
+  coldPermalink: bTab.includes('aria-selected="true"') && aTab.includes('aria-selected="false"'),
+  keyboard: prevented && focused === "repo/a" &&
+    keyed.includes(`id="${projectTabId("repo/a")}" class="pc-project-tab selected"`),
+  click: clicked.includes(`id="${projectTabId("repo/b")}" class="pc-project-tab selected"`) &&
+    lastUrl.includes("project=repo%2Fb")
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/b",
+            query_session=None,
+        )
+        self.assertTrue(out["stableOrder"])
+        self.assertTrue(out["distinctDots"])
+        self.assertTrue(out["exactState"])
+        self.assertTrue(out["coldPermalink"])
+        self.assertTrue(out["keyboard"])
+        self.assertTrue(out["click"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_real_observer_context_stays_subordinate_to_operator_goal(self) -> None:
@@ -1052,7 +1103,8 @@ console.log(JSON.stringify({
             Path(__file__).resolve().parents[1] / "cargento_runtime" / "web" / "styles.css"
         ).read_text(encoding="utf-8")
         self.assertIn("@media(max-width:520px)", styles)
-        self.assertIn(".pc-nav select{width:100%;max-width:100%}", styles)
+        self.assertIn(".pc-nav{flex-wrap:nowrap}", styles)
+        self.assertIn(".pc-project-tabs{overflow-x:auto;white-space:nowrap}", styles)
         self.assertIn(".pc-mirror-head{flex-direction:column}", styles)
         self.assertIn(".pc-event-meta{align-items:flex-start;flex-wrap:wrap}", styles)
         self.assertIn("overflow-wrap:anywhere", styles)

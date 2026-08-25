@@ -638,10 +638,14 @@
   .project .modebar{margin-bottom:-4px}
   .pc-top{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;flex-wrap:wrap}
   .pc-mode-note{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);padding-top:7px}
-  .pc-nav{display:flex;align-items:center;gap:10px;min-width:0;border:1px solid var(--line2);border-radius:10px;padding:7px 9px;background:var(--panel)}
-  .pc-nav-k{flex:none;font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding-left:3px}
-  .pc-nav select{min-width:0;max-width:min(70vw,560px);flex:1;border:1px solid var(--line2);border-radius:7px;padding:6px 28px 6px 8px;background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:var(--fs-2xs)}
-  .pc-nav select:focus-visible{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 20%,transparent)}
+  .pc-nav{display:flex;align-items:center;gap:8px;min-width:0;border:1px solid var(--line2);border-radius:10px;padding:5px 7px;background:var(--panel)}
+  .pc-project-tabs{display:flex;flex:1;min-width:0;gap:3px;overflow-x:auto;white-space:nowrap;scrollbar-width:thin}
+  .pc-project-tab{display:inline-flex;flex:none;align-items:center;gap:6px;border:0;border-radius:7px;padding:6px 8px;background:transparent;color:var(--ink3);font-family:var(--mono);font-size:var(--fs-2xs);cursor:pointer}
+  .pc-project-tab:hover{background:var(--sunk);color:var(--ink2)}
+  .pc-project-tab.selected{background:var(--sunk);color:var(--ink);font-weight:700}
+  .pc-project-tab:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
+  .pc-project-dot{width:7px;height:7px;flex:none;border:1px solid var(--ink3);border-radius:50%;background:transparent}
+  .pc-project-dot.working{border-color:var(--accent);background:var(--accent)}
   .pc-link{flex:none;border:0;padding:5px 6px;background:transparent;color:var(--ink3);font-family:var(--mono);font-size:var(--fs-2xs);cursor:pointer}
   .pc-link:hover{color:var(--accent-ink)}
   .pc-link:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
@@ -812,8 +816,8 @@
     .pc-semantic-graph{grid-template-columns:1fr}
   }
   @media(max-width:520px){
-    .pc-nav{flex-wrap:wrap}
-    .pc-nav select{width:100%;max-width:100%}
+    .pc-nav{flex-wrap:nowrap}
+    .pc-project-tabs{overflow-x:auto;white-space:nowrap}
     .pc-mirror-head{flex-direction:column}
     .pc-mirror-actions{justify-content:flex-start}
     .pc-mirror-state{align-items:flex-start;flex-direction:column}

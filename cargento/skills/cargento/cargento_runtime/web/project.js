@@ -30,6 +30,10 @@ function projectGoalKey(label){
   return PROJECT_GOAL_PREFIX + encodeURIComponent(label);
 }
 
+function projectTabId(label){
+  return "pc-project-tab-" + encodeURIComponent(label).replaceAll("%", "_");
+}
+
 function projectGoal(label){
   if(Object.prototype.hasOwnProperty.call(projectDraftByLabel, label)){
     return projectDraftByLabel[label];
@@ -108,11 +112,7 @@ function projectGroups(d){
   if(d && d.ask && Array.isArray(d.asks)){
     for(const ask of d.asks) ensure(ask && ask.project).asks.push(ask);
   }
-  return Array.from(groups.values()).sort((a, b) => {
-    if(a.asks.length !== b.asks.length) return b.asks.length - a.asks.length;
-    const newest = group => Math.max(0, ...group.sessions.map(s => Number(s.last_activity) || 0));
-    return newest(b) - newest(a) || a.label.localeCompare(b.label);
-  });
+  return Array.from(groups.values()).sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function projectCockpitGroup(d){
@@ -253,9 +253,22 @@ function projectAction(act, arg){
   return projectGoalAction(act, String(arg || ""));
 }
 
-document.addEventListener("change", e => {
+document.addEventListener("keydown", e => {
   const field = e.target;
-  if(field && field.id === "pc-project-select") setProjectCockpit(field.value);
+  if(!field || !field.getAttribute || field.getAttribute("role") !== "tab") return;
+  if(!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+  const groups = lastData ? projectGroups(lastData) : [];
+  if(!groups.length) return;
+  const labels = groups.map(group => group.label);
+  const current = field.getAttribute("data-arg") || projectCockpitLabel;
+  const currentIndex = Math.max(0, labels.indexOf(current));
+  const targetIndex = e.key === "Home" ? 0 : (e.key === "End" ? labels.length - 1 :
+    (currentIndex + (e.key === "ArrowRight" ? 1 : -1) + labels.length) % labels.length);
+  const target = labels[targetIndex];
+  if(e.preventDefault) e.preventDefault();
+  setProjectCockpit(target);
+  const targetTab = document.getElementById(projectTabId(target));
+  if(targetTab && targetTab.focus) targetTab.focus();
 });
 
 if(typeof window !== "undefined" && window.addEventListener){
@@ -676,16 +689,21 @@ function projectView(d, draft){
   const group = model.selected;
   const updated = new Date(d.generated * 1000).toLocaleTimeString();
   const top = `<div class="pc-top"><div><div class="brand">Cargento</div>` +
-    `<div class="sub"><span class="live" id="live-dot"></span>` +
-    `<span id="live-status">live · updated ${esc(updated)}</span></div></div>` +
+    `<div class="sub"><span id="live-status">updated ${esc(updated)}</span></div></div>` +
     `<span class="pc-mode-note">project cockpit · live dashboard data</span></div>`;
   if(!group){
     return top + `<div class="pc-nav"><span class="pc-nav-k">project</span></div>` +
       `<div class="pc-empty">No project-labelled sessions are available.</div>`;
   }
-  const options = groups.map(item => {
-    const on = item.label === group.label ? " selected" : "";
-    return `<option value="${esc(item.label)}"${on}>${esc(item.label)} · ${item.sessions.length} recent</option>`;
+  const tabs = groups.map(item => {
+    const selected = item.label === group.label;
+    const working = item.sessions.some(sess => sess.state === "working");
+    return `<button type="button" id="${esc(projectTabId(item.label))}" class="pc-project-tab` +
+      `${selected ? " selected" : ""}" role="tab" aria-selected="${selected}"` +
+      ` tabindex="${selected ? "0" : "-1"}" data-calm="project-cockpit"` +
+      ` data-arg="${esc(item.label)}"><span class="pc-project-dot${working ? " working" : ""}"` +
+      ` aria-label="${working ? "working now" : "no demonstrated work now"}"></span>` +
+      `<span>${esc(item.label)}</span></button>`;
   }).join("");
   const recent = group.sessions.filter(sess => sess.active);
   const focus = projectFocusSession(group);
@@ -703,9 +721,8 @@ function projectView(d, draft){
     : `<div class="pc-empty">No other recent sessions in this project.</div>`;
   const workingNow = recent.filter(sess => sess.state === "working").length;
   const mirror = projectQuerySession ? projectSessionMirror(d, focus, group) : "";
-  return top + `<nav class="pc-nav" aria-label="Project being resumed">` +
-    `<label class="pc-nav-k" for="pc-project-select">project</label>` +
-    `<select id="pc-project-select">${options}</select>` +
+  return top + `<nav class="pc-nav" aria-label="Projects">` +
+    `<div class="pc-project-tabs" role="tablist" aria-label="Projects">${tabs}</div>` +
     `<button type="button" class="pc-link" data-calm="project-link-copy"` +
     ` data-arg="${esc(group.label)}">copy link</button></nav>` +
     `<section class="pc-focus"><div class="pc-focus-head"><div>` +

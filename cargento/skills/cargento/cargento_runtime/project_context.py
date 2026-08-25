@@ -176,6 +176,14 @@ def _instruction_event(
         "sid": sid,
         "intent_promotable": _intent_promotable(text, title),
     }
+    record_id = record.get("id")
+    if isinstance(record_id, str) and record_id:
+        event["record_id"] = record_id
+        event["turn_id"] = record_id
+        event["branch_id"] = record_id
+    parent_id = record.get("parentId")
+    if isinstance(parent_id, str) and parent_id:
+        event["parent_id"] = parent_id
     lower = text.casefold()
     for tag, markers in _DIRECTIVE_TAGS:
         if any(marker in lower for marker in markers):
@@ -700,9 +708,44 @@ def _tool_support(
     return support
 
 
+def _assistant_branch_identity(
+    record: dict[str, Any], records_by_id: dict[str, dict[str, Any]]
+) -> dict[str, str]:
+    record_id = record.get("id")
+    parent_id = record.get("parentId")
+    if not isinstance(record_id, str) or not record_id:
+        return {}
+    identity = {"record_id": record_id}
+    if isinstance(parent_id, str) and parent_id:
+        identity["parent_id"] = parent_id
+    branch_id = record_id
+    cursor = record
+    seen: set[str] = {record_id}
+    while True:
+        ancestor_id = cursor.get("parentId")
+        if not isinstance(ancestor_id, str) or not ancestor_id or ancestor_id in seen:
+            return identity
+        seen.add(ancestor_id)
+        ancestor = records_by_id.get(ancestor_id)
+        if ancestor is None:
+            return identity
+        message = ancestor.get("message")
+        if isinstance(message, dict) and message.get("role") == "user":
+            identity["turn_id"] = ancestor_id
+            identity["branch_id"] = branch_id
+            return identity
+        branch_id = ancestor_id
+        cursor = ancestor
+
+
 def _assistant_tool_calls(
     transcript: list[dict[str, Any]],
-) -> Iterator[tuple[float, dict[str, Any]]]:
+) -> Iterator[tuple[float, dict[str, Any], dict[str, str]]]:
+    records_by_id = {
+        str(record["id"]): record
+        for record in transcript
+        if isinstance(record.get("id"), str) and record.get("id")
+    }
     for record in transcript:
         message = record.get("message")
         if not isinstance(message, dict) or message.get("role") != "assistant":
@@ -711,9 +754,10 @@ def _assistant_tool_calls(
         at = _record_timestamp(record)
         if not isinstance(content, list) or at is None:
             continue
+        identity = _assistant_branch_identity(record, records_by_id)
         for block in content:
             if isinstance(block, dict) and block.get("type") == "toolCall":
-                yield at, block
+                yield at, block, identity
 
 
 def _work_evidence(
@@ -737,7 +781,7 @@ def _work_evidence(
     results = _paired_results(transcript)
 
     events: list[dict[str, Any]] = []
-    for at, block in _assistant_tool_calls(transcript):
+    for at, block, identity in _assistant_tool_calls(transcript):
         support = _tool_support(block, results)
         if support is None:
             continue
@@ -750,6 +794,8 @@ def _work_evidence(
             harness=harness,
             sid=sid,
         )
+        for event in found:
+            event.update(identity)
         for event in found:
             artifact = str(event.get("dispatch_artifact") or "")
             assignment = _dispatch_file_assignment(artifact)
@@ -1098,6 +1144,17 @@ def _semantic_fact_from_event(
     for key in ("stage", "decision", "by", "target_stage", "assignment", "worker_kind"):
         if source_event.get(key) not in (None, ""):
             fact[key] = source_event[key]
+    branch = {
+        key: source_event[key]
+        for key in ("record_id", "parent_id", "turn_id", "branch_id")
+        if source_event.get(key) not in (None, "")
+    }
+    if branch:
+        fact["branch"] = {
+            "harness": source_event.get("harness"),
+            "sid": source_event.get("sid"),
+            **branch,
+        }
     lineage = str(source_event.get("lineage") or "")
     if lineage:
         call_key = lineage.rsplit(":", 1)[0]
@@ -1318,6 +1375,8 @@ def _semantic_activity_projection(
     work_items: dict[str, dict[str, Any]],
     trail_heads: list[dict[str, Any]],
     facts: list[dict[str, Any]],
+    *,
+    now: float | None = None,
 ) -> dict[str, Any]:
     """Bound the primary graph without turning old requests into current state."""
     if not facts:
@@ -1328,8 +1387,12 @@ def _semantic_activity_projection(
         for head in trail_heads
         if str(head.get("latest_meaningful_event")) in fact_by_id
     ]
-    newest_work_at = max((float(fact.get("at") or 0) for fact in head_facts), default=0)
-    current_after = newest_work_at - SEMANTIC_CURRENT_HORIZON_SEC
+    reference_at = (
+        float(now)
+        if isinstance(now, (int, float))
+        else max((float(fact.get("at") or 0) for fact in facts), default=0)
+    )
+    current_after = reference_at - SEMANTIC_CURRENT_HORIZON_SEC
 
     def label_key(work_item_id: str) -> str:
         label = str(work_items.get(work_item_id, {}).get("label") or "")
@@ -1446,8 +1509,78 @@ def _recent_steering_nodes(intents: list[dict[str, Any]]) -> list[dict[str, Any]
     return selected[:MAX_PRIMARY_STEERING_NODES]
 
 
+def _structural_steering_episodes(
+    intents: list[dict[str, Any]],
+    facts: list[dict[str, Any]],
+    relations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    facts_by_id = {str(fact["fact_id"]): fact for fact in facts}
+    reaction_types = {"work_birth", "work_result", "gate_decision", "result", "decision"}
+    reactions = [fact for fact in facts if fact.get("type") in reaction_types]
+    episodes: list[dict[str, Any]] = []
+    for intent in intents:
+        source_fact = facts_by_id.get(str(intent.get("derived_from") or ""))
+        source_branch = source_fact.get("branch") if source_fact else None
+        if not isinstance(source_branch, dict):
+            continue
+        source_record = source_branch.get("record_id")
+        source_harness = source_branch.get("harness")
+        source_sid = source_branch.get("sid")
+        if not source_record or not source_harness or not source_sid:
+            continue
+        candidates = []
+        for reaction in reactions:
+            reaction_branch = reaction.get("branch")
+            if not isinstance(reaction_branch, dict):
+                continue
+            if (
+                reaction_branch.get("turn_id") == source_record
+                and reaction_branch.get("harness") == source_harness
+                and reaction_branch.get("sid") == source_sid
+                and reaction_branch.get("branch_id")
+            ):
+                candidates.append(reaction)
+        if not candidates:
+            continue
+        reaction = min(
+            candidates,
+            key=lambda fact: (float(fact.get("at") or 0), str(fact.get("fact_id") or "")),
+        )
+        episode_id = _semantic_id(
+            "episode", intent["projection_id"], reaction["fact_id"], "structural"
+        )
+        episodes.append(
+            {
+                "episode_id": episode_id,
+                "intent_id": intent["projection_id"],
+                "adaptation_fact": reaction["fact_id"],
+                "confidence": "structural",
+                "provenance": "assistant branch descends from the user turn",
+            }
+        )
+        relations.append(
+            {
+                "from": intent["projection_id"],
+                "to": reaction["fact_id"],
+                "type": "elicits",
+                "confidence": "structural",
+                "provenance": "assistant branch descends from the user turn",
+            }
+        )
+    return sorted(
+        episodes,
+        key=lambda episode: float(
+            facts_by_id[str(episode["adaptation_fact"])].get("at") or 0
+        ),
+        reverse=True,
+    )
+
+
 def _semantic_model(
-    events: list[dict[str, Any]], observers: list[dict[str, Any]]
+    events: list[dict[str, Any]],
+    observers: list[dict[str, Any]],
+    *,
+    now: float | None = None,
 ) -> dict[str, Any]:
     """Immutable source facts, explicit relations, and replaceable projections."""
     ordered = sorted(
@@ -1460,6 +1593,16 @@ def _semantic_model(
     intent_projections: list[dict[str, Any]] = []
     intent_summaries: set[str] = set()
     fact_by_work_item: dict[str, list[dict[str, Any]]] = {}
+    structural_turns = {
+        (
+            str(event.get("harness") or ""),
+            str(event.get("sid") or ""),
+            str(event.get("turn_id") or ""),
+        )
+        for event in ordered
+        if event.get("kind") in {"task_started", "task_result", "outcome", "gate"}
+        and event.get("turn_id")
+    }
     for source_event in ordered:
         raw_kind = str(source_event.get("kind") or "")
         fact_type = _SEMANTIC_FACT_TYPES.get(raw_kind)
@@ -1471,7 +1614,15 @@ def _semantic_model(
         fact = _semantic_fact_from_event(source_event, raw_kind, fact_type, work_item_id)
         fact_id = str(fact["fact_id"])
         facts.append(fact)
-        if raw_kind == "steer" and source_event.get("intent_promotable") is True:
+        source_turn = (
+            str(source_event.get("harness") or ""),
+            str(source_event.get("sid") or ""),
+            str(source_event.get("record_id") or ""),
+        )
+        structurally_consequential = raw_kind == "steer" and source_turn in structural_turns
+        if raw_kind == "steer" and (
+            source_event.get("intent_promotable") is True or structurally_consequential
+        ):
             _append_semantic_intent(fact, intent_summaries, intent_projections, relations)
         if not work_item_id:
             continue
@@ -1521,8 +1672,9 @@ def _semantic_model(
     facts.sort(key=lambda fact: float(fact.get("at") or 0), reverse=True)
     trail_heads = _semantic_trail_heads(fact_by_work_item, facts)
     assignments = _semantic_assignments(fact_by_work_item, work_items)
-    activity = _semantic_activity_projection(work_items, trail_heads, facts)
+    activity = _semantic_activity_projection(work_items, trail_heads, facts, now=now)
     activity["steering"] = _recent_steering_nodes(intent_projections)
+    steering_episodes = _structural_steering_episodes(intent_projections, facts, relations)
     return {
         "facts": facts,
         "work_items": list(work_items.values()),
@@ -1533,7 +1685,7 @@ def _semantic_model(
             "trail_heads": trail_heads,
             "assignments": assignments,
             "activity": activity,
-            "steering_episodes": [],
+            "steering_episodes": steering_episodes,
             "candidate_goal_shifts": [],
         },
     }
@@ -1757,7 +1909,7 @@ def collect(
         else None,
         "observers": observers,
         "events": timeline,
-        "semantic": _semantic_model(timeline, observers),
+        "semantic": _semantic_model(timeline, observers, now=now),
         "child_assignments": child_assignments,
         "sources": {
             "scope": scope,

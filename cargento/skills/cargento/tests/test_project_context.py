@@ -477,6 +477,164 @@ class ProjectContextTest(unittest.TestCase):
             )
         )
 
+    def test_structural_assistant_turn_promotes_short_command_and_one_reaction(self) -> None:
+        model = project_context._semantic_model(
+            [
+                {
+                    "at": 1.0,
+                    "kind": "steer",
+                    "title": "redispatch",
+                    "source": "Pi user record",
+                    "intent_promotable": False,
+                    "harness": "pi",
+                    "sid": self.SID,
+                    "record_id": "user-redispatch",
+                    "parent_id": "previous-assistant",
+                    "turn_id": "user-redispatch",
+                    "branch_id": "user-redispatch",
+                },
+                {
+                    "at": 2.0,
+                    "kind": "task_started",
+                    "title": "Fix causal encoder",
+                    "source": "Pi subagent task label",
+                    "harness": "pi",
+                    "sid": self.SID,
+                    "lineage": "call-fix:0",
+                    "record_id": "assistant-dispatch",
+                    "parent_id": "tool-preflight",
+                    "turn_id": "user-redispatch",
+                    "branch_id": "assistant-preflight",
+                },
+                {
+                    "at": 3.0,
+                    "kind": "steer",
+                    "title": "and do the comparison at the same time",
+                    "source": "Pi user record",
+                    "intent_promotable": True,
+                    "harness": "pi",
+                    "sid": self.SID,
+                    "record_id": "user-compare",
+                    "parent_id": "assistant-dispatch",
+                    "turn_id": "user-compare",
+                    "branch_id": "user-compare",
+                },
+            ],
+            [],
+            now=3.0,
+        )
+
+        intents = model["projections"]["operator_intents"]
+        episodes = model["projections"]["steering_episodes"]
+        self.assertIn("redispatch", [intent["summary"] for intent in intents])
+        self.assertEqual(1, len(episodes))
+        self.assertEqual("structural", episodes[0]["confidence"])
+        redispatch = next(intent for intent in intents if intent["summary"] == "redispatch")
+        comparison = next(
+            intent
+            for intent in intents
+            if intent["summary"] == "and do the comparison at the same time"
+        )
+        self.assertEqual(redispatch["projection_id"], episodes[0]["intent_id"])
+        self.assertNotEqual(comparison["projection_id"], episodes[0]["intent_id"])
+        links = [relation for relation in model["relations"] if relation["type"] == "elicits"]
+        self.assertEqual(1, len(links))
+        self.assertEqual("structural", links[0]["confidence"])
+
+    def test_pi_turn_identity_reaches_a_descendant_subagent_call(self) -> None:
+        rows = [
+            {"type": "session", "id": self.SID, "cwd": str(self.root)},
+            {
+                "type": "message",
+                "id": "user-redispatch",
+                "parentId": None,
+                "timestamp": "2026-08-24T20:00:00Z",
+                "message": {"role": "user", "content": "redispatch"},
+            },
+            {
+                "type": "message",
+                "id": "assistant-preflight",
+                "parentId": "user-redispatch",
+                "timestamp": "2026-08-24T20:00:01Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "call-preflight",
+                            "name": "bash",
+                            "arguments": {"command": "pwd"},
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "message",
+                "id": "preflight-result",
+                "parentId": "assistant-preflight",
+                "timestamp": "2026-08-24T20:00:02Z",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call-preflight",
+                    "content": str(self.root),
+                },
+            },
+            {
+                "type": "message",
+                "id": "assistant-dispatch",
+                "parentId": "preflight-result",
+                "timestamp": "2026-08-24T20:00:03Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "call-fix",
+                            "name": "subagent",
+                            "arguments": {"task": "Fix causal encoder"},
+                        }
+                    ],
+                },
+            },
+        ]
+        self.transcript.write_text(
+            "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+        )
+
+        instructions = project_context.instruction_events(
+            self.config, str(self.transcript), "pi", self.SID
+        )
+        work, _stats = project_context._work_evidence(
+            self.config, str(self.transcript), "pi", self.SID
+        )
+
+        self.assertEqual("user-redispatch", instructions[0]["record_id"])
+        started = next(event for event in work if event["kind"] == "task_started")
+        self.assertEqual("assistant-dispatch", started["record_id"])
+        self.assertEqual("preflight-result", started["parent_id"])
+        self.assertEqual("user-redispatch", started["turn_id"])
+        self.assertEqual("assistant-preflight", started["branch_id"])
+
+    def test_activity_floor_uses_collection_time_not_newest_work(self) -> None:
+        model = project_context._semantic_model(
+            [
+                {
+                    "at": self.NOW - (42 * 60),
+                    "kind": "task_started",
+                    "title": "Stale unmatched ASR dispatch",
+                    "source": "Pi subagent task label",
+                    "lineage": "old-call:0",
+                }
+            ],
+            [],
+            now=self.NOW,
+        )
+
+        activity = model["projections"]["activity"]
+        self.assertEqual([], activity["nodes"])
+        self.assertEqual(1, activity["historical_unresolved"])
+        self.assertEqual(self.NOW - project_context.SEMANTIC_CURRENT_HORIZON_SEC, activity["current_after"])
+
     def test_primary_activity_collapses_dispatch_burst_and_old_retry(self) -> None:
         events = [
             {
@@ -500,7 +658,7 @@ class ProjectContextTest(unittest.TestCase):
         ]
         events.extend(
             {
-                "at": 2_000.0,
+                "at": 4_500.0,
                 "kind": "task_started",
                 "title": "Fix causal encoder" if index == 0 else f"Entity {index}",
                 "source": "batch task call",
