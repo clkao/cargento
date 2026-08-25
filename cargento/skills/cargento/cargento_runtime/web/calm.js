@@ -471,6 +471,7 @@ function calmAction(act, arg){
   }
   if(usageAction(act, arg)) return;
   if(askAction(act, arg)) return;
+  if(projectAction(act, arg)) return;
   if(act === "stop"){
     if(!stopArmed){
       stopArmed = true; stopError = ""; stopFocusPending = true;
@@ -585,7 +586,10 @@ function waitJump(){
        questions, so `g` leaves session mode on the way to it. The cursor is set
        first because `setDisplayMode` renders, and that render is the one that
        reaches `restoreWaitCursor` and consumes the reveal flag. */
-    if(displayMode === "session"){ setDisplayMode("regular"); return; }
+    if(displayMode === "session" || displayMode === "project"){
+      setDisplayMode("regular");
+      return;
+    }
   }
   render(lastData);
 }
@@ -1052,4 +1056,3 @@ function calmRestoreScroll(){
   }
   calmScrollTop = body.scrollTop;
 }
-

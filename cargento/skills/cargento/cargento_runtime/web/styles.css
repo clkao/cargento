@@ -631,6 +631,77 @@
   .u-act:hover{background:var(--bg);color:var(--ink)}
   .u-act:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
 
+  /* ── project cockpit ───────────────────────────────────────────────────
+     One selected project rather than another inventory surface. The label
+     picker leads; source and identity boundaries stay in the closing details. */
+  .wrap.project{max-width:1240px;gap:18px}
+  .project .modebar{margin-bottom:-4px}
+  .pc-top{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;flex-wrap:wrap}
+  .pc-mode-note{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);padding-top:7px}
+  .pc-intro{border:1px solid var(--line2);border-radius:12px;padding:20px 22px;background:linear-gradient(130deg,color-mix(in oklab,var(--accent) 8%,var(--panel)),var(--panel) 52%)}
+  .pc-step{display:block;font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-ink);margin-bottom:7px}
+  .pc-intro h1{font-size:clamp(24px,3vw,38px);line-height:1.05;letter-spacing:-.035em;margin:0}
+  .pc-intro p{font-size:var(--fs-sm);color:var(--ink2);margin:8px 0 0}
+  .pc-projects{display:flex;gap:6px;overflow-x:auto;padding:16px 0 1px;scrollbar-width:thin}
+  .pc-project{display:inline-flex;align-items:center;gap:8px;flex:none;border:1px solid var(--line2);border-radius:8px;padding:8px 10px;background:var(--sunk);color:var(--ink2);font-family:var(--mono);font-size:var(--fs-xs);cursor:pointer}
+  .pc-project:hover{color:var(--ink);border-color:var(--ink3)}
+  .pc-project.on{color:var(--ink);border-color:var(--accent);background:color-mix(in oklab,var(--accent) 11%,var(--panel))}
+  .pc-project span{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;border-radius:99px;background:var(--line);font-size:var(--fs-2xs)}
+  .pc-project:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
+  .pc-focus{border:1px solid var(--line2);border-radius:12px;background:var(--panel);overflow:hidden}
+  .pc-focus-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:18px 20px;border-bottom:1px solid var(--line2)}
+  .pc-kicker{display:block;font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
+  .pc-focus h2{font-size:var(--fs-xl);letter-spacing:-.025em;margin:0}
+  .pc-counts{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+  .pc-counts span{display:inline-flex;align-items:baseline;gap:5px;border:1px solid var(--line2);border-radius:99px;padding:5px 9px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .pc-counts b{font-size:var(--fs-sm);color:var(--ink)}
+  .pc-counts .attention{border-color:color-mix(in oklab,var(--alert) 48%,var(--line2));color:var(--alert)}
+  .pc-counts .attention b{color:var(--alert)}
+  .pc-columns{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:0;border-bottom:1px solid var(--line2)}
+  .pc-goal,.pc-needs{padding:18px 20px;min-width:0}
+  .pc-goal{border-right:1px solid var(--line2);background:var(--sunk)}
+  .pc-goal label{display:block;font-size:var(--fs-xs);font-weight:700;color:var(--ink2);margin-bottom:7px}
+  .pc-goal label em{font-family:var(--mono);font-size:var(--fs-2xs);font-weight:600;font-style:normal;color:var(--accent-ink);margin-left:6px}
+  .pc-goal textarea{display:block;width:100%;resize:vertical;border:1px solid var(--line2);border-radius:9px;padding:10px 11px;background:var(--panel);color:var(--ink);font:inherit;line-height:1.45}
+  .pc-goal textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 20%,transparent)}
+  .pc-goal-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:9px}
+  .pc-goal-actions button{border:1px solid var(--ink);border-radius:7px;padding:6px 10px;background:var(--ink);color:var(--bg);font-family:var(--mono);font-size:var(--fs-2xs);font-weight:700;cursor:pointer}
+  .pc-goal-actions button.quiet{border-color:var(--line2);background:transparent;color:var(--ink2)}
+  .pc-goal-actions button:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
+  .pc-goal-note{margin-left:auto;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--accent-ink)}
+  .pc-key{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);overflow-wrap:anywhere;margin-top:9px}
+  .pc-needs h3,.pc-active h3{font-size:var(--fs-sm);margin:0}
+  .pc-needs .ask{margin-top:10px}
+  .pc-ask-boundary{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);margin-top:7px}
+  .pc-empty{border:1px dashed var(--line2);border-radius:8px;padding:13px 14px;color:var(--ink3);font-size:var(--fs-xs);margin-top:9px}
+  .pc-empty.unavailable{color:var(--alert)}
+  .pc-active{padding:18px 20px}
+  .pc-active-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:8px}
+  .pc-active-head span{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .pc-session{display:grid;grid-template-columns:8px minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;border:0;border-top:1px solid var(--line);padding:10px 2px;background:transparent;color:var(--ink);text-align:left;cursor:pointer}
+  .pc-session:first-of-type{border-top:0}
+  .pc-session:hover{background:color-mix(in oklab,var(--accent) 5%,transparent)}
+  .pc-session:focus-visible{outline:none;box-shadow:inset 0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
+  .pc-session-state{width:7px;height:7px;border-radius:50%;background:var(--line2)}
+  .pc-session-state.active{background:var(--accent)}
+  .pc-session-copy{min-width:0}
+  .pc-session-copy strong,.pc-session-copy span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pc-session-copy strong{font-size:var(--fs-sm)}
+  .pc-session-copy span{font-size:var(--fs-xs);color:var(--ink3);margin-top:2px}
+  .pc-session code{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .pc-sources{border-top:1px solid var(--line2);padding:14px 4px;color:var(--ink3);font-size:var(--fs-xs);line-height:1.55}
+  .pc-sources summary{color:var(--ink2);font-weight:700;cursor:pointer}
+  .pc-sources p{max-width:92ch;margin:10px 0 0}
+  .pc-sources b{color:var(--ink2)}
+  @media(max-width:780px){
+    .pc-columns{grid-template-columns:1fr}
+    .pc-goal{border-right:0;border-bottom:1px solid var(--line2)}
+    .pc-focus-head{flex-direction:column}
+    .pc-counts{justify-content:flex-start}
+    .pc-session{grid-template-columns:8px minmax(0,1fr)}
+    .pc-session code{grid-column:2}
+  }
+
   /* ── session view ───────────────────────────────────────────────────────
      One session's dispatch tree: a vertical spine of stage-colored entity
      nodes with a goal header above. The tree reuses the existing `sd-live`

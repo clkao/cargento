@@ -188,6 +188,7 @@ CARGENTO_RUNTIME_FILES = (
     "skills/cargento/cargento_runtime/web/usage.js",
     "skills/cargento/cargento_runtime/web/controls.js",
     "skills/cargento/cargento_runtime/web/ask.js",
+    "skills/cargento/cargento_runtime/web/project.js",
     "skills/cargento/cargento_runtime/web/calm.js",
     "skills/cargento/cargento_runtime/web/session.js",
     "skills/cargento/cargento_runtime/web/notify.js",

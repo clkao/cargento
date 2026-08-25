@@ -49,6 +49,20 @@ function render(d){
     document.title = (queue.length > 0 ? `(${queue.length}!) ` : "") + "Cargento";
     return;
   }
+  if(displayMode === "project"){
+    /* Keep an in-progress browser goal through the five-second live repaint.
+       A saved goal survives through localStorage; this draft exists only to
+       stop the refresh loop from erasing text while the operator is typing. */
+    const projectDraft = projectCaptureDraft();
+    renderInProgress = true;
+    app.className = "wrap project";
+    app.innerHTML = modeBar() + usageBanner(d, true) + projectView(d, projectDraft);
+    renderInProgress = false;
+    projectRestoreFocus(projectDraft);
+    restoreStopFocus();
+    document.title = (queue.length > 0 ? `(${queue.length}!) ` : "") + "Cargento";
+    return;
+  }
   if(displayMode === "session"){
     /* The asks band and the liveness line ride along, for the same reason the
        other two modes carry them. An ask can come from a session this view is

@@ -8,7 +8,9 @@ const DISPLAY_MODE_KEY = "cargento.displayMode";
 let displayMode = "regular";
 try{
   const saved = localStorage.getItem(DISPLAY_MODE_KEY);
-  if(saved === "calm" || saved === "regular" || saved === "session") displayMode = saved;
+  if(saved === "calm" || saved === "project" || saved === "regular" || saved === "session"){
+    displayMode = saved;
+  }
 }catch(e){ /* private mode, or a context with no storage — regular it is */ }
 
 let calmSort = "attention";   /* attention | recent | repo | burn */
@@ -91,7 +93,8 @@ if(typeof window !== "undefined" && window.addEventListener){
 }
 
 function setDisplayMode(mode){
-  if(mode !== "calm" && mode !== "regular" && mode !== "session" || mode === displayMode) return;
+  if(mode !== "calm" && mode !== "project" && mode !== "regular" && mode !== "session" ||
+     mode === displayMode) return;
   displayMode = mode;
   if(mode !== "session") sessionViewKey = null;
   try{ localStorage.setItem(DISPLAY_MODE_KEY, mode); }catch(e){ /* nothing to persist to */ }

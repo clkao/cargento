@@ -15,6 +15,7 @@ APP_PARTS: tuple[str, ...] = (
     "usage.js",  # the usage band, configure, and the disclosure banner
     "controls.js",  # the stop control, stopped panel, and mode bar
     "ask.js",  # the asks band: a session's question and its answer POST
+    "project.js",  # the project cockpit and browser-owned remembered outcome
     "calm.js",  # the calm ledger: tables, actions, listeners, renderers
     "session.js",  # the session view: one session's dispatch tree and goal line
     "notify.js",  # desktop notifications
