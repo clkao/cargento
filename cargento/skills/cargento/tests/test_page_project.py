@@ -417,7 +417,7 @@ console.log(JSON.stringify({
     !h.includes('class="pc-work-item') && !h.includes("<details><summary>source</summary>"),
   changed: h.includes("Assignment roster restored") && h.includes("5s ago") &&
     h.includes('data-trail-head="outcome"'),
-  freshness: h.includes("WORKING") && h.includes("3 children · no request · 10s"),
+  freshness: h.includes("WORKING") && h.includes("3 children · no request seen · 10s"),
   continueAt: h.includes("codex:focus-1") && h.includes("copy session link")
 }));
 """
@@ -575,8 +575,8 @@ render(asr);
 const a = __els.app.innerHTML;
 const aOperator = a.slice(a.indexOf('class="pc-operator"'), a.indexOf("Work & steering"));
 console.log(JSON.stringify({
-  cargento: cOperator.includes("WORKING</strong><span>3 children · no request · now"),
-  asr: aOperator.includes("WORKING</strong><span>running bash · no request · 1m"),
+  cargento: cOperator.includes("WORKING</strong><span>3 children · no request seen · now"),
+  asr: aOperator.includes("WORKING</strong><span>running bash · no request seen · 1m"),
   disclosure: cOperator.indexOf("<details") < cOperator.indexOf("Shape cockpit") &&
     aOperator.indexOf("<details") < aOperator.indexOf("ASR work"),
   noLaneRepeat: !cGraph.includes("working now"),
@@ -1330,6 +1330,68 @@ console.log(JSON.stringify({
         self.assertNotIn("refresh=1", out["calls"][0])
         self.assertIn("refresh=1", out["calls"][1])
         self.assertTrue(out["refreshControl"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_new_dashboard_revision_coalesces_context_and_rejects_stale_response(self) -> None:
+        checks = """
+const context = rows => ({observers: [], events: [], semantic: {facts: rows.map(row => ({
+  fact_id: `fact-${row.id}`, at: row.at, type: "user_message", summary: row.summary,
+  evidence: {source: "focused transcript", confidence: "exact"}
+})), work_items: [], contributors: [], relations: [], projections: {
+  operator_intents: rows.map(row => ({projection_id: `intent-${row.id}`, at: row.at,
+    summary: row.summary, derived_from: `fact-${row.id}`})), trail_heads: [], assignments: [],
+  activity: {nodes: [], steering: rows.map(row => ({projection_id: `intent-${row.id}`,
+    at: row.at, summary: row.summary, derived_from: `fact-${row.id}`}))},
+  steering_episodes: [], candidate_goal_shifts: []}},
+  sources: {gate: {}, steer: {live: rows.length, unavailable: []}}});
+const key = projectContextKey("repo/proj");
+projectContextByLabel[key] = {state: "ready", generated: 99999, dashboard_revision: 99999,
+  data: context([{id: "old", at: 99999, summary: "Keep the old direction visible"}])};
+const pending = [];
+__fetchImpl = url => new Promise(resolve => pending.push({url, resolve}));
+const first = projectBoard(); first.generated = 100000;
+render(first);
+const preserved = __els.app.innerHTML;
+const next = projectBoard(); next.generated = 100001;
+render(next);
+const coalesced = pending.length;
+pending[0].resolve({ok: true, json: () => Promise.resolve(context([
+  {id: "stale", at: 100000, summary: "Show stale direction"}
+]))});
+await __settle(); await __settle();
+const afterStale = __els.app.innerHTML;
+const callsAfterStale = pending.length;
+pending[1].resolve({ok: true, json: () => Promise.resolve(context([
+  {id: "one", at: 99996, summary: "Keep first direction"},
+  {id: "two", at: 99997, summary: "Keep second direction"},
+  {id: "three", at: 99998, summary: "Keep third direction"},
+  {id: "new", at: 100001, summary: "Show newest direction"}
+]))});
+await __settle(); await __settle(); await __settle();
+const fresh = __els.app.innerHTML;
+const graph = fresh.slice(fresh.indexOf("Work & steering"), fresh.indexOf("Evidence / limits"));
+console.log(JSON.stringify({
+  preserved: preserved.includes("Keep the old direction visible"),
+  coalesced: coalesced === 1 && callsAfterStale === 2,
+  staleRejected: afterStale.includes("Keep the old direction visible") &&
+    !afterStale.includes("Show stale direction"),
+  updated: graph.includes("Show newest direction") &&
+    (graph.match(/data-steering-state="unpaired"/g) || []).length === 3,
+  automatic: pending.every(call => !String(call.url).includes("refresh=1")),
+  settled: projectContextByLabel[key].dashboard_revision === 100001
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="claude:aaa1",
+        )
+        self.assertTrue(out["preserved"])
+        self.assertTrue(out["coalesced"])
+        self.assertTrue(out["staleRejected"])
+        self.assertTrue(out["updated"])
+        self.assertTrue(out["automatic"])
+        self.assertTrue(out["settled"])
 
 
 if __name__ == "__main__":

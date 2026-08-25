@@ -10,6 +10,7 @@
 const PROJECT_COCKPIT_KEY = "cargento.projectCockpitProject";
 const PROJECT_GOAL_PREFIX = "cargento.projectGoal.v1:";
 const PROJECT_VISIBLE_ACTIVITY_NODES = 5;
+const PROJECT_VISIBLE_STEERING_NODES = 3;
 let projectCockpitLabel = null;
 let projectQueryLabel = null;
 let projectQuerySession = null;
@@ -17,6 +18,8 @@ let projectGoalNote = "";
 let projectGoalEditingLabel = null;
 const projectDraftByLabel = {};
 const projectContextByLabel = {};
+const projectContextRequests = {};
+let projectContextRequestSequence = 0;
 try{
   projectCockpitLabel = localStorage.getItem(PROJECT_COCKPIT_KEY) || null;
 }catch(e){ /* no browser storage — choose from the payload */ }
@@ -375,7 +378,7 @@ function projectSessionMirror(d, sess, group){
   const exactAsks = projectExactAsks(d, sess, group);
   const needs = exactAsks.length || sess.state === "needs_input" || sess.needs_you === true;
   const state = needs ? "NEEDS YOU" : (sess.state === "working" ? "WORKING" : "IDLE");
-  const request = needs ? "request" : "no request";
+  const request = needs ? "request" : "no request seen";
   const activityAt = Number(sess.last_activity) || 0;
   const age = activityAt && Number(d.generated)
     ? Math.max(0, Number(d.generated) - activityAt) : null;
@@ -393,14 +396,31 @@ function projectSessionMirror(d, sess, group){
     projectMirrorAttention(d, sess, group) + `</div></details></section>`;
 }
 
-function projectLoadContext(d, refresh){
+function projectLoadContext(d, refresh, announce){
   const group = projectCockpitGroup(d).selected;
   if(!group) return;
   const cacheKey = projectContextKey(group.label);
   const old = projectContextByLabel[cacheKey];
-  if(old && !refresh) return;
+  const revision = Number(d && d.generated) || 0;
+  const active = projectContextRequests[cacheKey];
+  /* One exact-scope read may run at a time. Keep only the newest dashboard
+     revision behind it so a busy stream cannot manufacture a fetch backlog. */
+  if(active){
+    if(revision > active.revision){
+      active.pending = {data:d, revision, announce:active.announce || !!announce};
+    }
+    return;
+  }
+  const settledRevision = Number(old && (old.dashboard_revision || old.generated)) || 0;
+  if(old && !refresh && settledRevision >= revision) return;
+  const requestId = ++projectContextRequestSequence;
+  const announceResult = announce === undefined ? !!refresh : !!announce;
+  projectContextRequests[cacheKey] = {
+    id: requestId, revision, pending: null, announce: announceResult
+  };
   projectContextByLabel[cacheKey] = {
-    state: "loading", data: old && old.data || null, generated: d.generated
+    state: "loading", data: old && old.data || null,
+    generated: old && old.generated || revision, dashboard_revision: settledRevision
   };
   if(refresh){
     projectGoalNote = "refreshing context…";
@@ -413,14 +433,35 @@ function projectLoadContext(d, refresh){
     if(!r.ok) throw new Error("bad status");
     return r.json();
   }).then(data => {
-    projectContextByLabel[cacheKey] = {state: "ready", data: data, generated: d.generated};
-    if(refresh) projectGoalNote = "context refreshed";
+    const current = projectContextRequests[cacheKey];
+    if(!current || current.id !== requestId) return;
+    delete projectContextRequests[cacheKey];
+    /* Its context predates a dashboard revision already rendered. Preserve the
+       last settled graph until the coalesced read catches up. */
+    if(current.pending && current.pending.revision > revision){
+      projectLoadContext(current.pending.data, false,
+        current.announce || current.pending.announce);
+      return;
+    }
+    projectContextByLabel[cacheKey] = {
+      state: "ready", data: data, generated: revision, dashboard_revision: revision
+    };
+    if(current.announce) projectGoalNote = "context refreshed";
     if(lastData) render(lastData);
   }).catch(() => {
+    const current = projectContextRequests[cacheKey];
+    if(!current || current.id !== requestId) return;
+    delete projectContextRequests[cacheKey];
+    if(current.pending && current.pending.revision > revision){
+      projectLoadContext(current.pending.data, false,
+        current.announce || current.pending.announce);
+      return;
+    }
     projectContextByLabel[cacheKey] = {
-      state: "error", data: old && old.data || null, generated: d.generated
+      state: "error", data: old && old.data || null,
+      generated: old && old.generated || revision, dashboard_revision: revision
     };
-    if(refresh) projectGoalNote = "context refresh failed";
+    if(current.announce) projectGoalNote = "context refresh failed";
     if(lastData) render(lastData);
   });
 }
@@ -555,7 +596,9 @@ function projectSemanticTimeline(d, model, workflowLanes){
   const pairedIntents = new Set(episodes.map(episode => episode.intent_id));
   const intentPool = Array.isArray(activity.steering) ? activity.steering :
     (Array.isArray(projections.operator_intents) ? projections.operator_intents.slice(-3).reverse() : []);
-  const steering = intentPool.filter(intent => !pairedIntents.has(intent.projection_id));
+  const steering = intentPool.filter(intent => !pairedIntents.has(intent.projection_id))
+    .sort((a, b) => Number(b.at) - Number(a.at))
+    .slice(0, PROJECT_VISIBLE_STEERING_NODES);
   let nodes = Array.isArray(activity.nodes) ? activity.nodes : [];
   if(!nodes.length && !Object.prototype.hasOwnProperty.call(activity, "nodes")){
     nodes = heads.filter(head => ["prepared", "outcome", "decision"].includes(head.status))
