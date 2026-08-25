@@ -467,6 +467,34 @@ function projectTimelineEvents(d, group, focus, sourceEvents){
   return events.filter(event => Number(event.at)).sort((a, b) => a.at - b.at).slice(-12);
 }
 
+function projectSemanticNode(d, event, kind){
+  const ago = event.at
+    ? fmtDur(Math.max(0, (Number(d.generated) || 0) - event.at)) + " ago"
+    : "time unavailable";
+  const iso = event.at ? new Date(Number(event.at) * 1000).toISOString() : "";
+  const intent = kind === "steer" && event.intent && event.intent_source
+    ? `<span class="pc-intent">intent · ${esc(event.intent)}</span>` : "";
+  const relation = kind === "outcome" && event.related_to && event.relation_source
+    ? `<span class="pc-relation" data-causal-link="supported">linked by ${esc(event.relation_source)}</span>`
+    : "";
+  return `<article class="pc-semantic-node ${kind}">` +
+    `<div class="pc-event-title">${esc(event.title)}</div>${intent}${relation}` +
+    `<details class="pc-event-evidence"><summary>${esc(ago)} · source</summary>` +
+    `<div>${esc(event.phase || event.kind)} · ${esc(event.source || "source unavailable")}` +
+    (iso ? ` · <time datetime="${esc(iso)}">${esc(iso)}</time>` : "") +
+    (event.detail ? ` · ${esc(event.detail)}` : "") + `</div></details></article>`;
+}
+
+function projectSemanticLane(d, title, kind, events){
+  const empty = kind === "steer"
+    ? "No timestamped non-meta user-role instruction found."
+    : "No demonstrated outcome found for this session.";
+  return `<section class="pc-semantic-lane" data-semantic-lane="${kind === "steer" ? "steering" : "outcome"}">` +
+    `<h4>${esc(title)}</h4>` + (events.length
+      ? events.map(event => projectSemanticNode(d, event, kind)).join("")
+      : `<div class="pc-semantic-empty">${empty}</div>`) + `</section>`;
+}
+
 /* One source-honest sequence for the focused session. Each event keeps the
    identity its producer can actually prove; generic user-role rows never gain
    captain authorship here. */
@@ -480,7 +508,12 @@ function projectActivity(d, group, focus){
     focus,
     contextEvents
   );
-  if(!events.length){
+  const steering = events.filter(event => event.kind === "steer");
+  const outcomeKinds = new Set([
+    "gate", "checkpoint", "decision", "test_result", "ask_resolution", "outcome"
+  ]);
+  const outcomes = events.filter(event => outcomeKinds.has(event.kind));
+  if(!steering.length && !outcomes.length){
     const reading = !entry || entry.state === "loading"
       ? "Reading the gate and instruction sources…"
       : (entry.state === "error" || !entry.data
@@ -489,16 +522,9 @@ function projectActivity(d, group, focus){
     return `<div class="pc-empty${entry && entry.state === "error" ? " unavailable" : ""}">` +
       `${reading}</div>`;
   }
-  const rows = events.map(event => {
-    const ago = event.at ? fmtDur(Math.max(0, (Number(d.generated) || 0) - event.at)) + " ago" : "time unavailable";
-    const iso = event.at ? new Date(Number(event.at) * 1000).toISOString() : "";
-    return `<div class="pc-event"><span class="pc-event-node"></span><div>` +
-      `<div class="pc-event-meta"><span>${esc(event.phase || event.kind)}</span>` +
-      `<time${iso ? ` datetime="${esc(iso)}" title="${esc(iso)}"` : ""}>${esc(ago)}</time></div>` +
-      `<div class="pc-event-title">${esc(event.title)}</div>` +
-      `<div class="pc-event-detail">${esc(event.detail)} · ${esc(event.source)}</div></div></div>`;
-  }).join("");
-  return `<div class="pc-log">${rows}</div>`;
+  return `<div class="pc-semantic-graph" data-causal-model="source-only">` +
+    projectSemanticLane(d, "What you asked", "steer", steering) +
+    projectSemanticLane(d, "What happened", "outcome", outcomes) + `</div>`;
 }
 
 function projectHistoryBoundary(sources){

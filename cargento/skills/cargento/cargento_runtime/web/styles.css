@@ -732,6 +732,18 @@
   .pc-session-copy span{font-size:var(--fs-xs);color:var(--ink3);margin-top:2px}
   .pc-session code{font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
   .pc-activity{padding:20px;border-bottom:1px solid var(--line2)}
+  .pc-semantic-graph{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+  .pc-semantic-lane{min-width:0}
+  .pc-semantic-lane h4{margin:0 0 9px;font-size:var(--fs-sm);color:var(--ink2)}
+  .pc-semantic-node{border:1px solid var(--line2);border-radius:9px;padding:11px 12px;background:var(--panel)}
+  .pc-semantic-node+.pc-semantic-node{margin-top:8px}
+  .pc-semantic-node.steer{border-left:3px solid var(--accent)}
+  .pc-semantic-node.outcome{border-left:3px solid var(--ok)}
+  .pc-semantic-empty{border:1px dashed var(--line2);border-radius:8px;padding:11px 12px;font-size:var(--fs-xs);color:var(--ink3)}
+  .pc-event-evidence{margin-top:6px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
+  .pc-event-evidence summary{cursor:pointer;color:var(--ink3)}
+  .pc-event-evidence div{margin-top:5px;overflow-wrap:anywhere}
+  .pc-intent,.pc-relation{display:block;margin-top:5px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3)}
   .pc-log{position:relative;padding-left:5px}
   .pc-event{position:relative;display:grid;grid-template-columns:16px minmax(0,1fr);gap:9px;padding:4px 0 13px}
   .pc-event::before{content:"";position:absolute;left:7px;top:13px;bottom:-3px;width:1px;background:var(--line2)}
@@ -751,6 +763,7 @@
     .pc-counts{justify-content:flex-start}
     .pc-session{grid-template-columns:8px minmax(0,1fr)}
     .pc-session code{grid-column:2}
+    .pc-semantic-graph{grid-template-columns:1fr}
   }
   @media(max-width:520px){
     .pc-nav{flex-wrap:wrap}

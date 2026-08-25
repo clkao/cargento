@@ -367,7 +367,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["operatorPrecedence"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
-    def test_what_changed_merges_only_timestamped_exact_source_events(self) -> None:
+    def test_what_changed_separates_real_steering_from_demonstrated_outcomes(self) -> None:
         checks = """
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [], events: [
@@ -376,17 +376,24 @@ projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
       source: "transcript user-role message", harness: "claude", sid: "aaa1"},
     {at: 99980, kind: "gate", phase: "gate decision · application consumed",
       title: "project-cockpit · shaping · approve", detail: "explore · claude:aaa1",
-      source: "Spacedock entity gate frontmatter", harness: "claude", sid: "aaa1"}
+      source: "Spacedock entity gate frontmatter", harness: "claude", sid: "aaa1"},
+    {at: 99985, kind: "activity", phase: "unrelated activity",
+      title: "unrelated read", detail: "claude:aaa1",
+      source: "activity source", harness: "claude", sid: "aaa1"}
   ], sources: {gate: {live: 1, untimestamped_prepare: 2, status_history: "unavailable"},
     steer: {live: 1, unavailable: []}}
 }};
 render(projectBoard());
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  graph: h.includes('class="pc-log"') && h.includes('class="pc-event-node"'),
-  instruction: h.includes("user-role transcript message") &&
+  graph: h.includes("What you asked") && h.includes("What happened") &&
+    h.includes('data-semantic-lane="steering"') && h.includes('data-semantic-lane="outcome"'),
+  instruction: h.slice(h.indexOf("What you asked"), h.indexOf("What happened")).includes("Prepare release path") &&
     h.includes("transcript user-role message") && !h.includes("captain instruction"),
-  decision: h.includes("application consumed") && h.includes("shaping · approve"),
+  decision: h.slice(h.indexOf("What happened")).includes("application consumed") &&
+    h.includes("shaping · approve"),
+  unrelated: !h.includes("unrelated read") && !h.includes("caused") &&
+    !h.includes('data-causal-link="supported"'),
   boundary: h.indexOf("status-transition history unavailable") >
     h.indexOf("Evidence and limitations"),
   noMockTags: !h.includes("generated</span>") && !h.includes("consistency")
@@ -396,6 +403,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["graph"])
         self.assertTrue(out["instruction"])
         self.assertTrue(out["decision"])
+        self.assertTrue(out["unrelated"])
         self.assertTrue(out["boundary"])
         self.assertTrue(out["noMockTags"])
 
