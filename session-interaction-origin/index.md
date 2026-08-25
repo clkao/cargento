@@ -1,6 +1,6 @@
 ---
 title: Session interaction origin
-status: shaping
+status: review
 source: commission seed
 started: 2026-08-25T03:33:48Z
 completed:
