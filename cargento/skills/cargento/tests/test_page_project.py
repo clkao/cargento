@@ -287,52 +287,52 @@ console.log(JSON.stringify({
         self.assertTrue(out["observerScoped"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
-    def test_recovery_mirror_separates_durable_state_from_process_liveness(self) -> None:
-        checkpoint = "fc429c56b5287b4aa1b4d300cb3161612c35e81e"
-        checks = f"""
-__fetchImpl = url => String(url) === "/__proto/checkpoint"
-  ? Promise.resolve({{ok: true, json: () => Promise.resolve({{
-      checkpoint: "{checkpoint}", source: "review", backend_port: 18766}})}})
-  : Promise.resolve({{ok: true, json: () => Promise.resolve({{
-      observers: [], events: [], semantic: {{projections: {{assignments: []}}}},
-      child_assignments: [], sources: {{gate: {{}}, steer: {{unavailable: []}}}}
-    }})}});
-lastData = payload([mk({{project: "repo/proj", harness: "codex", sid: "focus-1",
+    def test_normal_mirror_reorients_without_recovery_framing(self) -> None:
+        checks = """
+projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generated: 100000,
+  data: {observers: [], events: [], semantic: {facts: [
+    {fact_id: "result-1", at: 99995, type: "result", summary: "Assignment roster restored",
+      work_item_id: "work-1", evidence: {source: "paired result", confidence: "exact"}}
+  ], work_items: [{work_item_id: "work-1", label: "Project cockpit", kind: "workflow_item"}],
+  projections: {assignments: [], operator_intents: [], steering_episodes: [],
+    candidate_goal_shifts: [], trail_heads: [{work_item_id: "work-1", status: "outcome",
+      latest_meaningful_event: "result-1"}]}},
+  sources: {gate: {}, steer: {unavailable: []}}}};
+const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
   active: true, state: "working", last_activity: 99990, subagent_hierarchy: [
-    {{name: "Einstein", depth: 1, assignment: "Project cockpit and remembered goal",
-      assignment_status: "structured dispatch artifact"}},
-    {{name: "Ampere", depth: 1, assignment: "Session interaction origin",
-      assignment_status: "structured dispatch artifact"}}
-  ]}})]);
-Object.assign(lastData, {{generated: 100000, ask: true, asks: []}});
-render(lastData);
-await __settle(); await __settle(); await __settle(); await __settle();
+    {name: "Einstein", depth: 1, assignment: "Project cockpit and remembered goal",
+      assignment_status: "structured dispatch artifact"},
+    {name: "Ampere", depth: 1, assignment: "Session interaction origin",
+      assignment_status: "structured dispatch artifact"}
+  ]})]);
+Object.assign(d, {generated: 100000, ask: true, asks: []});
+render(d);
 const h = __els.app.innerHTML;
-console.log(JSON.stringify({{
-  sourceFetched: __fetchCalls.some(call => call[0] === "/__proto/checkpoint"),
-  durable: h.includes("Recovery mirror") && h.includes("Goal, work, checkpoint") &&
-    h.includes("Browser goal present") && h.includes("2/2 current assignments sourced") &&
-    h.includes("fc429c56b528 · review"),
-  process: h.includes("Workers and listeners") && h.includes("working now") &&
-    h.includes("Old workers and listeners are not restored by a checkout") &&
-    h.includes("last seen is history"),
-  resume: h.includes("Safe resume") &&
-    h.includes("Continue only in codex:focus-1 from checkpoint fc429c56b528"),
+console.log(JSON.stringify({
+  ordinary: !h.includes("Recovery mirror") && !h.includes("Safe resume") &&
+    !h.includes("checkpoint") && h.includes("Project context") && h.includes("Right now"),
+  toward: h.includes("Maintain orientation from ordinary project context"),
   assignments: h.includes("Einstein") && h.includes("Project cockpit and remembered goal") &&
-    h.includes("Ampere") && h.includes("Session interaction origin")
-}}));
+    h.includes("Ampere") && h.includes("Session interaction origin") &&
+    h.includes("structured dispatch artifact"),
+  changed: h.includes("Assignment roster restored") && h.includes("5s ago") &&
+    h.includes('data-trail-head="outcome"'),
+  freshness: h.includes("latest session evidence · 10s ago"),
+  continueAt: h.includes("codex:focus-1") && h.includes("copy session link")
+}));
 """
         out = self.run_project(
             checks,
-            goal="Recover the project without replaying dead process state",
+            goal="Maintain orientation from ordinary project context",
             query_project="repo/proj",
             query_session="codex:focus-1",
         )
-        self.assertTrue(out["sourceFetched"])
-        self.assertTrue(out["durable"])
-        self.assertTrue(out["process"])
-        self.assertTrue(out["resume"])
+        self.assertTrue(out["ordinary"])
+        self.assertTrue(out["toward"])
         self.assertTrue(out["assignments"])
+        self.assertTrue(out["changed"])
+        self.assertTrue(out["freshness"])
+        self.assertTrue(out["continueAt"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_focused_attention_is_quiet_until_an_exact_real_request_exists(self) -> None:

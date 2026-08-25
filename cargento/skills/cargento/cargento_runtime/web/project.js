@@ -18,7 +18,6 @@ let projectQuerySession = null;
 let projectGoalNote = "";
 const projectDraftByLabel = {};
 const projectContextByLabel = {};
-let projectCheckpointState = {state: "idle", data: null};
 try{
   projectCockpitLabel = localStorage.getItem(PROJECT_COCKPIT_KEY) || null;
 }catch(e){ /* no browser storage — choose from the payload */ }
@@ -371,39 +370,6 @@ function projectAssignmentRoster(group, sess){
     live + pending + done + loading + `</div>`;
 }
 
-function projectRecoveryMirror(d, sess, group){
-  const reported = Array.isArray(sess.subagent_hierarchy) ? sess.subagent_hierarchy : [];
-  const known = reported.filter(agent => typeof agent.assignment === "string" && agent.assignment).length;
-  const checkpointData = projectCheckpointState.data || {};
-  const checkpoint = /^[0-9a-f]{40}$/.test(String(checkpointData.checkpoint || ""))
-    ? String(checkpointData.checkpoint) : "";
-  const checkpointText = checkpoint
-    ? `${checkpoint.slice(0, 12)} · ${checkpointData.source || "checkpoint source"}`
-    : "checkpoint not exposed on this URL";
-  const remembered = projectGoal(group.label).trim();
-  const lastAt = Number(sess.last_activity) || 0;
-  const age = lastAt && Number(d.generated)
-    ? fmtDur(Math.max(0, Number(d.generated) - lastAt)) + " ago" : "time unavailable";
-  const live = sess.state === "working" ? "working now" :
-    ((sess.state === "needs_input" || sess.needs_you === true) ? "needs you" : "not working now");
-  const key = sessKey(sess);
-  const safeAction = checkpoint
-    ? `Continue only in ${key} from checkpoint ${checkpoint.slice(0, 12)}.`
-    : `Verify the exact checkpoint before continuing in ${key}.`;
-  return `<div class="pc-recovery" data-recovery-mirror="focused">` +
-    `<div class="pc-recovery-head"><div><span class="pc-kicker">Recovery mirror</span>` +
-    `<strong>Resume from durable state, not last seen</strong></div>` +
-    `<code>${esc(checkpointText)}</code></div>` +
-    `<div class="pc-recovery-grid">` +
-    `<div data-continuity="survived"><small>survived</small><strong>Goal, work, checkpoint</strong>` +
-    `<span>${remembered ? "Browser goal present" : "No browser goal recorded"} · ` +
-    `${known}/${reported.length} current assignments sourced · ${esc(checkpointText)}</span></div>` +
-    `<div data-continuity="process"><small>process state</small><strong>Workers and listeners</strong>` +
-    `<span>${esc(live)} · ${reported.length} child worker${reported.length === 1 ? "" : "s"} visible · ` +
-    `last evidence ${esc(age)}. Old workers and listeners are not restored by a checkout; last seen is history.</span></div>` +
-    `</div><div class="pc-resume"><b>Safe resume</b><span>${esc(safeAction)}</span></div></div>`;
-}
-
 function projectSessionMirror(d, sess, group){
   if(!sess){
     if(!projectQuerySession) return "";
@@ -417,38 +383,25 @@ function projectSessionMirror(d, sess, group){
   const state = sess.state === "working" ? "working now" :
     ((sess.state === "needs_input" || sess.needs_you === true) ? "needs you" :
       (sess.active ? "recent · idle" : "idle"));
+  const activityAt = Number(sess.last_activity) || 0;
+  const freshness = activityAt && Number(d.generated)
+    ? `latest session evidence · ${fmtDur(Math.max(0, Number(d.generated) - activityAt))} ago`
+    : "latest session evidence · time unavailable";
   return `<section class="pc-mirror" data-session-mirror="${esc(key)}">` +
-    projectRecoveryMirror(d, sess, group) +
     `<div class="pc-mirror-head"><div><span class="pc-kicker">Right now</span>` +
     `<h3>${esc(sess.title || "Untitled Codex session")}</h3></div>` +
     `<div class="pc-mirror-actions">${projectRefreshControl(group.label, false)}` +
     `<button type="button" class="quiet" data-calm="project-session-link-copy"` +
     ` data-arg="${esc(key)}">copy session link</button></div></div>` +
     `<div class="pc-mirror-meta"><code>${esc(key)}</code>` +
-    (sess.model ? `<span>model · ${esc(sess.model)}</span>` : "") + `</div>` +
+    (sess.model ? `<span>model · ${esc(sess.model)}</span>` : "") +
+    `<span>${esc(freshness)}</span></div>` +
     `<div class="pc-now"><div class="pc-mirror-state"><strong>${esc(state)}</strong>` +
     `<span>${esc(detail)}</span></div>` + projectMirrorAttention(d, sess, group) +
     projectAssignmentRoster(group, sess) + `</div></section>`;
 }
 
-function projectLoadCheckpoint(){
-  if(projectCheckpointState.state !== "idle") return;
-  projectCheckpointState = {state: "loading", data: null};
-  fetch("/__proto/checkpoint", {cache: "no-store"}).then(r => {
-    if(!r.ok) throw new Error("bad status");
-    return r.json();
-  }).then(data => {
-    const checkpoint = data && /^[0-9a-f]{40}$/.test(String(data.checkpoint || ""));
-    projectCheckpointState = {state: checkpoint ? "ready" : "error", data: checkpoint ? data : null};
-    if(lastData) render(lastData);
-  }).catch(() => {
-    projectCheckpointState = {state: "error", data: null};
-    if(lastData) render(lastData);
-  });
-}
-
 function projectLoadContext(d, refresh){
-  projectLoadCheckpoint();
   const group = projectCockpitGroup(d).selected;
   if(!group) return;
   const cacheKey = projectContextKey(group.label);
