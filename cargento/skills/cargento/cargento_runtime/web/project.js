@@ -22,6 +22,16 @@ let projectContextRequestSequence = 0;
 let projectUsageCounts = null;
 let projectTabOrder = null;
 let projectOpenedKey = null;
+const projectTerminalBySession = {};
+let projectTerminalOpenKey = null;
+let projectTerminalSocket = null;
+let projectTerminal = null;
+let projectTerminalXtermPromise = null;
+let projectTerminalReconnect = null;
+const PROJECT_XTERM_JS = "https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.js";
+const PROJECT_XTERM_CSS = "https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css";
+const PROJECT_XTERM_JS_INTEGRITY = "sha384-f/1U6Z9wM4D71a5eRXEZnyOTMOvjqxr2XLwh+Go1OvIl3L3tOcvUrzudnhbECwl4";
+const PROJECT_XTERM_CSS_INTEGRITY = "sha384-n2n7twoohnW+d3myBKaUgl7DSiwidw6MkQy9oesGzkPpMjejKRR3XlnD+5yCdtBD";
 try{
   projectCockpitLabel = localStorage.getItem(PROJECT_COCKPIT_KEY) || null;
 }catch(e){ /* no browser storage — choose from the payload */ }
@@ -276,6 +286,18 @@ function projectGoalAction(act, label){
 }
 
 function projectAction(act, arg){
+  if(act === "project-terminal-open"){
+    projectTerminalOpenKey = String(arg || "");
+    projectTerminalDispose();
+    if(lastData) render(lastData);
+    return true;
+  }
+  if(act === "project-terminal-close"){
+    projectTerminalOpenKey = null;
+    projectTerminalDispose();
+    if(lastData) render(lastData);
+    return true;
+  }
   if(act === "project-cockpit"){
     setProjectCockpit(arg);
     return true;
@@ -378,10 +400,10 @@ function projectMirrorAttention(d, sess, group){
       exactAsks.map(ask => askCard(ask, null, false)).join("") +
       `<code>AskRegistry · exact focused session</code></div>`;
   }
-  if(sess.state === "needs_input" || sess.needs_you === true){
+  if((sess.state === "needs_input" || sess.needs_you === true) && sess.needs_reason){
     return `<div class="pc-mirror-attention attention" data-request-state="overlay">` +
       `<span class="pc-kicker">Needs you</span>` +
-      `<strong>${esc(sess.needs_reason || "live session requests attention")}</strong>` +
+      `<strong>${esc(sess.needs_reason)}</strong>` +
       `<button type="button" class="quiet" data-calm="project-session-link-copy"` +
       ` data-arg="${esc(sessKey(sess))}">copy session link</button>` +
       `<code>live session overlay</code></div>`;
@@ -426,33 +448,155 @@ function projectLastOutput(sess){
     `<pre>${esc(exact)}</pre></details>`;
 }
 
+function projectTerminalDispose(){
+  if(projectTerminalReconnect){ clearTimeout(projectTerminalReconnect); projectTerminalReconnect = null; }
+  if(projectTerminalSocket){
+    projectTerminalSocket.onclose = null;
+    projectTerminalSocket.close();
+    projectTerminalSocket = null;
+  }
+  if(projectTerminal){ projectTerminal.dispose(); projectTerminal = null; }
+}
+
+function projectTerminalLookup(d, sess){
+  if(!sess) return;
+  const key = sessKey(sess);
+  const revision = Number(d.generated) || 0;
+  const current = projectTerminalBySession[key];
+  if(current && (current.state === "loading" || Number(current.revision) >= revision)) return;
+  projectTerminalBySession[key] = {state:"loading", revision};
+  const path = "/api/interaction/origin?harness=" + encodeURIComponent(sess.harness) +
+    "&sid=" + encodeURIComponent(sess.sid);
+  fetch(path).then(response => {
+    if(!response.ok) throw new Error(String(response.status));
+    return response.json();
+  }).then(data => {
+    projectTerminalBySession[key] = data && data.state === "registered"
+      ? {state:"registered", revision, data} : {state:"unavailable", revision};
+    if(projectTerminalOpenKey === key && data && data.state !== "registered"){
+      projectTerminalOpenKey = null;
+      projectTerminalDispose();
+    }
+    if(lastData) render(lastData);
+  }).catch(() => {
+    projectTerminalBySession[key] = {state:"unavailable", revision};
+    if(projectTerminalOpenKey === key){ projectTerminalOpenKey = null; projectTerminalDispose(); }
+    if(lastData) render(lastData);
+  });
+}
+
+function projectTerminalLoadXterm(){
+  if(window.Terminal) return Promise.resolve();
+  if(projectTerminalXtermPromise) return projectTerminalXtermPromise;
+  projectTerminalXtermPromise = new Promise((resolve, reject) => {
+    if(!document.querySelector("link[data-project-xterm]")){
+      const link = document.createElement("link");
+      link.dataset.projectXterm = "true";
+      link.rel = "stylesheet";
+      link.href = PROJECT_XTERM_CSS;
+      link.integrity = PROJECT_XTERM_CSS_INTEGRITY;
+      link.crossOrigin = "anonymous";
+      document.head.append(link);
+    }
+    const script = document.createElement("script");
+    script.src = PROJECT_XTERM_JS;
+    script.integrity = PROJECT_XTERM_JS_INTEGRITY;
+    script.crossOrigin = "anonymous";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("xterm unavailable"));
+    document.head.append(script);
+  });
+  return projectTerminalXtermPromise;
+}
+
+function projectTerminalConnect(key, originHint){
+  if(projectTerminalOpenKey !== key || !projectTerminal) return;
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  projectTerminalSocket = new WebSocket(`${scheme}://${location.host}/api/interaction/stream`);
+  projectTerminalSocket.onmessage = event => {
+    const frame = JSON.parse(event.data);
+    if(frame.state !== "streamed"){
+      projectTerminal.writeln(`\r\n[${frame.state}: ${frame.reason}]`);
+      return;
+    }
+    if(originHint && frame.origin_id_hint !== originHint){ projectTerminalSocket.close(); return; }
+    if(frame.reset) projectTerminal.reset();
+    if(frame.data) projectTerminal.write(frame.data);
+  };
+  projectTerminalSocket.onclose = event => {
+    projectTerminalSocket = null;
+    if(event.code !== 1008 && projectTerminalOpenKey === key){
+      projectTerminalReconnect = setTimeout(() => projectTerminalConnect(key, originHint), 1000);
+    }
+  };
+}
+
+function projectTerminalMount(key, originHint){
+  const screen = document.getElementById("pc-terminal-screen");
+  if(!screen || projectTerminalOpenKey !== key) return;
+  projectTerminalLoadXterm().then(() => {
+    if(!document.getElementById("pc-terminal-screen") || projectTerminalOpenKey !== key) return;
+    projectTerminal = new window.Terminal({disableStdin:true, cursorBlink:false, rows:14,
+      scrollback:500, fontSize:12, fontFamily:"'SFMono-Regular', Consolas, monospace",
+      theme:{background:"#11141a", foreground:"#dbe5ee", cursor:"#11141a"}});
+    projectTerminal.open(document.getElementById("pc-terminal-screen"));
+    projectTerminalConnect(key, originHint);
+  }).catch(() => { screen.textContent = "Terminal renderer unavailable."; });
+}
+
+function projectTerminalSurface(sess){
+  if(!sess) return "";
+  const key = sessKey(sess);
+  const entry = projectTerminalBySession[key];
+  if(!entry || entry.state !== "registered") return "";
+  if(projectTerminalOpenKey !== key){
+    return `<button type="button" class="pc-terminal-open" data-calm="project-terminal-open"` +
+      ` data-arg="${esc(key)}">Open terminal</button>`;
+  }
+  const data = entry.data || {};
+  const origin = data.origin || {};
+  const title = `${origin.session_name || "tmux"}:${origin.window_index || "?"}.` +
+    `${origin.pane_index || "?"}`;
+  setTimeout(() => projectTerminalMount(key, data.origin_id_hint || ""), 0);
+  return `<aside class="pc-terminal" aria-label="Read-only terminal output">` +
+    `<div class="pc-terminal-bar"><strong>${esc(title)}</strong><span>read-only</span>` +
+    `<button type="button" class="quiet" data-calm="project-terminal-close"` +
+    ` data-arg="${esc(key)}">Close</button></div>` +
+    `<div id="pc-terminal-screen" class="pc-terminal-screen"></div></aside>`;
+}
+
 function projectSessionMirror(d, sess, group){
   if(!sess){
     if(!projectQuerySession) return "";
     return `<section class="pc-operator unavailable">` +
-      `<div class="pc-operator-line"><strong>UNAVAILABLE</strong>` +
-      `<span>focused session · state unknown · now</span></div>` +
+      `<div class="pc-operator-line"><strong>Unavailable</strong>` +
+      `<span>Focused session state unknown</span></div>` +
       `<details><summary>session</summary><code>${esc(projectQuerySession)}</code></details></section>`;
   }
+  projectTerminalLookup(d, sess);
   const key = sessKey(sess);
   const hierarchy = Array.isArray(sess.subagent_hierarchy) ? sess.subagent_hierarchy :
     (Array.isArray(sess.subagents) ? sess.subagents : []);
   const childCount = hierarchy.length;
-  const detail = childCount
-    ? `${childCount} ${childCount === 1 ? "child" : "children"}`
-    : (humanTool(sess.state_detail) || sess.last_prompt || "no current detail");
   const exactAsks = projectExactAsks(d, sess, group);
-  const needs = exactAsks.length || sess.state === "needs_input" || sess.needs_you === true;
-  const state = needs ? "NEEDS YOU" : (sess.state === "working" ? "WORKING" : "IDLE");
-  const request = needs ? "request" : "no request seen";
+  const request = exactAsks.length ? String(exactAsks[0].question || "").trim() :
+    ((sess.state === "needs_input" || sess.needs_you === true) ?
+      String(sess.needs_reason || "").trim() : "");
+  const needs = !!request;
+  const working = sess.state === "working";
+  const state = needs ? "Needs you" : (working ? "Working" : "Waiting for you");
+  const taskCount = Math.max(1, childCount);
+  const detail = needs ? request : (working ?
+    `${taskCount} ${taskCount === 1 ? "task" : "tasks"} active` : "");
   const activityAt = Number(sess.last_activity) || 0;
   const age = activityAt && Number(d.generated)
     ? Math.max(0, Number(d.generated) - activityAt) : null;
-  const freshness = age === null ? "time unknown" : (age < 10 ? "now" : fmtDur(age));
+  const freshness = age === null ? "" : (age < 1 ? "Updated now" : `Updated ${fmtDur(age)} ago`);
   return `<section class="pc-operator" data-session-mirror="${esc(key)}"` +
     ` data-operator-state="${esc(state.toLowerCase().replace(/ /g, "-"))}">` +
     `<div class="pc-operator-line"><strong>${esc(state)}</strong>` +
-    `<span>${esc(detail)} · ${esc(request)} · ${esc(freshness)}</span></div>` +
+    (detail ? `<span>${esc(detail)}</span>` : "") +
+    (freshness ? `<span class="pc-operator-updated">${esc(freshness)}</span>` : "") + `</div>` +
     projectLastOutput(sess) +
     `<details><summary>session</summary><div class="pc-operator-detail">` +
     `<strong>${esc(sess.title || "Untitled Codex session")}</strong><code>${esc(key)}</code>` +
@@ -855,6 +999,9 @@ function projectView(d, draft){
     : "";
   const workingNow = recent.filter(sess => sess.state === "working").length;
   const mirror = projectQuerySession ? projectSessionMirror(d, focus, group) : "";
+  const terminal = projectQuerySession ? projectTerminalSurface(focus) : "";
+  const workspace = mirror ? `<div class="pc-session-workspace${terminal ? " terminal-open" : ""}">` +
+    `<div class="pc-session-primary">${mirror}</div>${terminal}</div>` : "";
   return top + `<nav class="pc-nav" aria-label="Projects">` +
     `<div class="pc-project-tabs" role="tablist" aria-label="Projects">${tabs}</div>` +
     `<button type="button" class="pc-link" data-calm="project-link-copy"` +
@@ -865,7 +1012,7 @@ function projectView(d, draft){
     (projectQuerySession ? "" : `<span><b>${workingNow}</b> working now</span>`) +
     `<span><b>${recent.length}</b> recent</span>` +
     `</div></div>${projectGoalBlock(group, goal, note)}` +
-    `${mirror}` +
+    `${workspace}` +
     `<div class="pc-activity"><div class="pc-active-head"><h3>Work & steering</h3>` +
     `<span>newest first</span></div>` +
     `${projectActivity(d, group, focus)}</div>` +

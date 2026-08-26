@@ -399,7 +399,8 @@ Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  mirror: h.includes('data-session-mirror="codex:focus-1"') && h.includes("running exec"),
+  mirror: h.includes('data-session-mirror="codex:focus-1"') && h.includes("1 task active") &&
+    !h.includes("running exec"),
   identity: h.includes("codex:focus-1") && h.includes("model · gpt-5.6-sol"),
   hierarchy: h.indexOf("add focus") < h.indexOf('class="pc-operator"'),
   surrounding: h.includes("Other project sessions") && h.includes("claude:around-1"),
@@ -468,7 +469,8 @@ console.log(JSON.stringify({
     !h.includes('class="pc-work-item') && !h.includes("<details><summary>source</summary>"),
   changed: h.includes("Assignment roster restored") && h.includes("5s ago") &&
     h.includes('data-trail-head="outcome"'),
-  freshness: h.includes("WORKING") && h.includes("3 children · no request seen · 10s"),
+  freshness: h.includes("Working</strong><span>3 tasks active</span>") &&
+    h.includes("Updated 10s ago") && !h.includes("children") && !h.includes("no request"),
   continueAt: h.includes("codex:focus-1") && h.includes("copy session link")
 }));
 """
@@ -508,11 +510,13 @@ d.sessions[0].needs_reason = "approval required";
 render(d);
 const overlay = __els.app.innerHTML;
 console.log(JSON.stringify({
-  clear: clear.includes("no request") && !clear.includes('class="pc-needs"') &&
+  clear: clear.includes("Working</strong><span>1 task active</span>") &&
+    !clear.includes("no request") && !clear.includes('class="pc-needs"') &&
     clear.indexOf("does not prove unblocked") >
       clear.indexOf("Evidence / limits") &&
     clear.includes('data-operator-state="working"'),
-  exactOnly: !clear.includes("Choose the release path?") && asked.includes("Needs you") &&
+  exactOnly: !clear.includes("Choose the release path?") &&
+    asked.includes("Needs you</strong><span>Choose the release path?</span>") &&
     asked.includes("Choose the release path?") && asked.includes(">safe</button>") &&
     asked.includes('data-request-state="ask"'),
   askSource: asked.includes("AskRegistry · exact focused session"),
@@ -562,14 +566,15 @@ console.log(JSON.stringify({
   hierarchy: h.indexOf("<b>Focus</b>") < h.indexOf('class="pc-operator"') &&
     h.indexOf('class="pc-operator"') < h.indexOf("Work & steering") &&
     h.indexOf("Observed goal</b> — Shape the focused mirror") < h.indexOf('class="pc-operator"'),
-  motion: h.includes("WORKING") && h.includes("running exec · no request"),
+  motion: h.includes("Working</strong><span>1 task active</span>") &&
+    !h.includes("running exec") && !h.includes("no request"),
   purpose: h.includes("Derived snapshot") && h.includes("Shape the focused mirror") &&
     !h.includes("reasoning max") &&
     h.split("Shape the focused mirror").length - 1 === 2,
   workflowBoundary: !h.includes("workflow stage unavailable") &&
     !h.includes("open-block reading unavailable") &&
     h.includes("Stage and block are omitted when absent"),
-  attention: h.includes("no request") && !h.includes("Needs captain"),
+  attention: !h.includes("no request") && !h.includes("Needs captain"),
   steering: h.includes("Operator intent") && h.includes("Keep the project as context") &&
     h.includes("timestamped non-meta user-role record") && h.includes("1970-01-02T03:46:30.000Z"),
   identity: h.includes("codex:focus-1"),
@@ -626,13 +631,15 @@ render(asr);
 const a = __els.app.innerHTML;
 const aOperator = a.slice(a.indexOf('class="pc-operator"'), a.indexOf("Work & steering"));
 console.log(JSON.stringify({
-  cargento: cOperator.includes("WORKING</strong><span>3 children · no request seen · now"),
-  asr: aOperator.includes("WORKING</strong><span>running bash · no request seen · 1m"),
+  cargento: cOperator.includes("Working</strong><span>3 tasks active</span>") &&
+    cOperator.includes("Updated 1s ago") && !cOperator.includes("children"),
+  asr: aOperator.includes("Working</strong><span>1 task active</span>") &&
+    aOperator.includes("Updated 1m ago") && !aOperator.includes("running bash"),
   disclosure: cOperator.indexOf("<details") < cOperator.indexOf("Shape cockpit") &&
     aOperator.indexOf("<details") < aOperator.indexOf("ASR work"),
   noLaneRepeat: !cGraph.includes("working now"),
-  next: c.includes('</section><div class="pc-activity"') &&
-    a.includes('</section><div class="pc-activity"'),
+  next: c.includes('</div><div class="pc-activity"') &&
+    a.includes('</div><div class="pc-activity"'),
   noEmptySurroundings: !c.includes("Other project sessions") &&
     !c.includes("No other recent sessions") && !a.includes("Other project sessions")
 }));
@@ -694,6 +701,53 @@ console.log(JSON.stringify({
         self.assertTrue(out["noDuplicate"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_exact_registered_origin_opens_adjacent_read_only_terminal(self) -> None:
+        checks = """
+const key = "codex:focus-1";
+projectTerminalBySession[key] = {state:"registered", revision:100000, data:{
+  state:"registered", origin_id_hint:"origin01", terminal_power:"read-only-control-stream",
+  keyboard_input:"not-exposed", origin:{session_name:"Cargento", window_index:"1",
+    pane_index:"1", pane_id:"%0", window_id:"@0"}
+}};
+const d = payload([mk({project:"repo/proj", harness:"codex", sid:"focus-1", active:true,
+  state:"working", last_activity:99999})]);
+Object.assign(d, {generated:100000, ask:true, asks:[]});
+render(d);
+const closed = __els.app.innerHTML;
+projectAction("project-terminal-open", key);
+const opened = __els.app.innerHTML;
+projectAction("project-terminal-close", key);
+const reclosed = __els.app.innerHTML;
+delete projectTerminalBySession[key];
+render(d);
+const absent = __els.app.innerHTML;
+console.log(JSON.stringify({
+  optIn:closed.includes("Open terminal") && !closed.includes('class="pc-terminal"'),
+  adjacent:opened.includes('class="pc-session-workspace terminal-open"') &&
+    opened.includes('class="pc-terminal"') && opened.includes("Cargento:1.1"),
+  readOnly:(opened.match(/read-only/g) || []).length === 1 &&
+    !opened.includes("Keyboard input") && !opened.includes("send-keys"),
+  close:!reclosed.includes('class="pc-terminal"') && reclosed.includes("Open terminal"),
+  absent:!absent.includes("Open terminal") && !absent.includes('class="pc-terminal"'),
+  focus:projectQuerySession === key && !location.search.includes("terminal"),
+  reconnect:projectTerminalConnect.toString().includes("setTimeout") &&
+    projectTerminalConnect.toString().includes("event.code !== 1008")
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["optIn"])
+        self.assertTrue(out["adjacent"])
+        self.assertTrue(out["readOnly"])
+        self.assertTrue(out["close"])
+        self.assertTrue(out["absent"])
+        self.assertTrue(out["focus"])
+        self.assertTrue(out["reconnect"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_awaiting_session_shows_escaped_final_output_compact_then_full(self) -> None:
         checks = """
 const answer = "Ready for review.\\n\\n<img src=x onerror=alert(1)> exact tail";
@@ -709,7 +763,8 @@ console.log(JSON.stringify({
   compact: output.includes("Last · Ready for review."),
   full: output.includes("Ready for review.\\n\\n&lt;img src=x onerror=alert(1)&gt; exact tail"),
   escaped: !output.includes("<img src=x") && output.includes("<pre>"),
-  idleOnly: h.includes('data-operator-state="idle"')
+  idleOnly: h.includes('data-operator-state="waiting-for-you"') &&
+    h.includes("Waiting for you</strong>")
 }));
 """
         out = self.run_project(
@@ -1064,8 +1119,8 @@ console.log(JSON.stringify({
   omittedEmpty: !primary.includes("Active child hierarchy") &&
     !primary.includes("model unavailable") && !primary.includes("workflow stage unavailable") &&
     !primary.includes("open-block reading unavailable"),
-  concisePrimary: primary.includes("no request") &&
-    !primary.includes("not proof") && !primary.includes("source unavailable"),
+  concisePrimary: !primary.includes("no request") && !primary.includes("not proof") &&
+    !primary.includes("source unavailable") && primary.includes("1 task active"),
   limitsOnce: count("Browser focus is operator-authored") === 1 &&
     count("does not prove unblocked") === 1 &&
     count("chronology alone is not causality") === 1 &&
@@ -1476,7 +1531,9 @@ const key = projectContextKey("repo/proj");
 projectContextByLabel[key] = {state: "ready", generated: 99999, dashboard_revision: 99999,
   data: context([{id: "old", at: 99999, summary: "Keep the old direction visible"}])};
 const pending = [];
-__fetchImpl = url => new Promise(resolve => pending.push({url, resolve}));
+__fetchImpl = url => String(url).includes("/api/interaction/origin")
+  ? Promise.resolve({ok:false, status:404, json:() => Promise.resolve({})})
+  : new Promise(resolve => pending.push({url, resolve}));
 const first = projectBoard(); first.generated = 100000;
 render(first);
 const preserved = __els.app.innerHTML;

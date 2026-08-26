@@ -169,6 +169,7 @@ CARGENTO_RUNTIME_FILES = (
     "skills/cargento/cargento_runtime/http_api.py",
     "skills/cargento/cargento_runtime/observer.py",
     "skills/cargento/cargento_runtime/semantic_history.py",
+    "skills/cargento/cargento_runtime/interaction_prototype.py",
     "skills/cargento/cargento_runtime/project_context.py",
     "skills/cargento/cargento_runtime/collectors/__init__.py",
     "skills/cargento/cargento_runtime/collectors/claude.py",

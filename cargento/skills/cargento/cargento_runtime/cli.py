@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from cargento_runtime import aggregate, diagnostics, http_api, lifecycle, notifications, observation
 from cargento_runtime import config as runtime_config
+from cargento_runtime import interaction_prototype as runtime_interaction
 from cargento_runtime import io as runtime_io
 from cargento_runtime import state as runtime_state
 from cargento_runtime.web import page as frontend_page
@@ -34,6 +35,54 @@ JSON at /api/data.
 """
 
 LAUNCHER_PATH = Path(__file__).resolve().parents[1] / "server.py"
+
+
+def collected_session_ids(application: aggregate.Application) -> frozenset[str]:
+    """Freeze collected identities before registration can cause effects."""
+    _revision, body = application.collect_json(show_all=True)
+    try:
+        payload = json.loads(body)
+    except (ValueError, json.JSONDecodeError):
+        return frozenset()
+    rows = payload.get("sessions") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return frozenset()
+    return frozenset(
+        f"{row['harness']}:{row['sid']}"
+        for row in rows
+        if isinstance(row, dict)
+        and isinstance(row.get("harness"), str)
+        and isinstance(row.get("sid"), str)
+    )
+
+
+def build_server(
+    address: tuple[str, int],
+    application: aggregate.Application,
+    page_bytes: bytes,
+    coordinator: observation.Observation | None,
+    *,
+    next_page_bytes: bytes | None,
+    interaction_session: str | None,
+    interaction_registration_file: Path | None,
+) -> http_api.CargentoHTTPServer:
+    """Attach the opt-in collected-session origin without changing normal serving."""
+    prototype = None
+    if interaction_session is not None:
+        known_sessions = collected_session_ids(application)
+        prototype = runtime_interaction.InteractionPrototype(
+            collected_session_id=interaction_session,
+            session_exists=known_sessions.__contains__,
+            registration_file=interaction_registration_file,
+        )
+    return http_api.CargentoHTTPServer(
+        address,
+        application,
+        page_bytes,
+        coordinator,
+        next_page_bytes=next_page_bytes,
+        interaction_prototype=prototype,
+    )
 
 
 def runtime_environ(home: str | None = None) -> dict[str, str]:
@@ -177,6 +226,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=24,
         help="sessions with no activity in this window are hidden (default 24)",
     )
+    parser.add_argument(
+        "--interaction-origin-session",
+        help="bind one explicitly registered collected harness:sid to read-only output",
+    )
+    parser.add_argument(
+        "--interaction-origin-registration-file",
+        type=Path,
+        help="write the one-use session-side tmux registration capability here",
+    )
     return parser
 
 
@@ -262,6 +320,15 @@ def load_frontend_pages() -> tuple[bytes, bytes | None] | None:
     return page_bytes, next_page_bytes
 
 
+def validate_interaction_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Reject a partial collected-session registration boundary."""
+    if bool(args.interaction_origin_session) != bool(args.interaction_origin_registration_file):
+        parser.error(
+            "--interaction-origin-session and --interaction-origin-registration-file "
+            "must be used together"
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse, assemble, and run. Returns an exit code.
 
@@ -278,6 +345,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Each of those three exits without serving, so --daemon cannot apply.
         # Accepting it silently would teach that it had been honored.
         parser.error("--daemon cannot be combined with --diagnose, --stop or --status")
+    validate_interaction_args(parser, args)
     config, state = build_runtime(args, started=started)
 
     if args.diagnose:
@@ -345,12 +413,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.no_events:
             coordinator = observation.Observation(application)
             application.overlays = coordinator
-        server = http_api.CargentoHTTPServer(
+        server = build_server(
             (args.host, args.port),
             application,
             page_bytes,
             coordinator,
             next_page_bytes=next_page_bytes,
+            interaction_session=args.interaction_origin_session,
+            interaction_registration_file=args.interaction_origin_registration_file,
         )
     except OSError as exc:
         runtime_io.diag(http_api.bind_error_message(exc, args.port, args.host), print)
