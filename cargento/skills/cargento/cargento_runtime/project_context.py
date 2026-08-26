@@ -1574,7 +1574,7 @@ def _semantic_trail_heads(
         state_facts = [
             fact
             for fact in item_facts
-            if fact.get("type") == "stage_transition" and fact.get("stage")
+            if fact.get("type") in {"stage_transition", "prepared_dispatch"} and fact.get("stage")
         ]
         state_fact = (
             max(state_facts, key=lambda fact: float(fact.get("at") or 0)) if state_facts else None
@@ -1600,7 +1600,9 @@ def _semantic_trail_heads(
         if state_fact is not None:
             head["stage"] = state_fact["stage"]
             head["state_fact"] = state_fact["fact_id"]
-            if float(state_fact.get("at") or 0) >= float(newest.get("at") or 0):
+            if state_fact.get("type") == "stage_transition" and float(
+                state_fact.get("at") or 0
+            ) >= float(newest.get("at") or 0):
                 head["status"] = "current stage"
         heads.append(head)
     at_by_id = {fact["fact_id"]: float(fact.get("at") or 0) for fact in facts}
@@ -2096,6 +2098,33 @@ def _history_activity_nodes(
     return nodes[:MAX_PRIMARY_ACTIVITY_NODES]
 
 
+def _materialize_history_topology(
+    facts: list[dict[str, Any]],
+    relations: list[dict[str, Any]],
+    relation_keys: set[tuple[Any, Any, Any]],
+) -> None:
+    for fact in facts:
+        work_item_id = str(fact.get("work_item_id") or "")
+        source_kind = str(fact.get("source_kind") or "")
+        branch = fact.get("branch")
+        if not work_item_id or not isinstance(branch, dict):
+            continue
+        evidence = fact.get("evidence")
+        source_event = {
+            "harness": branch.get("harness"),
+            "sid": branch.get("sid"),
+            "source": evidence.get("source") if isinstance(evidence, dict) else None,
+        }
+        topology = _semantic_topology_relations(
+            source_event, source_kind, str(fact.get("fact_id") or ""), work_item_id
+        )
+        for relation in topology:
+            key = (relation.get("from"), relation.get("to"), relation.get("type"))
+            if key not in relation_keys:
+                relations.append(relation)
+                relation_keys.add(key)
+
+
 def _merge_semantic_history(
     semantic: dict[str, Any], history: dict[str, Any], *, now: float
 ) -> dict[str, Any]:
@@ -2112,6 +2141,7 @@ def _merge_semantic_history(
         for row in relations
         if isinstance(row, dict)
     }
+    _materialize_history_topology(facts, relations, relation_keys)
     for event in history.get("events", []):
         if not isinstance(event, dict):
             continue
