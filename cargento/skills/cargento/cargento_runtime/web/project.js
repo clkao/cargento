@@ -18,7 +18,7 @@ const projectDraftByLabel = {};
 const projectContextByLabel = {};
 const projectContextRequests = {};
 let projectContextRequestSequence = 0;
-const projectLastOutputOpenBySession = new Map();
+const projectDisclosureOpenBySession = new Map();
 let projectUsageCounts = null;
 let projectTabOrder = null;
 let projectOpenedKey = null;
@@ -47,6 +47,30 @@ try{
 
 function projectGoalKey(label){
   return PROJECT_GOAL_PREFIX + encodeURIComponent(label);
+}
+
+function projectDisclosure(control, summary, body, className, attributes){
+  const session = String(projectQuerySession || "");
+  const key = `${session}\n${control}`;
+  const open = session && projectDisclosureOpenBySession.get(key) === true ? " open" : "";
+  const classes = className ? ` class="${esc(className)}"` : "";
+  return `<details${classes}${open} data-pc-disclosure="${esc(control)}"` +
+    ` data-disclosure-session="${esc(encodeURIComponent(session))}"${attributes || ""}>` +
+    `<summary>${summary}</summary>${body}</details>`;
+}
+
+function projectCaptureDisclosureStates(){
+  const app = document.getElementById("app");
+  if(!app || typeof app.querySelectorAll !== "function") return;
+  for(const details of app.querySelectorAll("details[data-pc-disclosure]")){
+    const encodedSession = String(details.getAttribute("data-disclosure-session") || "");
+    let session = "";
+    try{ session = decodeURIComponent(encodedSession); }catch(_error){ session = ""; }
+    const control = String(details.getAttribute("data-pc-disclosure") || "");
+    if(session && control) projectDisclosureOpenBySession.set(
+      `${session}\n${control}`, details.open === true
+    );
+  }
 }
 
 function projectTabId(label){
@@ -469,18 +493,8 @@ function projectLastOutput(sess){
   const compact = exact.replace(/\s+/g, " ").trim();
   if(!compact) return "";
   const preview = compact.length > 110 ? compact.slice(0, 109) + "…" : compact;
-  const key = sessKey(sess);
-  const open = projectLastOutputOpenBySession.get(key) === true ? " open" : "";
-  return `<details id="pc-last-output" class="pc-last-output"${open}` +
-    ` data-session-key="${esc(key)}"><summary>Last · ${esc(preview)}</summary>` +
-    `<pre>${esc(exact)}</pre></details>`;
-}
-
-function projectCaptureLastOutputState(){
-  const details = document.getElementById("pc-last-output");
-  if(!details || typeof details.getAttribute !== "function") return;
-  const key = String(details.getAttribute("data-session-key") || "");
-  if(key) projectLastOutputOpenBySession.set(key, details.open === true);
+  return projectDisclosure("last-output", `Last · ${esc(preview)}`, `<pre>${esc(exact)}</pre>`,
+    "pc-last-output", ` id="pc-last-output"`);
 }
 
 function projectTerminalDispose(){
@@ -713,8 +727,9 @@ function projectSessionMirror(d, sess, group){
     if(!projectQuerySession) return "";
     return `<section class="pc-operator unavailable">` +
       `<div class="pc-operator-line"><strong>Unavailable</strong>` +
-      `<span>Focused session state unknown</span></div>` +
-      `<details><summary>session</summary><code>${esc(projectQuerySession)}</code></details></section>`;
+      `<span>Focused session state unknown</span></div>` + projectDisclosure(
+        "session-metadata", "session", `<code>${esc(projectQuerySession)}</code>`
+      ) + `</section>`;
   }
   projectTerminalLookup(d, sess);
   const key = sessKey(sess);
@@ -740,14 +755,14 @@ function projectSessionMirror(d, sess, group){
     `<div class="pc-operator-line"><strong>${esc(state)}</strong>` +
     (detail ? `<span>${esc(detail)}</span>` : "") +
     (freshness ? `<span class="pc-operator-updated">${esc(freshness)}</span>` : "") + `</div>` +
-    projectLastOutput(sess) +
-    `<details><summary>session</summary><div class="pc-operator-detail">` +
+    projectLastOutput(sess) + projectDisclosure("session-metadata", "session",
+    `<div class="pc-operator-detail">` +
     `<strong>${esc(sess.title || "Untitled Codex session")}</strong><code>${esc(key)}</code>` +
     (sess.model ? `<span>model · ${esc(sess.model)}</span>` : "") +
     `<div class="pc-operator-actions">${projectRefreshControl(group.label, false)}` +
     `<button type="button" class="quiet" data-calm="project-session-link-copy"` +
     ` data-arg="${esc(key)}">copy session link</button></div>` +
-    projectMirrorAttention(d, sess, group) + `</div></details></section>`;
+    projectMirrorAttention(d, sess, group) + `</div>`) + `</section>`;
 }
 
 function projectLoadContext(d, refresh, announce){
@@ -831,14 +846,16 @@ function projectLifecycleEvidence(focus){
     `they do not enter the primary graph.</li>`;
 }
 
-function projectFactEvidence(fact){
+function projectFactEvidence(fact, scope){
   const evidence = fact.evidence || {};
   const iso = Number(fact.at) ? new Date(Number(fact.at) * 1000).toISOString() : "";
-  return `<details class="pc-event-evidence"><summary>evidence</summary><div>` +
+  const body = `<div>` +
     `${esc(evidence.source || "source unavailable")}` +
     (evidence.confidence ? ` · ${esc(evidence.confidence)}` : "") +
     (iso ? ` · <time datetime="${esc(iso)}">${esc(iso)}</time>` : "") +
-    `</div></details>`;
+    `</div>`;
+  return projectDisclosure(`fact:${scope || "event"}:${fact.fact_id || "unknown"}`,
+    "evidence", body, "pc-event-evidence");
 }
 
 function projectDelegationWorkItem(model, row){
@@ -994,14 +1011,15 @@ function projectGraphRow(d, at, kind, registry, lane, body, attributes, tip){
 function projectLaneHistory(lane, excludedFactId){
   const events = lane.events.filter(fact => fact.fact_id !== excludedFactId);
   if(!events.length) return "";
-  return `<details class="pc-trail-history"><summary>${events.length} sourced event` +
-    `${events.length === 1 ? "" : "s"}</summary>` + events.map(fact => {
+  const summary = `${events.length} sourced event${events.length === 1 ? "" : "s"}`;
+  const body = events.map(fact => {
     const prefix = fact.type === "user_message" ? "Operator intent" :
       (fact.type === "observer_snapshot" ? "Derived snapshot" : "");
     return `<div class="pc-trail-event">` + (prefix ? `<strong>${prefix}:</strong> ` : "") +
       `<span>${esc(fact.summary || fact.type)}</span>` +
-      projectFactEvidence(fact) + `</div>`;
-  }).join("") + `</details>`;
+      projectFactEvidence(fact, `lane-history:${lane.key}`) + `</div>`;
+  }).join("");
+  return projectDisclosure(`lane-history:${lane.key}`, summary, body, "pc-trail-history");
 }
 
 function projectFoLaneRow(d, registry, lane, focus){
@@ -1016,11 +1034,13 @@ function projectFoLaneRow(d, registry, lane, focus){
   const edge = episode && String(episode.confidence || "").includes("derived")
     ? "derived" : (episode ? "solid" : "none");
   const kind = steering ? "steering" : (finalOutput ? "result" : "work");
-  const contributors = lane.contributors.length ? `<details class="pc-trail-history pc-fo-context">` +
-    `<summary>${lane.contributors.length} unbound contributor${lane.contributors.length === 1 ? "" : "s"}</summary>` +
-    lane.contributors.map(row => `<div class="pc-trail-event"><strong>${esc(row.assignment)}</strong>` +
-      `<span>${esc(row.worker)}</span><details class="pc-event-evidence"><summary>evidence</summary>` +
-      `<div>${esc(row.source)}</div></details></div>`).join("") + `</details>` : "";
+  const contributors = lane.contributors.length ? projectDisclosure("fo-contributors",
+    `${lane.contributors.length} unbound contributor${lane.contributors.length === 1 ? "" : "s"}`,
+    lane.contributors.map((row, index) => `<div class="pc-trail-event">` +
+      `<strong>${esc(row.assignment)}</strong><span>${esc(row.worker)}</span>` +
+      projectDisclosure(`fo-contributor:${row.observerSid || row.worker || index}`, "evidence",
+        `<div>${esc(row.source)}</div>`, "pc-event-evidence") + `</div>`).join(""),
+    "pc-trail-history pc-fo-context") : "";
   const linked = episode ? `<div class="pc-trail-quiet">source-linked correction</div>` : "";
   const needs = Boolean(focus && (focus.state === "needs_input" || focus.needs_you === true));
   const operational = needs ? "Needs you" : (focus && focus.state === "working"
@@ -1028,7 +1048,7 @@ function projectFoLaneRow(d, registry, lane, focus){
   const body = `<div class="pc-trail-top"><strong>${esc(operational)}</strong><span>FO</span></div>` +
     (direction ? `<div class="pc-trail-result">${esc(direction.summary)}</div>` : "") +
     (finalOutput ? `<div class="pc-trail-result">${esc(finalOutput.summary)}</div>` : "") +
-    linked + (latest.fact_id ? projectFactEvidence(latest) : "") +
+    linked + (latest.fact_id ? projectFactEvidence(latest, "fo-head") : "") +
     `${projectLaneHistory(lane, latest.fact_id)}${contributors}`;
   return projectGraphRow(d, latest.at || focus && focus.last_activity, kind, registry, lane, body,
     steering || episode ? `data-steering-state="${episode ? "paired" : "unpaired"}" data-causal-edge="${edge}"` :
@@ -1057,20 +1077,20 @@ function projectTaskLaneRow(d, registry, lane){
   const bindings = Array.isArray(lane.item.source_bindings) && lane.item.source_bindings.length
     ? lane.item.source_bindings : (latest.workflow_binding ? [{source:"task state",
       value:`${latest.workflow_binding}:${latest.workflow_entity || ""}`}] : []);
-  const source = bindings.length ? `<details class="pc-trail-history"><summary>source</summary>` +
+  const source = bindings.length ? projectDisclosure(`task-source:${lane.workItemId}`, "source",
     bindings.map(binding => {
       const workflow = String(binding.value || "").split(":")[0].split("/").filter(Boolean).pop();
       return `${esc(binding.source)}${workflow ? ` · workflow ${esc(workflow)}` : ""}` +
         ` · <code>${esc(binding.value)}</code>`;
-    }).join("<br>") +
-    `</details>` : "";
+    }).join("<br>"), "pc-trail-history") : "";
   const workflowBinding = latest.workflow_binding || (bindings[0] &&
     String(bindings[0].value || "").split(":")[0]) || "";
   const body = `<div class="pc-trail-top"><strong>${esc(heading)}</strong><span>${esc(status)}</span></div>` +
     `<div class="pc-trail-result">${esc(result)}</div>` +
     (attempts ? `<div class="pc-trail-quiet" data-dispatch-count="${dispatchCount}">${esc(attempts)}</div>` : "") +
     (workers ? `<div class="pc-trail-quiet">${esc(workers)}</div>` : "") +
-    projectFactEvidence(latest) + projectLaneHistory(lane, latest.fact_id) + source;
+    projectFactEvidence(latest, `task-head:${lane.key}`) +
+    projectLaneHistory(lane, latest.fact_id) + source;
   const at = Number(latest.at) || 0;
   const attrs = `data-assignment-lane="task-head" data-work-item="${esc(lane.workItemId)}"` +
     ` data-trail-head="${esc(head.status || "latest")}"` +
@@ -1088,6 +1108,17 @@ function projectLaneLegend(registry){
     `</span></div>`;
 }
 
+function projectHistorySpan(events){
+  const times = events.map(event => Number(event.at)).filter(value => value > 0);
+  if(times.length < 2) return "one observed moment";
+  const seconds = Math.max(...times) - Math.min(...times);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if(hours) return `${hours}h${minutes ? ` ${minutes}m` : ""} observed span`;
+  if(minutes) return `${minutes}m observed span`;
+  return `${Math.max(1, Math.floor(seconds))}s observed span`;
+}
+
 function projectSemanticTimeline(d, model, workflowLanes, focus){
   const registry = projectLaneRegistry(model, workflowLanes, focus);
   const foLane = registry.lanes.find(lane => lane.kind === "fo");
@@ -1099,14 +1130,14 @@ function projectSemanticTimeline(d, model, workflowLanes, focus){
   const historyRows = taskRows.filter(row => !row.lane.current)
     .sort((a, b) => b.at - a.at);
   const fo = foLane ? projectFoLaneRow(d, registry, foLane, focus) : "";
-  const omitted = registry.omittedTaskCount ? `<details class="pc-semantic-overflow">` +
-    `<summary>${registry.omittedTaskCount} task lane${registry.omittedTaskCount === 1 ? "" : "s"} folded</summary>` +
-    `Older task evidence remains under Evidence / limits.</details>` : "";
+  const omitted = registry.omittedTaskCount ? projectDisclosure("folded-task-lanes",
+    `${registry.omittedTaskCount} task lane${registry.omittedTaskCount === 1 ? "" : "s"} folded`,
+    "Older task evidence remains under Evidence / limits.", "pc-semantic-overflow") : "";
   const current = `<section class="pc-activity-band" data-activity-band="current">` +
     `<h4>Current</h4>${fo}${currentRows.map(row => row.html).join("")}</section>`;
-  const history = historyRows.length ? `<details class="pc-history-band" data-activity-band="24h-history">` +
-    `<summary>24h history · ${historyRows.length}</summary>` +
-    historyRows.map(row => row.html).join("") + `</details>` : "";
+  const history = historyRows.length ? projectDisclosure("past-work",
+    `Past work · ${historyRows.length}`, historyRows.map(row => row.html).join(""),
+    "pc-history-band", ` data-activity-band="past-work"`) : "";
   return `<section class="pc-semantic-timeline" data-order="newest-first" data-model="fact-projection"` +
     ` data-graph-layout="fo-task-lanes">${projectLaneLegend(registry)}${current}${history}` +
     omitted + `</section>`;
@@ -1138,39 +1169,43 @@ function projectSemanticEvidence(group){
     if(!historyLanes.has(key)) historyLanes.set(key, []);
     historyLanes.get(key).push(event);
   });
-  const historyDisclosure = historyLanes.size ? `<details><summary>24h work history</summary>` +
+  const historySpan = projectHistorySpan(historyEvents);
+  const historyDisclosure = historyLanes.size ? projectDisclosure("semantic-source-history",
+    `${historyCount} source event${historyCount === 1 ? "" : "s"} · ${historySpan}`,
     [...historyLanes].map(([key, events]) => {
       const item = workItems.get(key) || {};
       const label = key === "fo" || item.kind === "session_result" ? "FO" : item.label || "Task";
       return `<div class="pc-history-lane" data-history-lane="${esc(key === "fo" ? "fo" : `task:${key}`)}">` +
         `<b>${esc(label)}</b>` + events.map(event => {
           const fact = facts.find(candidate => candidate.fact_id === event.source_ref) || {};
-          return `<div>${esc(event.summary || event.event_type)}` + projectFactEvidence(fact) + `</div>`;
+          return `<div>${esc(event.summary || event.event_type)}` +
+            projectFactEvidence(fact, `source-history:${key}`) + `</div>`;
         }).join("") + `</div>`;
-    }).join("") + `</details>` : "";
+    }).join("")) : "";
   if(!historical && !unpaired.length && !contextFacts.length && !historyCount) return "";
-  return (historyCount ? `<li><b>Semantic work history · 24h · ${historyCount}</b> · ` +
+  return (historyCount ? `<li><b>Semantic work history · ${historyCount} source event` +
+    `${historyCount === 1 ? "" : "s"}</b> · ${historySpan} · 24h retention · ` +
     `${history.persisted ? "restart-safe" : "memory only"} · raw sources remain authoritative.` +
     `${historyDisclosure}</li>` : "") +
     `<li><b>Past dispatches without observed result · ${historicalDispatches}</b>` +
     (historical !== historicalDispatches ? ` · ${historical} distinct work label${historical === 1 ? "" : "s"}` : "") +
     ` · ${unpaired.length} intent candidate${unpaired.length === 1 ? "" : "s"} without a supported reaction.` +
-    (unpaired.length ? `<details><summary>show unpaired intent evidence</summary>` +
+    (unpaired.length ? projectDisclosure("unpaired-intents", "show unpaired intent evidence",
       unpaired.map(intent => {
         const fact = facts.find(candidate => candidate.fact_id === intent.derived_from) || {};
         return `<div><b>Operator intent:</b> ${esc(intent.summary || "Intent unavailable")}` +
-          projectFactEvidence(fact) + `</div>`;
-      }).join("") + `</details>` : "") +
-    (historicalHeads.length ? `<details><summary>show historical request evidence</summary>` +
-      historicalHeads.map(head => {
+          projectFactEvidence(fact, "unpaired-intent") + `</div>`;
+      }).join("")) : "") +
+    (historicalHeads.length ? projectDisclosure("historical-requests",
+      "show historical request evidence", historicalHeads.map(head => {
         const fact = facts.find(candidate => candidate.fact_id === head.latest_meaningful_event) || {};
         return `<div>${esc(fact.summary || "Historical request")} · requested · current state unknown` +
-          projectFactEvidence(fact) + `</div>`;
-      }).join("") + `</details>` : "") +
-    (contextFacts.length ? `<details><summary>show ambiguous result and snapshot evidence</summary>` +
+          projectFactEvidence(fact, "historical-request") + `</div>`;
+      }).join("")) : "") +
+    (contextFacts.length ? projectDisclosure("ambiguous-results",
+      "show ambiguous result and snapshot evidence",
       contextFacts.map(fact => `<div><b>${fact.type === "observer_snapshot" ? "Derived snapshot" : "Result"}:</b> ` +
-        `${esc(fact.summary || fact.type)}${projectFactEvidence(fact)}</div>`).join("") +
-      `</details>` : "") + `</li>`;
+        `${esc(fact.summary || fact.type)}${projectFactEvidence(fact, "ambiguous-result")}</div>`).join("")) : "") + `</li>`;
 }
 
 function projectGoalBlock(group, goal, note){
@@ -1284,11 +1319,11 @@ function projectView(d, draft){
     `</div></div>${projectGoalBlock(group, goal, note)}` +
     `${workspace}` +
     `<div class="pc-activity"><div class="pc-active-head"><h3>Work & steering</h3>` +
-    `<span>24h · newest first</span></div>` +
+    `<span>newest first</span></div>` +
     `${projectActivity(d, group, focus)}</div>` +
     (sessions ? `<div class="pc-other"><div class="pc-active-head"><h3>Other project sessions</h3>` +
       `<span>surrounding context</span></div>${sessions}</div>` : "") +
     `</section>` +
-    `<details class="pc-sources"><summary>Evidence / limits</summary>` +
-    `${projectEvidenceLimits(group, focus)}</details>`;
+    projectDisclosure("evidence-limits", "Evidence / limits",
+      projectEvidenceLimits(group, focus), "pc-sources");
 }

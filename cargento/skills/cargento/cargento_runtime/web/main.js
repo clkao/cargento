@@ -60,7 +60,7 @@ function render(d){
     const projectDraft = projectCaptureDraft();
     /* Native <details> state lives only in the DOM. Capture it before the
        live revision swaps #app so an explicit open or close survives. */
-    projectCaptureLastOutputState();
+    projectCaptureDisclosureStates();
     const projectControlFocus = calmFocusKey();
     const projectTerminalScreen = projectTerminalBeforeRender();
     renderInProgress = true;
