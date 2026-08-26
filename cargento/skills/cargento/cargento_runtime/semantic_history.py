@@ -18,8 +18,10 @@ if TYPE_CHECKING:
 
 SCHEMA_VERSION = 1
 MAX_PROJECTS = 20
-MAX_EVENTS_PER_PROJECT = 64
+MAX_EVENTS_PER_PROJECT = 512
+HISTORY_WINDOW_SEC = 24 * 60 * 60
 STORE_NAME = "semantic-work-history.json"
+RESCAN_OVERLAP_BYTES = 64 * 1024
 
 _FACT_EVENT_TYPES = {
     "user_message": "operator_direction",
@@ -71,6 +73,35 @@ def _write(config: RuntimeConfig, payload: dict[str, Any]) -> bool:
             os.unlink(tmp)
         return False
     return True
+
+
+def backfill_scan_bytes(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    project: str,
+    source_identity: str,
+    signature: Mapping[str, int],
+    *,
+    full_max_bytes: int,
+) -> int:
+    """Return a bounded cold/resume scan size for one authoritative source."""
+    with state.semantic_history_lock:
+        payload = _read(config)
+    project_row = payload.get("projects", {}).get(project, {})
+    scans = project_row.get("source_scans", {}) if isinstance(project_row, dict) else {}
+    prior = scans.get(source_identity) if isinstance(scans, dict) else None
+    size = int(signature.get("size") or 0)
+    mtime_ns = int(signature.get("mtime_ns") or 0)
+    if (
+        isinstance(prior, dict)
+        and int(prior.get("size") or 0) == size
+        and int(prior.get("mtime_ns") or 0) == mtime_ns
+    ):
+        return 0
+    prior_size = int(prior.get("size") or 0) if isinstance(prior, dict) else 0
+    if prior_size and size >= prior_size:
+        return min(full_max_bytes, size - prior_size + RESCAN_OVERLAP_BYTES)
+    return min(full_max_bytes, size)
 
 
 def _source_identity(fact: Mapping[str, Any]) -> str:
@@ -317,6 +348,34 @@ def _merge(existing: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> li
     ]
 
 
+def _attach_relations(events: list[dict[str, Any]], relations: object) -> list[dict[str, Any]]:
+    if not isinstance(relations, list):
+        return events
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for relation in relations:
+        if not isinstance(relation, dict):
+            continue
+        source = records.safe_text(relation.get("from"), 160)
+        target = records.safe_text(relation.get("to"), 160)
+        relation_type = records.safe_text(relation.get("type"), 64)
+        if not source or not target or not relation_type:
+            continue
+        by_source.setdefault(source, []).append(
+            {
+                "from": source,
+                "to": target,
+                "type": relation_type,
+                "confidence": records.safe_text(relation.get("confidence"), 64),
+                "provenance": records.safe_text(relation.get("provenance"), 240),
+            }
+        )
+    for event in events:
+        supported = by_source.get(str(event.get("source_ref") or ""))
+        if supported:
+            event["relations"] = supported
+    return events
+
+
 def update(
     config: RuntimeConfig,
     state: RuntimeState,
@@ -326,6 +385,7 @@ def update(
     assignments: Iterable[Mapping[str, Any]] = (),
     *,
     now: float | None = None,
+    source_scans: Mapping[str, Mapping[str, int]] | None = None,
 ) -> dict[str, Any]:
     """Merge current source-backed meaning into the durable bounded history."""
     facts = semantic.get("facts")
@@ -350,6 +410,7 @@ def update(
         if isinstance(facts, list)
         else []
     )
+    _attach_relations(incoming, semantic.get("relations"))
     incoming.extend(_final_output_events(sessions))
     if isinstance(now, (int, float)):
         incoming.extend(_assignment_events(assignments, observed_at=float(now)))
@@ -359,6 +420,9 @@ def update(
         prior = projects.get(project)
         existing = prior.get("events", []) if isinstance(prior, dict) else []
         merged = _merge(existing if isinstance(existing, list) else [], incoming)
+        if isinstance(now, (int, float)):
+            floor = float(now) - HISTORY_WINDOW_SEC
+            merged = [event for event in merged if float(event.get("at") or 0) >= floor]
         cursors: dict[str, dict[str, Any]] = {}
         for event in merged:
             source = str(event.get("source_identity") or "source unavailable")
@@ -368,7 +432,20 @@ def update(
                     "at": event.get("at"),
                     "event_id": event.get("event_id"),
                 }
-        projects[project] = {"events": merged, "cursors": cursors}
+        projects[project] = {
+            "events": merged,
+            "cursors": cursors,
+            "window_sec": HISTORY_WINDOW_SEC,
+            "source_scans": {
+                key: {
+                    "size": int(value.get("size") or 0),
+                    "mtime_ns": int(value.get("mtime_ns") or 0),
+                }
+                for key, value in (source_scans or {}).items()
+            }
+            if source_scans is not None
+            else (prior.get("source_scans", {}) if isinstance(prior, dict) else {}),
+        }
         if len(projects) > MAX_PROJECTS:
             ranked = sorted(
                 projects,
@@ -380,4 +457,9 @@ def update(
             )[:MAX_PROJECTS]
             payload["projects"] = {key: projects[key] for key in ranked}
         persisted = _write(config, payload)
-    return {"events": merged, "cursors": cursors, "persisted": persisted}
+    return {
+        "events": merged,
+        "cursors": cursors,
+        "persisted": persisted,
+        "window_sec": HISTORY_WINDOW_SEC,
+    }

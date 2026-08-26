@@ -1256,7 +1256,10 @@ const model = {facts: foFacts.concat([
     source_bindings:[{source:"structured child assignment",
       value:"/repo/.spacedock/explore:project-cockpit"}]},
   {work_item_id:"workflow:terminal", label:"Session origin", kind:"workflow_item"}
-], relations:[], history:{events:[
+], relations:[
+  {from:"dispatch", to:"workflow:cockpit", type:"binds_to", confidence:"structural"},
+  {from:"result", to:"fo-2", type:"progresses", confidence:"exact"}
+], history:{events:[
   {event_type:"assignment", source_identity:"codex:child-1", work_binding:"workflow:cockpit"},
   {event_type:"assignment", source_identity:"codex:child-2", work_binding:"workflow:cockpit"}
 ]}, projections:{operator_intents:[
@@ -1305,6 +1308,69 @@ console.log(JSON.stringify({
         self.assertTrue(out["godelFolded"])
         self.assertTrue(out["relations"])
         self.assertTrue(out["distinctRails"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_lane_topology_comes_only_from_explicit_relations(self) -> None:
+        checks = """
+const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1", active:true,
+  state:"working", last_activity:110});
+const delegations = [{worker:"Einstein", assignment:"Shape cockpit", entity:"project-cockpit",
+  stage:"shaping", workflowBinding:"/repo/.spacedock/explore", observerSid:"child-1",
+  source:"structured dispatch artifact", relation:"direct child", depth:1, at:110}];
+const facts = [
+  {fact_id:"fo-result", at:111, type:"final_output", summary:"Review complete",
+    work_item_id:"session:codex:focus-1", evidence:{source:"final answer", confidence:"exact"}},
+  {fact_id:"dispatch", at:108, type:"prepared_dispatch", summary:"Cockpit dispatched",
+    work_item_id:"workflow:cockpit", evidence:{source:"dispatch artifact", confidence:"exact"}},
+  {fact_id:"outcome", at:110, type:"work_result", summary:"Cockpit ready",
+    work_item_id:"workflow:cockpit", evidence:{source:"bound result", confidence:"exact"}}
+];
+const base = {facts, work_items:[
+  {work_item_id:"session:codex:focus-1", label:"Last output", kind:"session_result"},
+  {work_item_id:"workflow:cockpit", label:"Project cockpit", kind:"workflow_item",
+    source_bindings:[{source:"structured child assignment",
+      value:"/repo/.spacedock/explore:project-cockpit"}]}
+], relations:[], history:{events:[
+  {event_type:"assignment", source_identity:"codex:child-1", work_binding:"workflow:cockpit"}
+]}, projections:{operator_intents:[], steering_episodes:[], candidate_goal_shifts:[],
+  trail_heads:[{work_item_id:"workflow:cockpit", status:"outcome",
+    latest_meaningful_event:"outcome"}], activity:{nodes:[{kind:"work", at:110,
+    status:"outcome", work_item_ids:["workflow:cockpit"], latest_event:"outcome"}]}}};
+const edge = (relations, reverse=false) => {
+  const model = Object.assign({}, base, {relations,
+    facts:reverse ? base.facts.slice().reverse() : base.facts,
+    projections:Object.assign({}, base.projections, {activity:{nodes:
+      reverse ? base.projections.activity.nodes.slice().reverse() : base.projections.activity.nodes}})});
+  const rows = reverse ? delegations.slice().reverse() : delegations;
+  const lane = projectLaneRegistry(model, rows, focus).laneByKey.get("task:workflow:cockpit");
+  return `${lane.branch}/${lane.merge}`;
+};
+const noRelation = projectSemanticTimeline({generated:112}, base, delegations, focus);
+console.log(JSON.stringify({
+  none:edge([]) === "none/none" &&
+    noRelation.includes('data-branch-edge="none" data-merge-edge="none"'),
+  exactBranch:edge([{from:"dispatch", to:"workflow:cockpit", type:"binds_to",
+    confidence:"structural"}]) === "solid/none",
+  derivedBranch:edge([{from:"dispatch", to:"workflow:cockpit", type:"binds_to",
+    confidence:"derived-semantic"}]) === "derived/none",
+  noOutcomeGuess:edge([]) === "none/none",
+  exactMerge:edge([{from:"outcome", to:"fo-result", type:"progresses",
+    confidence:"exact"}]) === "none/solid",
+  shuffleStable:edge([{from:"dispatch", to:"workflow:cockpit", type:"binds_to",
+    confidence:"structural"}, {from:"outcome", to:"fo-result", type:"progresses",
+    confidence:"exact"}], true) === "solid/solid",
+  unrelated:edge([{from:"dispatch", to:"outcome", type:"derived_from",
+    confidence:"exact"}]) === "none/none"
+}));
+"""
+        out = self.run_project(checks)
+        self.assertTrue(out["none"])
+        self.assertTrue(out["exactBranch"])
+        self.assertTrue(out["derivedBranch"])
+        self.assertTrue(out["noOutcomeGuess"])
+        self.assertTrue(out["exactMerge"])
+        self.assertTrue(out["shuffleStable"])
+        self.assertTrue(out["unrelated"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_recent_intent_selection_enters_graph(self) -> None:

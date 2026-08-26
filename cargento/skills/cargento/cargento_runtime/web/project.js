@@ -858,6 +858,7 @@ function projectLaneRegistry(model, delegations, focus){
   const focusedKey = focus ? sessKey(focus) : (projectQuerySession || "focused");
   const foKey = `fo:${focusedKey}`;
   const itemById = new Map(items.map(item => [item.work_item_id, item]));
+  const factById = new Map(facts.map(fact => [fact.fact_id, fact]));
   const headByItem = new Map(heads.map(head => [head.work_item_id, head]));
   const contributorByTask = new Map();
   const unboundContributors = [];
@@ -902,33 +903,50 @@ function projectLaneRegistry(model, delegations, focus){
   const foLane = {key:foKey, kind:"fo", label:"FO", index:0, events:foEvents,
     contributors:unboundContributors, item:null, head:null, branch:"none", merge:"none",
     episodeByFact};
+  const relations = Array.isArray(model.relations) ? model.relations : [];
+  const relationEdge = relation => String(relation.confidence || "").includes("derived")
+    ? "derived" : "solid";
+  const taskEndpoint = value => {
+    const item = itemById.get(value);
+    if(item && item.kind !== "session_result") return value;
+    const fact = factById.get(value);
+    const factItem = fact && itemById.get(fact.work_item_id);
+    return factItem && factItem.kind !== "session_result" ? fact.work_item_id : "";
+  };
+  const foEndpoint = value => {
+    if(value === foKey) return true;
+    const item = itemById.get(value);
+    if(item && item.kind === "session_result") return true;
+    const fact = factById.get(value);
+    if(!fact) return false;
+    const factItem = itemById.get(fact.work_item_id);
+    return Boolean(factItem && factItem.kind === "session_result") ||
+      (!fact.work_item_id && ["user_message", "final_output", "observer_snapshot", "goal_shift"]
+        .includes(fact.type));
+  };
+  const branchTypes = new Set(["binds_to", "dispatches_to", "assigns_to"]);
+  const mergeTypes = new Set(["progresses", "decides", "results_in", "returns_to"]);
+  const topologyForTask = workItemId => {
+    const branches = relations.filter(relation => branchTypes.has(relation.type) &&
+      taskEndpoint(relation.to) === workItemId &&
+      (foEndpoint(relation.from) || taskEndpoint(relation.from) === workItemId));
+    const merges = relations.filter(relation => mergeTypes.has(relation.type) &&
+      taskEndpoint(relation.from) === workItemId && foEndpoint(relation.to));
+    const strongest = selected => selected.some(relation => relationEdge(relation) === "solid")
+      ? "solid" : (selected.length ? "derived" : "none");
+    return {branch:strongest(branches), merge:strongest(merges)};
+  };
   const taskLanes = taskIds.map(workItemId => {
     const taskEvents = facts.filter(fact => fact.work_item_id === workItemId)
       .sort((a, b) => Number(b.at) - Number(a.at));
     const contributors = (contributorByTask.get(workItemId) || [])
       .sort((a, b) => String(a.worker).localeCompare(String(b.worker)));
-    const branchFacts = taskEvents.filter(fact =>
-      ["prepared_dispatch", "work_birth", "assignment"].includes(fact.type));
-    const mergeFacts = taskEvents.filter(fact =>
-      ["work_result", "result", "gate_decision", "decision"].includes(fact.type));
-    const exactContributor = contributors.some(row => row.workflowBinding && row.entity &&
-      !String(row.source || "").includes("derived"));
-    const edge = selected => selected.some(fact =>
-      String(fact.evidence && fact.evidence.confidence || "").includes("derived"))
-      ? "derived" : "solid";
-    const taskEpisodes = episodes.filter(episode => {
-      const adaptation = facts.find(fact => fact.fact_id === episode.adaptation_fact);
-      return adaptation && adaptation.work_item_id === workItemId;
-    });
-    const episodeEdge = taskEpisodes.some(episode =>
-      String(episode.confidence || "").includes("derived")) ? "derived" :
-      (taskEpisodes.length ? "solid" : "none");
+    const topology = topologyForTask(workItemId);
     return {key:`task:${workItemId}`, kind:"task", workItemId,
       label:(itemById.get(workItemId) || {}).label || "Task",
       events:taskEvents, contributors, item:itemById.get(workItemId) || {},
       head:headByItem.get(workItemId) || null,
-      branch:exactContributor ? "solid" : (branchFacts.length ? edge(branchFacts) : episodeEdge),
-      merge:mergeFacts.length ? edge(mergeFacts) : "none"};
+      branch:topology.branch, merge:topology.merge};
   });
   const lanes = [foLane].concat(taskLanes);
   lanes.forEach((lane, index) => { lane.index = index; });
@@ -1061,9 +1079,28 @@ function projectSemanticEvidence(group){
   const contextFacts = facts.filter(fact => !fact.work_item_id &&
     ["result", "decision"].includes(fact.type));
   const historyCount = Number(history.event_count) || 0;
+  const historyEvents = Array.isArray(history.events) ? history.events : [];
+  const workItems = new Map((model.work_items || []).map(item => [item.work_item_id, item]));
+  const historyLanes = new Map();
+  historyEvents.forEach(event => {
+    const key = event.work_binding || "fo";
+    if(!historyLanes.has(key)) historyLanes.set(key, []);
+    historyLanes.get(key).push(event);
+  });
+  const historyDisclosure = historyLanes.size ? `<details><summary>24h work history</summary>` +
+    [...historyLanes].map(([key, events]) => {
+      const item = workItems.get(key) || {};
+      const label = key === "fo" || item.kind === "session_result" ? "FO" : item.label || "Task";
+      return `<div class="pc-history-lane" data-history-lane="${esc(key === "fo" ? "fo" : `task:${key}`)}">` +
+        `<b>${esc(label)}</b>` + events.map(event => {
+          const fact = facts.find(candidate => candidate.fact_id === event.source_ref) || {};
+          return `<div>${esc(event.summary || event.event_type)}` + projectFactEvidence(fact) + `</div>`;
+        }).join("") + `</div>`;
+    }).join("") + `</details>` : "";
   if(!historical && !unpaired.length && !contextFacts.length && !historyCount) return "";
-  return (historyCount ? `<li><b>Semantic work history · ${historyCount}</b> · ` +
-    `${history.persisted ? "restart-safe" : "memory only"} · raw sources remain authoritative.</li>` : "") +
+  return (historyCount ? `<li><b>Semantic work history · 24h · ${historyCount}</b> · ` +
+    `${history.persisted ? "restart-safe" : "memory only"} · raw sources remain authoritative.` +
+    `${historyDisclosure}</li>` : "") +
     `<li><b>Past dispatches without observed result · ${historicalDispatches}</b>` +
     (historical !== historicalDispatches ? ` · ${historical} distinct work label${historical === 1 ? "" : "s"}` : "") +
     ` · ${unpaired.length} intent candidate${unpaired.length === 1 ? "" : "s"} without a supported reaction.` +
@@ -1196,7 +1233,7 @@ function projectView(d, draft){
     `</div></div>${projectGoalBlock(group, goal, note)}` +
     `${workspace}` +
     `<div class="pc-activity"><div class="pc-active-head"><h3>Work & steering</h3>` +
-    `<span>newest first</span></div>` +
+    `<span>24h · newest first</span></div>` +
     `${projectActivity(d, group, focus)}</div>` +
     (sessions ? `<div class="pc-other"><div class="pc-active-head"><h3>Other project sessions</h3>` +
       `<span>surrounding context</span></div>${sessions}</div>` : "") +

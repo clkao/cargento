@@ -26,6 +26,8 @@ SEMANTIC_CURRENT_HORIZON_SEC = 15 * 60
 SEMANTIC_BURST_EPSILON_SEC = 2
 MAX_PRIMARY_ACTIVITY_NODES = 5
 MAX_PRIMARY_STEERING_NODES = 3
+SEMANTIC_HISTORY_HORIZON_SEC = 24 * 60 * 60
+SEMANTIC_BACKFILL_MAX_BYTES = 32 * 1024 * 1024
 
 _DIRECTIVE_PREFIX_RE = re.compile(
     r"^(?:please\s+|captain(?:\s+(?:says|asks|adds|clarifies|refines|clarification|refinement|correction))?\s*[:—-]\s*)+",
@@ -68,6 +70,7 @@ _DISPATCH_VALUE_OPTIONS = {
     "--stamp",
     "--workflow-dir",
 }
+_CODEX_ENSIGN_TASK_RE = re.compile(r"^spacedock_ensign_([a-z0-9_]+?)(?:_cycle\d+)?$")
 
 
 def _semantic_id(prefix: str, *parts: object) -> str:
@@ -391,13 +394,15 @@ def _subagent_specs(arguments: dict[str, Any]) -> list[tuple[str, str, str, str]
     return specs
 
 
-def _work_records(config: RuntimeConfig, transcript_path: str) -> list[dict[str, Any]]:
+def _work_records(
+    config: RuntimeConfig, transcript_path: str, *, max_bytes: int | None = None
+) -> list[dict[str, Any]]:
     transcript: list[dict[str, Any]] = []
     bounded = list(
         runtime_io.reverse_lines(
             config,
             transcript_path,
-            max_bytes=config.turn_scan_max_bytes,
+            max_bytes=max_bytes or config.turn_scan_max_bytes,
         )
     )
     for raw_bytes in reversed(bounded):
@@ -765,6 +770,9 @@ def _work_evidence(
     transcript_path: str,
     harness: str,
     sid: str,
+    *,
+    max_bytes: int | None = None,
+    since: float | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Demonstrated Pi results plus counts for suppressed supporting telemetry."""
     stats = {
@@ -777,7 +785,7 @@ def _work_evidence(
     }
     if harness != "pi":
         return [], stats
-    transcript = _work_records(config, transcript_path)
+    transcript = _work_records(config, transcript_path, max_bytes=max_bytes)
     results = _paired_results(transcript)
 
     events: list[dict[str, Any]] = []
@@ -796,6 +804,7 @@ def _work_evidence(
         )
         for event in found:
             event.update(identity)
+        found = _events_after(found, since)
         for event in found:
             artifact = str(event.get("dispatch_artifact") or "")
             assignment = _dispatch_file_assignment(artifact)
@@ -810,6 +819,11 @@ def _work_evidence(
         for event in found:
             stats["collapsed_contributors"] += max(0, int(event.get("contributors", 1)) - 1)
     return events, stats
+
+
+def _events_after(events: list[dict[str, Any]], since: float | None) -> list[dict[str, Any]]:
+    floor = float(since) if isinstance(since, (int, float)) else float("-inf")
+    return [event for event in events if float(event.get("at") or 0) >= floor]
 
 
 def work_events(
@@ -827,11 +841,24 @@ def instruction_events(
     transcript_path: str,
     harness: str,
     sid: str,
+    *,
+    max_bytes: int | None = None,
+    since: float | None = None,
 ) -> list[dict[str, Any]]:
     """Timestamped non-meta user-role messages from the bounded transcript tail."""
     events: list[dict[str, Any]] = []
     seen: set[tuple[float, str]] = set()
-    for raw in runtime_io.read_tail(config, transcript_path):
+    source = (
+        [
+            line.decode("utf-8", "replace")
+            for line in reversed(
+                list(runtime_io.reverse_lines(config, transcript_path, max_bytes=max_bytes))
+            )
+        ]
+        if max_bytes is not None
+        else runtime_io.read_tail(config, transcript_path)
+    )
+    for raw in source:
         if not raw or not raw.lstrip().startswith("{"):
             continue
         try:
@@ -841,12 +868,250 @@ def instruction_events(
         event = _instruction_event(config, record, harness, sid)
         if event is None:
             continue
+        if since is not None and float(event.get("at") or 0) < since:
+            continue
         key = (event["at"], event["title"])
         if key in seen:
             continue
         seen.add(key)
         events.append(event)
     return events
+
+
+def _codex_dispatch_artifact(task_name: str) -> tuple[str, str, str, str] | None:
+    match = _CODEX_ENSIGN_TASK_RE.fullmatch(task_name)
+    if match is None:
+        return None
+    stem = match.group(1).replace("_", "-")
+    artifact = f"{_DISPATCH_FILE_PREFIX}{stem}.md"
+    identity = _dispatch_artifact_identity(artifact)
+    if identity is None or not os.path.isfile(artifact):
+        return None
+    entity, stage = identity
+    assignment = _dispatch_file_assignment(artifact)
+    workflow = ""
+    for raw in runtime_io.iter_bounded_text_lines(artifact, max_lines=80, per_line_bytes=2048):
+        if "--workflow-dir" not in raw:
+            continue
+        try:
+            parts = shlex.split(raw.strip())
+        except ValueError:
+            continue
+        if "--workflow-dir" in parts:
+            index = parts.index("--workflow-dir") + 1
+            if index < len(parts):
+                workflow = parts[index]
+                break
+    if not assignment or not workflow:
+        return None
+    return artifact, workflow, entity, stage
+
+
+def codex_dispatch_events(
+    config: RuntimeConfig,
+    transcript_path: str,
+    harness: str,
+    sid: str,
+    *,
+    since: float,
+    max_bytes: int = SEMANTIC_BACKFILL_MAX_BYTES,
+) -> list[dict[str, Any]]:
+    """Exact Codex spawn calls bound to readable Spacedock dispatch artifacts."""
+    if harness != "codex":
+        return []
+    events: list[dict[str, Any]] = []
+    bounded = list(runtime_io.reverse_lines(config, transcript_path, max_bytes=max_bytes))
+    for raw_bytes in reversed(bounded):
+        try:
+            record = records.as_dict(json.loads(raw_bytes.decode("utf-8", "replace")))
+        except (ValueError, json.JSONDecodeError, RecursionError):
+            continue
+        at = _record_timestamp(record)
+        payload = records.as_dict(record.get("payload"))
+        if (
+            at is None
+            or at < since
+            or record.get("type") != "response_item"
+            or payload.get("type") != "function_call"
+            or payload.get("name") != "spawn_agent"
+        ):
+            continue
+        arguments = payload.get("arguments")
+        try:
+            args = records.as_dict(json.loads(arguments)) if isinstance(arguments, str) else {}
+        except (ValueError, json.JSONDecodeError, RecursionError):
+            continue
+        task_name = args.get("task_name")
+        metadata = _codex_dispatch_artifact(task_name) if isinstance(task_name, str) else None
+        if metadata is None:
+            continue
+        artifact, workflow, entity, stage = metadata
+        event = {
+            "at": at,
+            "kind": "prepared_dispatch",
+            "phase": "Spacedock dispatch",
+            "title": _dispatch_file_assignment(artifact),
+            "source": "Codex spawn_agent call and structured Spacedock dispatch artifact",
+            "harness": harness,
+            "sid": sid,
+            "entity": entity,
+            "workflow_binding": workflow,
+            "stage": stage,
+            "dispatch_artifact": artifact,
+        }
+        call_id = payload.get("call_id") or payload.get("id")
+        if isinstance(call_id, str) and call_id:
+            event["record_id"] = call_id
+        metadata_passthrough = records.as_dict(
+            payload.get("internal_chat_message_metadata_passthrough")
+        )
+        turn_id = metadata_passthrough.get("turn_id")
+        if isinstance(turn_id, str) and turn_id:
+            event["turn_id"] = turn_id
+            event["branch_id"] = turn_id
+        events.append(event)
+    return events
+
+
+def _semantic_history_source_events(
+    config: RuntimeConfig,
+    transcript_path: str,
+    harness: str,
+    sid: str,
+    *,
+    since: float,
+    max_bytes: int,
+) -> list[dict[str, Any]]:
+    events = instruction_events(
+        config,
+        transcript_path,
+        harness,
+        sid,
+        max_bytes=max_bytes,
+        since=since,
+    )
+    work_rows, _support = _work_evidence(
+        config,
+        transcript_path,
+        harness,
+        sid,
+        max_bytes=max_bytes,
+        since=since,
+    )
+    events.extend(work_rows)
+    events.extend(
+        codex_dispatch_events(
+            config,
+            transcript_path,
+            harness,
+            sid,
+            since=since,
+            max_bytes=max_bytes,
+        )
+    )
+    return events
+
+
+def _incremental_history_events(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    project: str,
+    transcript_path: str,
+    harness: str,
+    sid: str,
+    *,
+    now: float,
+) -> tuple[list[dict[str, Any]], dict[str, int] | None]:
+    signature = _transcript_signature(transcript_path)
+    if signature is None:
+        return [], None
+    source_identity = f"{harness}:{sid}"
+    scan_bytes = semantic_history.backfill_scan_bytes(
+        config,
+        state,
+        project,
+        source_identity,
+        signature,
+        full_max_bytes=SEMANTIC_BACKFILL_MAX_BYTES,
+    )
+    if not scan_bytes:
+        return [], signature
+    return (
+        _semantic_history_source_events(
+            config,
+            transcript_path,
+            harness,
+            sid,
+            since=now - SEMANTIC_HISTORY_HORIZON_SEC,
+            max_bytes=scan_bytes,
+        ),
+        signature,
+    )
+
+
+def _dedupe_project_events(
+    events: list[dict[str, Any]], *, limit: int | None = None
+) -> list[dict[str, Any]]:
+    deduped: dict[tuple[object, ...], dict[str, Any]] = {}
+    for event in events:
+        key = (
+            event.get("kind"),
+            event.get("at"),
+            event.get("title"),
+            event.get("workflow_binding") or event.get("workflow"),
+            event.get("entity"),
+            event.get("lineage"),
+            event.get("work_item_binding"),
+            event.get("record_id"),
+        )
+        deduped.setdefault(key, event)
+    ordered = sorted(deduped.values(), key=lambda event: float(event["at"]), reverse=True)
+    return ordered[:limit] if limit is not None else ordered
+
+
+def _merge_support_counts(target: dict[str, int], incoming: Mapping[str, int]) -> None:
+    for key in target:
+        target[key] += incoming[key]
+
+
+def _timeline_counts(timeline: list[dict[str, Any]]) -> tuple[int, int, int]:
+    return (
+        sum(1 for event in timeline if event["kind"] == "gate"),
+        sum(1 for event in timeline if event["kind"] == "steer"),
+        sum(
+            1
+            for event in timeline
+            if event["kind"] in {"prepared_dispatch", "task_started", "task_result", "outcome"}
+        ),
+    )
+
+
+def _context_sessions(
+    sessions: Sequence[Mapping[str, Any]], project: str, focus: tuple[str, str] | None
+) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]], str, int]:
+    selected = [
+        session
+        for session in sessions
+        if (
+            str(session.get("project_key") or session.get("project") or "") == project
+            or str(session.get("project") or "") == project
+        )
+        and session.get("active") is True
+    ]
+    selected.sort(key=lambda item: float(item.get("last_activity") or 0), reverse=True)
+    if focus is None:
+        return (
+            selected[:MAX_PROJECT_OBSERVERS],
+            selected[MAX_PROJECT_OBSERVERS:],
+            "selected project",
+            0,
+        )
+    analysis = [
+        session
+        for session in selected
+        if (str(session.get("harness") or ""), str(session.get("sid") or "")) == focus
+    ]
+    return analysis, [], "focused session", len(selected) - len(analysis)
 
 
 def _gate_event(
@@ -1744,7 +2009,14 @@ def _history_intents(
 def _history_activity_nodes(
     history: dict[str, Any], current_event_ids: set[str]
 ) -> list[dict[str, Any]]:
-    consequential = {"checkpoint", "gate_decision", "result", "final_output", "stage_transition"}
+    consequential = {
+        "assignment",
+        "checkpoint",
+        "gate_decision",
+        "result",
+        "final_output",
+        "stage_transition",
+    }
     nodes: list[dict[str, Any]] = []
     for event in history.get("events", []):
         if not isinstance(event, dict):
@@ -1759,7 +2031,13 @@ def _history_activity_nodes(
             {
                 "kind": "work",
                 "at": event.get("at"),
-                "status": "decision" if event.get("event_type") == "gate_decision" else "outcome",
+                "status": (
+                    "prepared"
+                    if event.get("event_type") == "assignment"
+                    else "decision"
+                    if event.get("event_type") == "gate_decision"
+                    else "outcome"
+                ),
                 "work_item_ids": [event["work_binding"]],
                 "latest_event": event.get("source_ref"),
                 "history_event_type": event.get("event_type"),
@@ -1779,6 +2057,22 @@ def _merge_semantic_history(
         projections = {}
         semantic["projections"] = projections
     relations = list(semantic.get("relations") or [])
+    relation_keys = {
+        (row.get("from"), row.get("to"), row.get("type"))
+        for row in relations
+        if isinstance(row, dict)
+    }
+    for event in history.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        for relation in event.get("relations", []):
+            if not isinstance(relation, dict):
+                continue
+            key = (relation.get("from"), relation.get("to"), relation.get("type"))
+            if key in relation_keys:
+                continue
+            relations.append(relation)
+            relation_keys.add(key)
     intents = _history_intents(history, facts_by_id, projections, relations)
     fact_by_work_item: dict[str, list[dict[str, Any]]] = {}
     for fact in facts:
@@ -1805,6 +2099,7 @@ def _merge_semantic_history(
     projections["steering_episodes"] = episodes
     semantic["history"] = {
         "event_count": len(history.get("events", [])),
+        "window_sec": history.get("window_sec", semantic_history.HISTORY_WINDOW_SEC),
         "cursors": history.get("cursors", {}),
         "persisted": history.get("persisted") is True,
         "events": [
@@ -1937,36 +2232,13 @@ def collect(
     focus: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """Observer results and a real project event log for exact-label sessions."""
-    selected = [
-        session
-        for session in sessions
-        if (
-            str(session.get("project_key") or session.get("project") or "") == project
-            or str(session.get("project") or "") == project
-        )
-        and session.get("active") is True
-    ]
-    selected.sort(key=lambda item: float(item.get("last_activity") or 0), reverse=True)
-    if focus is None:
-        analysis_sessions = selected[:MAX_PROJECT_OBSERVERS]
-        omitted = selected[MAX_PROJECT_OBSERVERS:]
-        scope = "selected project"
-        surrounding_active = 0
-    else:
-        analysis_sessions = [
-            session
-            for session in selected
-            if (
-                str(session.get("harness") or ""),
-                str(session.get("sid") or ""),
-            )
-            == focus
-        ]
-        omitted = []
-        scope = "focused session"
-        surrounding_active = len(selected) - len(analysis_sessions)
+    analysis_sessions, omitted, scope, surrounding_active = _context_sessions(
+        sessions, project, focus
+    )
     observers: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
+    history_events: list[dict[str, Any]] = []
+    history_source_scans: dict[str, dict[str, int]] = {}
     unavailable: list[dict[str, str]] = []
     briefings = 0
     child_assignments: list[dict[str, Any]] = []
@@ -2024,42 +2296,33 @@ def collect(
         events.extend(instruction_events(config, transcript_path, harness, sid))
         work_rows, work_support = _work_evidence(config, transcript_path, harness, sid)
         events.extend(work_rows)
-        for support_key in support_totals:
-            support_totals[support_key] += work_support[support_key]
+        backfill_rows, signature = _incremental_history_events(
+            config, state, project, transcript_path, harness, sid, now=now
+        )
+        history_events.extend(backfill_rows)
+        source_identity = f"{harness}:{sid}"
+        if signature is not None:
+            history_source_scans[source_identity] = signature
+        _merge_support_counts(support_totals, work_support)
         gate_rows, prepared = _gate_context(config, state, transcript_path, harness, sid)
         events.extend(gate_rows)
+        history_events.extend(gate_rows)
         briefings += prepared
 
-    deduped: dict[tuple[object, ...], dict[str, Any]] = {}
-    for event in events:
-        key = (
-            event.get("kind"),
-            event.get("at"),
-            event.get("title"),
-            event.get("workflow"),
-            event.get("entity"),
-            event.get("lineage"),
-            event.get("work_item_binding"),
-        )
-        deduped.setdefault(key, event)
-    timeline = sorted(deduped.values(), key=lambda event: float(event["at"]), reverse=True)
-    timeline = timeline[:MAX_PROJECT_EVENTS]
-    gate_count = sum(1 for event in timeline if event["kind"] == "gate")
-    steer_count = sum(1 for event in timeline if event["kind"] == "steer")
-    work_count = sum(
-        1
-        for event in timeline
-        if event["kind"] in {"prepared_dispatch", "task_started", "task_result", "outcome"}
-    )
+    timeline = _dedupe_project_events(events, limit=MAX_PROJECT_EVENTS)
+    history_timeline = _dedupe_project_events(history_events)
+    gate_count, steer_count, work_count = _timeline_counts(timeline)
     semantic = _semantic_model(timeline, observers, now=now)
+    history_semantic = _semantic_model(history_timeline, observers, now=now)
     history = semantic_history.update(
         config,
         state,
         project,
-        semantic,
+        history_semantic,
         analysis_sessions,
         child_assignments,
         now=now,
+        source_scans=history_source_scans,
     )
     semantic = _merge_semantic_history(semantic, history, now=now)
     return {

@@ -865,6 +865,64 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual("Review the search release evidence", assignment)
         self.assertEqual("", project_context._dispatch_file_assignment("/tmp/unrelated.md"))
 
+    def test_codex_backfill_keeps_exact_spacedock_spawn_and_omits_followup(self) -> None:
+        rows = [
+            {
+                "timestamp": "2027-01-15T08:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "id": "spawn-call",
+                    "name": "spawn_agent",
+                    "arguments": json.dumps(
+                        {"task_name": "spacedock_ensign_project_cockpit_shaping_cycle2"}
+                    ),
+                },
+            },
+            {
+                "timestamp": "2027-01-15T08:01:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "id": "follow-call",
+                    "name": "followup_task",
+                    "arguments": json.dumps(
+                        {"target": "/root/spacedock_ensign_project_cockpit_shaping_cycle2"}
+                    ),
+                },
+            },
+        ]
+        self.transcript.write_text(
+            "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+        )
+        artifact = "/tmp/spacedock-dispatch/spacedock-ensign-project-cockpit-shaping.md"
+        with (
+            mock.patch.object(
+                project_context,
+                "_codex_dispatch_artifact",
+                return_value=(artifact, "/repo/.spacedock/explore", "project-cockpit", "shaping"),
+            ),
+            mock.patch.object(
+                project_context,
+                "_dispatch_file_assignment",
+                return_value="Project cockpit and remembered goal",
+            ),
+        ):
+            events = project_context.codex_dispatch_events(
+                self.config,
+                str(self.transcript),
+                "codex",
+                self.SID,
+                since=1_800_000_000.0 - project_context.SEMANTIC_HISTORY_HORIZON_SEC,
+            )
+
+        self.assertEqual(1, len(events))
+        self.assertEqual("prepared_dispatch", events[0]["kind"])
+        self.assertEqual("spawn-call", events[0]["record_id"])
+        self.assertEqual("/repo/.spacedock/explore", events[0]["workflow_binding"])
+        model = project_context._semantic_model(events, [])
+        self.assertEqual("binds_to", model["relations"][0]["type"])
+
     def test_active_child_assignment_uses_refreshable_snapshot_or_unavailable(self) -> None:
         session = {
             "subagent_hierarchy": [

@@ -216,3 +216,109 @@ class SemanticHistoryTest(unittest.TestCase):
             },
             sources,
         )
+
+    def test_rolling_day_prunes_old_events_and_persists_dispatch_relation(self) -> None:
+        now = 100_000.0
+        work_item_id = "workflow:project-cockpit"
+        recent = self._fact(
+            "dispatch-recent",
+            now - semantic_history.HISTORY_WINDOW_SEC + 1,
+            "prepared_dispatch",
+            "prepared_dispatch",
+            "Project cockpit dispatched",
+            work_item_id,
+        )
+        old = self._fact(
+            "dispatch-old",
+            now - semantic_history.HISTORY_WINDOW_SEC - 1,
+            "prepared_dispatch",
+            "prepared_dispatch",
+            "Old task dispatched",
+            "workflow:old",
+        )
+        semantic = {
+            "facts": [recent, old],
+            "work_items": [
+                {
+                    "work_item_id": work_item_id,
+                    "label": "Project cockpit",
+                    "kind": "workflow_item",
+                },
+                {"work_item_id": "workflow:old", "label": "Old task", "kind": "workflow_item"},
+            ],
+            "relations": [
+                {
+                    "from": "dispatch-recent",
+                    "to": work_item_id,
+                    "type": "binds_to",
+                    "confidence": "structural",
+                }
+            ],
+        }
+        state = build_runtime_state(self.config, started=1)
+        first = semantic_history.update(self.config, state, "git:project", semantic, [], now=now)
+        duplicate = semantic_history.update(
+            self.config, state, "git:project", semantic, [], now=now
+        )
+        restarted = semantic_history.update(
+            self.config,
+            build_runtime_state(self.config, started=2),
+            "git:project",
+            {"facts": [], "work_items": [], "relations": []},
+            [],
+            now=now,
+        )
+        self.assertEqual(["dispatch-recent"], [row["event_id"] for row in first["events"]])
+        self.assertEqual(first["events"], duplicate["events"])
+        self.assertEqual(first["events"], restarted["events"])
+        self.assertEqual("binds_to", restarted["events"][0]["relations"][0]["type"])
+        self.assertEqual(semantic_history.HISTORY_WINDOW_SEC, restarted["window_sec"])
+
+    def test_backfill_cursor_skips_unchanged_and_rescans_bounded_overlap(self) -> None:
+        state = build_runtime_state(self.config, started=1)
+        signature = {"size": 1_000_000, "mtime_ns": 10}
+        cold = semantic_history.backfill_scan_bytes(
+            self.config,
+            state,
+            "git:project",
+            "codex:root",
+            signature,
+            full_max_bytes=2_000_000,
+        )
+        semantic_history.update(
+            self.config,
+            state,
+            "git:project",
+            {"facts": [], "work_items": []},
+            [],
+            now=100,
+            source_scans={"codex:root": signature},
+        )
+        cached = semantic_history.backfill_scan_bytes(
+            self.config,
+            state,
+            "git:project",
+            "codex:root",
+            signature,
+            full_max_bytes=2_000_000,
+        )
+        resumed = semantic_history.backfill_scan_bytes(
+            self.config,
+            state,
+            "git:project",
+            "codex:root",
+            {"size": 1_001_000, "mtime_ns": 11},
+            full_max_bytes=2_000_000,
+        )
+        rotated = semantic_history.backfill_scan_bytes(
+            self.config,
+            state,
+            "git:project",
+            "codex:root",
+            {"size": 500_000, "mtime_ns": 12},
+            full_max_bytes=2_000_000,
+        )
+        self.assertEqual(1_000_000, cold)
+        self.assertEqual(0, cached)
+        self.assertEqual(1_000 + semantic_history.RESCAN_OVERLAP_BYTES, resumed)
+        self.assertEqual(500_000, rotated)
