@@ -910,13 +910,30 @@ function projectLaneRegistry(model, delegations, focus){
     ? "derived" : "solid";
   const topologyForTask = workItemId => {
     const taskKey = `task:${workItemId}`;
-    const branches = relations.filter(relation => relation.type === "dispatches_to" &&
+    const supported = relation => !String(relation.confidence || "").includes("derived");
+    const branchRelations = relations.filter(relation => relation.type === "dispatches_to" &&
       relation.from === foKey && relation.to === taskKey);
-    const merges = relations.filter(relation => relation.type === "returns_to" &&
+    const mergeRelations = relations.filter(relation => relation.type === "returns_to" &&
       relation.from === taskKey && relation.to === foKey);
+    const branches = branchRelations.filter(supported);
+    const merges = mergeRelations.filter(supported);
     const strongest = selected => selected.some(relation => relationEdge(relation) === "solid")
       ? "solid" : (selected.length ? "derived" : "none");
-    return {branch:strongest(branches), merge:strongest(merges)};
+    const relationAt = relation => Number((factById.get(relation.evidence_ref) || {}).at) || 0;
+    const latestDispatchAt = Math.max(0, ...branches.map(relationAt));
+    const taskResults = facts.filter(fact => fact.work_item_id === workItemId &&
+      ["work_result", "result"].includes(fact.type) && fact.evidence &&
+      fact.evidence.confidence === "exact");
+    const latestReturnAt = Math.max(0, ...merges.map(relationAt),
+      ...taskResults.map(fact => Number(fact.at) || 0));
+    const retryEvidence = relations.some(relation =>
+      ["retries", "retry_of", "failed_attempt"].includes(relation.type) &&
+      supported(relation) && (relation.from === taskKey || relation.to === taskKey)) ||
+      facts.some(fact => fact.work_item_id === workItemId &&
+        ["retry", "failed_attempt"].includes(fact.source_kind) && fact.evidence &&
+        fact.evidence.confidence === "exact");
+    return {branch:strongest(branchRelations), merge:strongest(mergeRelations),
+      dispatchCount:branches.length, latestDispatchAt, latestReturnAt, retryEvidence};
   };
   const taskLanes = taskIds.map(workItemId => {
     const taskEvents = facts.filter(fact => fact.work_item_id === workItemId)
@@ -925,12 +942,18 @@ function projectLaneRegistry(model, delegations, focus){
       .sort((a, b) => String(a.worker).localeCompare(String(b.worker)));
     const topology = topologyForTask(workItemId);
     const head = headByItem.get(workItemId) || null;
-    const current = contributors.length > 0 || taskEvents.some(fact =>
+    const working = contributors.length > 0 || taskEvents.some(fact =>
       fact.current_state === true && fact.evidence && fact.evidence.confidence === "exact");
+    const unreturned = topology.dispatchCount > 0 &&
+      topology.latestDispatchAt > topology.latestReturnAt;
+    const returned = topology.latestReturnAt > 0 && !unreturned;
+    const current = working || unreturned;
     return {key:`task:${workItemId}`, kind:"task", workItemId,
       label:(itemById.get(workItemId) || {}).label || "Task",
       events:taskEvents, contributors, item:itemById.get(workItemId) || {},
-      head, headFact:head && factById.get(head.latest_meaningful_event) || null, current,
+      head, headFact:head && factById.get(head.latest_meaningful_event) || null,
+      current, working, unreturned, returned, dispatchCount:topology.dispatchCount,
+      retryEvidence:topology.retryEvidence,
       branch:topology.branch, merge:topology.merge};
   });
   const lanes = [foLane].concat(taskLanes);
@@ -1004,20 +1027,21 @@ function projectFoLaneRow(d, registry, lane, focus){
 function projectTaskLaneRow(d, registry, lane){
   const head = lane.head || {};
   const latest = lane.headFact || lane.events[0] || {};
-  const stage = head.stage || "";
+  const stage = lane.working ? head.stage || "" : "";
   const title = String(lane.label || "Task").replace(/-/g, " ")
     .replace(/^./, first => first.toUpperCase());
   const heading = stage ? `${title} · ${stage}` : title;
-  const status = head.status === "requested" ? "recently dispatched · current state not confirmed" :
-    head.status || "current task";
+  const status = lane.working ? "Working" : (lane.unreturned
+    ? "No active worker · no return observed" : (lane.returned ? "Returned" : "History"));
   const result = latest.summary || "Latest state";
-  const dispatchCount = Number(head.dispatch_count) || 0;
+  const dispatchCount = Number(lane.dispatchCount) || 0;
+  const retryCount = Math.max(0, dispatchCount - 1);
   const attempts = dispatchCount === 1 ? "1 dispatch" : dispatchCount > 1
-    ? `${dispatchCount} dispatches · ${dispatchCount - 1} retries` : "";
-  const attemptState = !lane.current && attempts && lane.merge === "none"
-    ? `${attempts} · no result observed` : attempts;
+    ? `${dispatchCount} dispatches` + (lane.retryEvidence
+      ? ` · ${retryCount} ${retryCount === 1 ? "retry" : "retries"}` : "") : "";
   const workers = lane.contributors.map(row => row.worker).filter(Boolean).join(" · ");
-  const kind = stage || lane.item.kind === "workflow_item" ? "stage" :
+  const kind = stage ? "stage" : lane.returned ? "result" :
+    lane.item.kind === "workflow_item" ? "work" :
     (["outcome", "decision"].includes(head.status) ? "result" : "work");
   const bindings = Array.isArray(lane.item.source_bindings) && lane.item.source_bindings.length
     ? lane.item.source_bindings : (latest.workflow_binding ? [{source:"task state",
@@ -1033,7 +1057,7 @@ function projectTaskLaneRow(d, registry, lane){
     String(bindings[0].value || "").split(":")[0]) || "";
   const body = `<div class="pc-trail-top"><strong>${esc(heading)}</strong><span>${esc(status)}</span></div>` +
     `<div class="pc-trail-result">${esc(result)}</div>` +
-    (attemptState ? `<div class="pc-trail-quiet" data-dispatch-count="${dispatchCount}">${esc(attemptState)}</div>` : "") +
+    (attempts ? `<div class="pc-trail-quiet" data-dispatch-count="${dispatchCount}">${esc(attempts)}</div>` : "") +
     (workers ? `<div class="pc-trail-quiet">${esc(workers)}</div>` : "") +
     projectFactEvidence(latest) + projectLaneHistory(lane, latest.fact_id) + source;
   const at = Number(latest.at) || 0;

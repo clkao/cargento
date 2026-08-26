@@ -1234,7 +1234,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["lifecycleSuppressed"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
-    def test_current_band_requires_live_task_authority_and_folds_day_history(self) -> None:
+    def test_current_band_keeps_unreturned_dispatches_visible(self) -> None:
         checks = """
 const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1", active:true,
   state:"working", last_activity:110});
@@ -1284,28 +1284,102 @@ const current = html.slice(html.indexOf('data-activity-band="current"'),
   html.indexOf('data-activity-band="24h-history"'));
 const history = html.slice(html.indexOf('data-activity-band="24h-history"'));
 const withoutLive = projectLaneRegistry(model, [], focus);
+const withoutLiveHtml = projectSemanticTimeline({generated:112}, model, [], focus);
 console.log(JSON.stringify({
   currentOnly:current.includes("Working") && current.includes("Keep current work clear") &&
     current.includes("Project cockpit · shaping") && current.includes("Einstein") &&
-    !current.includes("Session interaction origin · shaping"),
-  historyOnly:history.includes("Session interaction origin · shaping") &&
-    history.includes("1 dispatch · no result observed") &&
-    !history.includes('data-work-item="workflow:cockpit"'),
+    current.includes("Session interaction origin") &&
+    current.includes("No active worker · no return observed"),
+  noHistory:!html.includes('data-activity-band="24h-history"'),
   topology:(html.match(/data-branch-edge="solid"/g) || []).length === 2 &&
     !html.includes('data-merge-edge="solid"'),
-  attempts:current.includes("3 dispatches · 2 retries"),
-  stageNotCurrent:withoutLive.laneByKey.get(`task:${cockpit}`).current === false &&
-    withoutLive.laneByKey.get(`task:${cockpit}`).key === `task:${cockpit}`,
+  attempts:current.includes("3 dispatches") && !current.includes("retries"),
+  contributorLoss:withoutLive.laneByKey.get(`task:${cockpit}`).current === true &&
+    withoutLive.laneByKey.get(`task:${cockpit}`).working === false &&
+    withoutLive.laneByKey.get(`task:${cockpit}`).key === `task:${cockpit}` &&
+    withoutLiveHtml.includes("No active worker · no return observed") &&
+    !withoutLiveHtml.includes("Project cockpit · shaping"),
   derivedFolded:current.includes("Derived old goal") && current.includes("sourced event")
 }));
 """
         out = self.run_project(checks)
         self.assertTrue(out["currentOnly"])
-        self.assertTrue(out["historyOnly"])
+        self.assertTrue(out["noHistory"])
         self.assertTrue(out["topology"])
         self.assertTrue(out["attempts"])
-        self.assertTrue(out["stageNotCurrent"])
+        self.assertTrue(out["contributorLoss"])
         self.assertTrue(out["derivedFolded"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_task_lifecycle_returns_reopens_and_requires_retry_evidence(self) -> None:
+        checks = """
+const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1",
+  state:"working", last_activity:10});
+const task = "workflow:task";
+const stageOnly = "workflow:stage-only";
+const baseFacts = [
+  {fact_id:"dispatch-1", at:1, type:"prepared_dispatch", source_kind:"prepared_dispatch",
+    summary:"Dispatch task", work_item_id:task,
+    evidence:{source:"dispatch artifact", confidence:"exact"}},
+  {fact_id:"result-1", at:2, type:"work_result", summary:"Task returned",
+    work_item_id:task, evidence:{source:"exact result", confidence:"exact"}},
+  {fact_id:"stage-only", at:4, type:"stage_transition", stage:"shaping",
+    summary:"Stage only", work_item_id:stageOnly,
+    evidence:{source:"state history", confidence:"exact"}}
+];
+const items = [
+  {work_item_id:task, label:"Task", kind:"workflow_item", source_bindings:[]},
+  {work_item_id:stageOnly, label:"Stage only", kind:"workflow_item", source_bindings:[]}
+];
+const relation = (type, from, to, evidence_ref) =>
+  ({type, from, to, evidence_ref, confidence:"exact"});
+const returnedRelations = [
+  relation("dispatches_to", "fo:codex:focus-1", `task:${task}`, "dispatch-1"),
+  relation("returns_to", `task:${task}`, "fo:codex:focus-1", "result-1")
+];
+const model = (facts, relations, head) => ({facts, relations, work_items:items,
+  projections:{operator_intents:[], steering_episodes:[], trail_heads:[head,
+    {work_item_id:stageOnly, status:"current stage", stage:"shaping",
+      latest_meaningful_event:"stage-only", dispatch_count:0}], activity:{nodes:[
+    {kind:"work", at:Number((facts.find(f=>f.fact_id===head.latest_meaning_event)||{}).at)||3,
+      work_item_ids:[task]},
+    {kind:"work", at:4, work_item_ids:[stageOnly]}
+  ]}}});
+const returnedModel = model(baseFacts, returnedRelations,
+  {work_item_id:task, status:"outcome", latest_meaningful_event:"result-1", dispatch_count:1});
+const returnedRegistry = projectLaneRegistry(returnedModel, [], focus);
+const returnedHtml = projectSemanticTimeline({generated:10}, returnedModel, [], focus);
+const dispatch2 = {fact_id:"dispatch-2", at:3, type:"prepared_dispatch",
+  source_kind:"prepared_dispatch", summary:"Dispatch task again", work_item_id:task,
+  evidence:{source:"dispatch artifact", confidence:"exact"}};
+const reopenedRelations = returnedRelations.concat([
+  relation("dispatches_to", "fo:codex:focus-1", `task:${task}`, "dispatch-2")]);
+const reopenedModel = model(baseFacts.concat([dispatch2]), reopenedRelations,
+  {work_item_id:task, status:"prepared", latest_meaningful_event:"dispatch-2", dispatch_count:2});
+const reopenedRegistry = projectLaneRegistry(reopenedModel, [], focus);
+const reopenedHtml = projectSemanticTimeline({generated:10}, reopenedModel, [], focus);
+const retryModel = model(baseFacts.concat([dispatch2]), reopenedRelations.concat([
+  relation("retries", `task:${task}`, "dispatch-1", "dispatch-2")]),
+  {work_item_id:task, status:"prepared", latest_meaningful_event:"dispatch-2", dispatch_count:2});
+const retryHtml = projectSemanticTimeline({generated:10}, retryModel, [], focus);
+console.log(JSON.stringify({
+  returned:returnedRegistry.laneByKey.get(`task:${task}`).current === false &&
+    returnedRegistry.laneByKey.get(`task:${task}`).returned === true &&
+    returnedHtml.includes('data-activity-band="24h-history"') && returnedHtml.includes("Returned"),
+  reopened:reopenedRegistry.laneByKey.get(`task:${task}`).current === true &&
+    reopenedRegistry.laneByKey.get(`task:${task}`).key === `task:${task}` &&
+    reopenedHtml.includes("No active worker · no return observed"),
+  retries:reopenedHtml.includes("2 dispatches") && !reopenedHtml.includes("retries") &&
+    retryHtml.includes("2 dispatches · 1 retry"),
+  stageOnly:returnedRegistry.laneByKey.get(`task:${stageOnly}`).working === false &&
+    returnedRegistry.laneByKey.get(`task:${stageOnly}`).current === false
+}));
+"""
+        out = self.run_project(checks)
+        self.assertTrue(out["returned"])
+        self.assertTrue(out["reopened"])
+        self.assertTrue(out["retries"])
+        self.assertTrue(out["stageOnly"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_lane_registry_keeps_fo_and_task_identity_stable(self) -> None:
@@ -1738,7 +1812,8 @@ console.log(JSON.stringify({
   noFalseRoster: !operator.includes("Assignments") &&
     !operator.includes('data-assignment-state="awaiting_result"'),
   currentWork: graph.includes("Fix current encoder fault") &&
-    graph.includes("recently dispatched · current state not confirmed"),
+    graph.includes('data-task-current="false"') &&
+    !graph.includes("recently dispatched · current state not confirmed"),
   historyCollapsed: evidence.includes("Past dispatches without observed result · 12") &&
     evidence.includes("show historical request evidence") &&
     !graph.includes("Historical dispatch 1")
