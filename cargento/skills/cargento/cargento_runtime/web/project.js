@@ -30,6 +30,8 @@ let projectTerminalKey = null;
 let projectTerminalSequence = 0;
 let projectTerminalXtermPromise = null;
 let projectTerminalReconnect = null;
+let projectTerminalFollowLive = true;
+let projectTerminalScrollTop = 0;
 const PROJECT_XTERM_JS = "https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.js";
 const PROJECT_XTERM_CSS = "https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css";
 const PROJECT_XTERM_JS_INTEGRITY = "sha384-f/1U6Z9wM4D71a5eRXEZnyOTMOvjqxr2XLwh+Go1OvIl3L3tOcvUrzudnhbECwl4";
@@ -293,6 +295,8 @@ function projectAction(act, arg){
   if(act === "project-terminal-open"){
     projectTerminalOpenKey = String(arg || "");
     projectTerminalDispose();
+    projectTerminalFollowLive = true;
+    projectTerminalScrollTop = 0;
     if(lastData) render(lastData);
     return true;
   }
@@ -300,6 +304,11 @@ function projectAction(act, arg){
     projectTerminalOpenKey = null;
     projectTerminalDispose();
     if(lastData) render(lastData);
+    return true;
+  }
+  if(act === "project-terminal-jump"){
+    projectTerminalFollowLive = true;
+    projectTerminalScrollToLive();
     return true;
   }
   if(act === "project-cockpit"){
@@ -481,9 +490,60 @@ function projectTerminalBeforeRender(){
 }
 
 function projectTerminalAfterRender(screen){
-  if(!screen || !projectTerminal || projectTerminalKey !== projectTerminalOpenKey) return;
-  const replacement = document.getElementById("pc-terminal-screen");
-  if(replacement && replacement !== screen) replacement.replaceWith(screen);
+  if(screen && projectTerminal && projectTerminalKey === projectTerminalOpenKey){
+    const replacement = document.getElementById("pc-terminal-screen");
+    if(replacement && replacement !== screen) replacement.replaceWith(screen);
+  }
+  projectTerminalBindViewport();
+}
+
+function projectTerminalScrollMaximum(viewport){
+  return Math.max(0, Number(viewport && viewport.scrollHeight || 0) -
+    Number(viewport && viewport.clientHeight || 0));
+}
+
+function projectTerminalUpdateJump(){
+  const jump = document.getElementById("pc-terminal-jump");
+  if(jump) jump.hidden = projectTerminalFollowLive;
+}
+
+function projectTerminalScrollToLive(){
+  const viewport = document.getElementById("pc-terminal-viewport");
+  if(!viewport) return;
+  projectTerminalFollowLive = true;
+  viewport.scrollTop = projectTerminalScrollMaximum(viewport);
+  projectTerminalScrollTop = viewport.scrollTop;
+  projectTerminalUpdateJump();
+}
+
+function projectTerminalBindViewport(){
+  const viewport = document.getElementById("pc-terminal-viewport");
+  if(!viewport) return;
+  viewport.onscroll = () => {
+    projectTerminalScrollTop = Number(viewport.scrollTop) || 0;
+    projectTerminalFollowLive = projectTerminalScrollMaximum(viewport) -
+      projectTerminalScrollTop <= 2;
+    projectTerminalUpdateJump();
+  };
+  if(projectTerminalFollowLive) projectTerminalScrollToLive();
+  else {
+    viewport.scrollTop = Math.min(projectTerminalScrollTop,
+      projectTerminalScrollMaximum(viewport));
+    projectTerminalScrollTop = viewport.scrollTop;
+    projectTerminalUpdateJump();
+  }
+}
+
+function projectTerminalSizeHost(terminal){
+  const host = document.getElementById("pc-terminal-screen");
+  const screen = terminal && terminal.element && terminal.element.querySelector
+    ? terminal.element.querySelector(".xterm-screen") : null;
+  if(!host || !host.style || !screen) return;
+  const rect = screen.getBoundingClientRect ? screen.getBoundingClientRect() : null;
+  const width = Math.ceil(Number(rect && rect.width) || parseFloat(screen.style && screen.style.width) || 0);
+  const height = Math.ceil(Number(rect && rect.height) || parseFloat(screen.style && screen.style.height) || 0);
+  if(width > 0) host.style.width = `${width}px`;
+  if(height > 0) host.style.height = `${height}px`;
 }
 
 function projectTerminalLookup(d, sess){
@@ -562,9 +622,17 @@ function projectTerminalConnect(key, originHint, terminal){
       const cols = Number(chunk.cols);
       const rows = Number(chunk.rows);
       if(!Number.isInteger(cols) || cols < 1 || !Number.isInteger(rows) || rows < 1) return;
-      if(terminal.cols !== cols || terminal.rows !== rows) terminal.resize(cols, rows);
+      if(terminal.cols !== cols || terminal.rows !== rows){
+        terminal.resize(cols, rows);
+        projectTerminalSizeHost(terminal);
+      }
       if(resetPending){ terminal.reset(); resetPending = false; }
-      if(chunk.data) terminal.write(chunk.data);
+      if(chunk.data){
+        terminal.write(chunk.data, () => {
+          if(projectTerminalSocket === socket && projectTerminal === terminal &&
+              projectTerminalFollowLive) projectTerminalScrollToLive();
+        });
+      } else if(projectTerminalFollowLive){ projectTerminalScrollToLive(); }
       projectTerminalSequence = sequence;
     });
   };
@@ -594,6 +662,7 @@ function projectTerminalMount(key, originHint){
     projectTerminal = terminal;
     projectTerminalKey = key;
     terminal.open(document.getElementById("pc-terminal-screen"));
+    projectTerminalBindViewport();
     projectTerminalConnect(key, originHint, terminal);
   }).catch(() => { screen.textContent = "Terminal renderer unavailable."; });
 }
@@ -619,9 +688,13 @@ function projectTerminalSurface(sess){
   }
   return `<aside class="pc-terminal" aria-label="Read-only terminal output">` +
     `<div class="pc-terminal-bar"><strong>${esc(title)}</strong><span>read-only</span>` +
+    `<button type="button" id="pc-terminal-jump" class="quiet"` +
+    ` data-calm="project-terminal-jump" data-arg="${esc(key)}"` +
+    `${projectTerminalFollowLive ? " hidden" : ""}>Jump to live</button>` +
     `<button type="button" class="quiet" data-calm="project-terminal-close"` +
     ` data-arg="${esc(key)}">Close</button></div>` +
-    `<div id="pc-terminal-screen" class="pc-terminal-screen"></div></aside>`;
+    `<div id="pc-terminal-viewport" class="pc-terminal-viewport">` +
+    `<div id="pc-terminal-screen" class="pc-terminal-screen"></div></div></aside>`;
 }
 
 function projectSessionMirror(d, sess, group){

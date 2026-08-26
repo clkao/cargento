@@ -752,7 +752,11 @@ const absent = __els.app.innerHTML;
 console.log(JSON.stringify({
   optIn:closed.includes("Open terminal") && !closed.includes('class="pc-terminal"'),
   adjacent:opened.includes('class="pc-session-workspace terminal-open"') &&
-    opened.includes('class="pc-terminal"') && opened.includes("Cargento:1.1"),
+    opened.includes('class="pc-terminal"') && opened.includes("Cargento:1.1") &&
+    opened.includes('id="pc-terminal-viewport"') &&
+    opened.includes('id="pc-terminal-screen"') &&
+    opened.includes('data-calm="project-terminal-jump"') &&
+    opened.includes("Jump to live"),
   readOnly:(opened.match(/read-only/g) || []).length === 1 &&
     !opened.includes("Keyboard input") && !opened.includes("send-keys"),
   close:!reclosed.includes('class="pc-terminal"') && reclosed.includes("Open terminal"),
@@ -784,10 +788,15 @@ const operations = [];
 let terminalCount = 0;
 window.Terminal = class {
   constructor(){ terminalCount += 1; this.cols = 80; this.rows = 14; }
-  open(node){ operations.push(`open:${node.name}`); }
+  open(node){
+    operations.push(`open:${node.name}`);
+    this.element = {querySelector: selector => selector === ".xterm-screen" ? {
+      style:{}, getBoundingClientRect:() => ({width:this.cols * 8, height:this.rows * 16})
+    } : null};
+  }
   resize(cols, rows){ this.cols = cols; this.rows = rows; operations.push(`resize:${cols}x${rows}`); }
   reset(){ operations.push("reset"); }
-  write(data){ operations.push(`write:${data}`); }
+  write(data, done){ operations.push(`write:${data}`); if(done) done(); }
   writeln(data){ operations.push(`writeln:${data}`); }
   dispose(){ operations.push("dispose"); }
 };
@@ -796,8 +805,14 @@ globalThis.WebSocket = class {
   constructor(url){ this.url = url; sockets.push(this); }
   close(){ this.closed = true; }
 };
-const firstScreen = {name:"first"};
+const firstScreen = {name:"first", style:{}};
+const makeViewport = name => ({name, scrollTop:0, scrollHeight:928, clientHeight:340,
+  onscroll:null});
+const firstViewport = makeViewport("first-viewport");
+const jump = {hidden:true};
 __els["pc-terminal-screen"] = firstScreen;
+__els["pc-terminal-viewport"] = firstViewport;
+__els["pc-terminal-jump"] = jump;
 projectTerminalOpenKey = key;
 projectTerminalMount(key, "origin01");
 await __settle(); await __settle();
@@ -812,12 +827,27 @@ projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence
   reset:false, data:"delta", cols:202, rows:58, origin_id_hint:"origin01"})});
 projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:6,
   reset:false, data:"duplicate-delta", cols:202, rows:58, origin_id_hint:"origin01"})});
+const followedResetAndDelta = firstViewport.scrollTop === 588 && jump.hidden === true;
+const exactGridHost = firstScreen.style.width === "1616px" &&
+  firstScreen.style.height === "928px";
+firstViewport.scrollTop = 127;
+firstViewport.onscroll();
+const detachedTop = firstViewport.scrollTop;
+projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:7,
+  reset:false, data:"while-detached", cols:202, rows:58, origin_id_hint:"origin01"})});
+const detachedStayedPut = firstViewport.scrollTop === detachedTop && jump.hidden === false;
 const preserved = projectTerminalBeforeRender();
 let replacedWith = null;
 __els["pc-terminal-screen"] = {name:"replacement", replaceWith(node){ replacedWith = node; }};
+const replacementViewport = makeViewport("replacement-viewport");
+__els["pc-terminal-viewport"] = replacementViewport;
 projectTerminalAfterRender(preserved);
 projectTerminalMount(key, "origin01");
 await __settle();
+const rerenderKeptDetached = replacementViewport.scrollTop === detachedTop &&
+  jump.hidden === false;
+projectAction("project-terminal-jump", key);
+const jumpedToLive = replacementViewport.scrollTop === 588 && jump.hidden === true;
 const firstSocket = projectTerminalSocket;
 firstSocket.onclose({code:1006});
 __timers[__timers.length - 1]();
@@ -851,6 +881,11 @@ console.log(JSON.stringify({
   oneLiveSocket:projectTerminalSocket === secondSocket,
   pendingKeepsSlot,
   oneAfterLookup:terminalCount === 1 && sockets.length === 2,
+  followedResetAndDelta,
+  exactGridHost,
+  detachedStayedPut,
+  rerenderKeptDetached,
+  jumpedToLive,
   operations,
   preserved:replacedWith === firstScreen,
   sequence:projectTerminalSequence
@@ -866,6 +901,11 @@ console.log(JSON.stringify({
         self.assertTrue(out["oneLiveSocket"])
         self.assertTrue(out["pendingKeepsSlot"])
         self.assertTrue(out["oneAfterLookup"])
+        self.assertTrue(out["followedResetAndDelta"])
+        self.assertTrue(out["exactGridHost"])
+        self.assertTrue(out["detachedStayedPut"])
+        self.assertTrue(out["rerenderKeptDetached"])
+        self.assertTrue(out["jumpedToLive"])
         self.assertEqual(
             [
                 "open:first",
@@ -873,6 +913,7 @@ console.log(JSON.stringify({
                 "reset",
                 "write:\u001b[58;115Hvisible",
                 "write:delta",
+                "write:while-detached",
                 "reset",
                 "write:reconnected",
             ],

@@ -697,7 +697,9 @@
   .pc-terminal-bar strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pc-terminal-bar span{margin-left:auto;color:#95a0ae}
   .pc-terminal-bar button{color:#dbe5ee;border-color:#4b5565}
-  .pc-terminal-screen{height:340px;padding:6px;overflow:auto;overscroll-behavior:contain}
+  .pc-terminal-viewport{height:340px;overflow:scroll;overscroll-behavior:contain}
+  .pc-terminal-screen{min-width:100%;min-height:340px;padding:6px;box-sizing:content-box}
+  .pc-terminal-screen>.xterm{width:100%;height:100%}
   .pc-last-output>summary{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink2)}
   .pc-last-output>pre{max-height:240px;margin:7px 0 3px;padding:9px 10px;overflow:auto;border:1px solid var(--line2);background:var(--panel);color:var(--ink2);font:inherit;white-space:pre-wrap;overflow-wrap:anywhere}
   .pc-operator-detail{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0 3px}
@@ -827,7 +829,7 @@
     .pc-project-tabs{overflow-x:auto;white-space:nowrap}
     .pc-operator{padding-inline:14px}
     .pc-session-workspace.terminal-open{grid-template-columns:1fr}
-    .pc-terminal-screen{height:220px}
+    .pc-terminal-viewport{height:220px}
     .pc-terminal-open{margin-inline:14px}
     .pc-event-meta{align-items:flex-start;flex-wrap:wrap}
     .pc-event-meta time{margin-left:0}
