@@ -18,6 +18,7 @@ const projectDraftByLabel = {};
 const projectContextByLabel = {};
 const projectContextRequests = {};
 let projectContextRequestSequence = 0;
+const projectLastOutputOpenBySession = new Map();
 let projectUsageCounts = null;
 let projectTabOrder = null;
 let projectOpenedKey = null;
@@ -468,8 +469,18 @@ function projectLastOutput(sess){
   const compact = exact.replace(/\s+/g, " ").trim();
   if(!compact) return "";
   const preview = compact.length > 110 ? compact.slice(0, 109) + "…" : compact;
-  return `<details class="pc-last-output"><summary>Last · ${esc(preview)}</summary>` +
+  const key = sessKey(sess);
+  const open = projectLastOutputOpenBySession.get(key) === true ? " open" : "";
+  return `<details id="pc-last-output" class="pc-last-output"${open}` +
+    ` data-session-key="${esc(key)}"><summary>Last · ${esc(preview)}</summary>` +
     `<pre>${esc(exact)}</pre></details>`;
+}
+
+function projectCaptureLastOutputState(){
+  const details = document.getElementById("pc-last-output");
+  if(!details || typeof details.getAttribute !== "function") return;
+  const key = String(details.getAttribute("data-session-key") || "");
+  if(key) projectLastOutputOpenBySession.set(key, details.open === true);
 }
 
 function projectTerminalDispose(){

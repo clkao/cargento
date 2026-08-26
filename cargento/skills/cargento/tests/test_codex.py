@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from cargento_runtime import io as runtime_io
 from cargento_runtime import records as runtime_records
 from cargento_runtime import transcripts as runtime_transcripts
 from cargento_runtime import turns as runtime_turns
@@ -315,6 +316,7 @@ class CodexCollectorTest(RuntimeTestCase):
                 {
                     "name": "Volta",
                     "model": None,
+                    "started_at": now - 30,
                     "depth": 1,
                     "parent_name": None,
                     "assignment": None,
@@ -324,6 +326,7 @@ class CodexCollectorTest(RuntimeTestCase):
                 {
                     "name": "Turing",
                     "model": None,
+                    "started_at": now - 20,
                     "depth": 2,
                     "parent_name": "Volta",
                     "assignment": None,
@@ -429,7 +432,7 @@ class CodexCollectorTest(RuntimeTestCase):
                 with (
                     store_patch(CODEX_SESSIONS_DIR=tmp),
                     mock.patch.object(
-                        codex_collector.runtime_io,
+                        runtime_io,
                         "iter_bounded_text_lines",
                         return_value=iter(artifact_lines),
                     ),

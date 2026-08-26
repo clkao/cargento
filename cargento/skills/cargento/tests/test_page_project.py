@@ -1001,6 +1001,39 @@ console.log(JSON.stringify({
         self.assertTrue(out["idleOnly"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_last_output_disclosure_survives_dashboard_revisions_until_explicit_close(self) -> None:
+        checks = """
+const row = mk({project: "repo/proj", harness: "codex", sid: "focus-1",
+  active: true, state: "idle", state_detail: "awaiting your message",
+  last_activity: 99999, last_output: "Ready for review."});
+const d = payload([row]);
+Object.assign(d, {generated:100000, ask:true, asks:[]});
+render(d);
+const initiallyClosed = !__els.app.innerHTML.includes('class="pc-last-output" open');
+const disclosure = {
+  open:true,
+  getAttribute(name){ return name === "data-session-key" ? "codex:focus-1" : null; }
+};
+__els["pc-last-output"] = disclosure;
+render(Object.assign({}, d, {generated:100001}));
+const stayedOpen = __els.app.innerHTML.includes('class="pc-last-output" open');
+disclosure.open = false;
+render(Object.assign({}, d, {generated:100002}));
+const stayedClosed = !__els.app.innerHTML.includes('class="pc-last-output" open');
+console.log(JSON.stringify({initiallyClosed, stayedOpen, stayedClosed,
+  remembered:projectLastOutputOpenBySession.get("codex:focus-1")}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["initiallyClosed"])
+        self.assertTrue(out["stayedOpen"])
+        self.assertTrue(out["stayedClosed"])
+        self.assertFalse(out["remembered"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_what_changed_separates_real_steering_from_demonstrated_outcomes(self) -> None:
         checks = """
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {

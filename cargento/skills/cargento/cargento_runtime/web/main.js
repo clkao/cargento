@@ -58,6 +58,9 @@ function render(d){
        A saved goal survives through localStorage; this draft exists only to
        stop the refresh loop from erasing text while the operator is typing. */
     const projectDraft = projectCaptureDraft();
+    /* Native <details> state lives only in the DOM. Capture it before the
+       live revision swaps #app so an explicit open or close survives. */
+    projectCaptureLastOutputState();
     const projectControlFocus = calmFocusKey();
     const projectTerminalScreen = projectTerminalBeforeRender();
     renderInProgress = true;

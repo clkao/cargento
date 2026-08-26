@@ -389,8 +389,10 @@ class InteractionPrototypeHTTPTest(unittest.TestCase):
                 frame["chunks"],
             )
 
+            origin = self.adapter.origin
+            assert origin is not None
             self.adapter.inspected_origin = dataclasses.replace(
-                self.adapter.origin,
+                origin,
                 pane_cols="210",
                 pane_rows="60",
             )
