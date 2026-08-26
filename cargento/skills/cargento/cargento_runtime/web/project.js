@@ -8,7 +8,7 @@
 const PROJECT_COCKPIT_KEY = "cargento.projectCockpitProject";
 const PROJECT_GOAL_PREFIX = "cargento.projectGoal.v1:";
 const PROJECT_USAGE_KEY = "cargento.projectUsage.v1";
-const PROJECT_PRIMARY_DIRECTIONS = 4;
+const PROJECT_PRIMARY_DIRECTIONS = 5;
 let projectCockpitLabel = null;
 let projectQueryLabel = null;
 let projectQuerySession = null;
@@ -918,15 +918,40 @@ function projectDirectionTokens(summary){
     .filter(token => !ignored.has(token));
 }
 
+function projectDirectionExcluded(summary){
+  const text = String(summary || "").trim();
+  /* These shapes came from the 2026-08-26 live 24-hour ledger audit. They are
+     source context, but none independently changed intent, work, a decision,
+     or an outcome, so the newest retained entry owns them as source-only text. */
+  return /^(?:interleved events\?|if i click last\.?|do 5 more rounds of mirror reflection\.?|oh now i see it\.?|not sure if this is useful:\s*https?:.*|run it, and continue the loop\.?|id you run the server\?|read\s+[~\/].*|look here:\s*https?:.*|and tell me what you find in the mock|continue the rounds\.?|ok let's try this|what is this\?|keep going|let's get that panel review|did you get a review from IA advisor and UX expert\?)$/i.test(text);
+}
+
+function projectDirectionRationale(summary){
+  const text = String(summary || "");
+  if(/(?:can't see|don't see|still weird|kind(?:of|a) works|not readable|long delay|missing a lot|without actual information|without telling me|recovered from crash|great, except)/i.test(text)){
+    return "Changes understanding of an observed outcome or work condition.";
+  }
+  if(/(?:should|don't mean|don't care|all prototype|not compact steering|model the data first|fresh context|few words|sparate|derived goals?|active lanes?)/i.test(text)){
+    return "Changes understanding of a product or scope decision.";
+  }
+  if(/(?:continuously check|sketch first|panel review|review from|try xterm|session within tmux|dev workflow|adjustment between rounds)/i.test(text)){
+    return "Changes understanding of the work or its validation method.";
+  }
+  return "Changes understanding of the operator's intent.";
+}
+
 function projectMeaningfulDirections(intents, factById){
   const lowSignal = /^(?:ok(?:ay)?|alright|thanks?|working|oh\b.*\b(?:see|got it))\W*$/i;
   const transport = /^(?:env\b|pwd\b|ls\b|cd\b|git\s|\/[A-Za-z0-9_.-]|[A-Za-z0-9_.-]+\/)/i;
   const selected = [];
   const clusters = [];
+  const exact = new Set();
   intents.slice().sort((a, b) => Number(b.at) - Number(a.at)).forEach(intent => {
     const summary = String(intent.summary || "").trim();
     const fact = factById.get(intent.derived_from);
-    if(!fact || summary.length < 4 || lowSignal.test(summary) || transport.test(summary)) return;
+    const normalized = summary.toLowerCase().replace(/\W+/g, " ").trim();
+    if(!fact || summary.length < 4 || lowSignal.test(summary) || transport.test(summary) ||
+        projectDirectionExcluded(summary) || exact.has(normalized)) return;
     const tokens = projectDirectionTokens(summary);
     if(!tokens.length) return;
     const at = Number(intent.at) || Number(fact.at) || 0;
@@ -936,6 +961,7 @@ function projectMeaningfulDirections(intents, factById){
         Math.min(new Set(tokens).size, new Set(cluster.tokens).size) >= .8);
     if(duplicate) return;
     clusters.push({at, tokens});
+    exact.add(normalized);
     selected.push(fact);
   });
   return selected;
@@ -954,8 +980,25 @@ function projectLaneRegistry(model, delegations, focus){
   const focusedKey = focus ? sessKey(focus) : (projectQuerySession || "focused");
   const foKey = `fo:${focusedKey}`;
   const itemById = new Map(items.map(item => [item.work_item_id, item]));
+  const normalizedItem = item => String(item && item.label || "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const canonicalByItem = new Map();
+  items.filter(item => String(item.work_item_id || "").startsWith("workflow-unbound:"))
+    .forEach(item => {
+      const matches = items.filter(candidate => candidate.kind === "workflow_item" &&
+        !String(candidate.work_item_id || "").startsWith("workflow-unbound:") &&
+        normalizedItem(candidate) === normalizedItem(item));
+      if(matches.length === 1) canonicalByItem.set(item.work_item_id, matches[0].work_item_id);
+    });
+  const canonicalItemId = workItemId => canonicalByItem.get(workItemId) || workItemId;
   const factById = new Map(facts.map(fact => [fact.fact_id, fact]));
-  const headByItem = new Map(heads.map(head => [head.work_item_id, head]));
+  const headByItem = new Map();
+  heads.forEach(head => {
+    const workItemId = canonicalItemId(head.work_item_id);
+    const prior = headByItem.get(workItemId);
+    const at = candidate => Number((factById.get(candidate.latest_meaningful_event) || {}).at) || 0;
+    if(!prior || at(head) > at(prior)) headByItem.set(workItemId, head);
+  });
   const projectedDirections = intents.concat(Array.isArray(activity.steering)
     ? activity.steering : []);
   const projectedFactIds = new Set(projectedDirections.map(intent => intent.derived_from));
@@ -965,6 +1008,12 @@ function projectLaneRegistry(model, delegations, focus){
   const intentFactById = new Map(projectedDirections.map(intent =>
     [intent.projection_id, intent.derived_from]));
   const meaningfulDirections = projectMeaningfulDirections(projectedDirections, factById);
+  const meaningfulDirectionIds = new Set(meaningfulDirections.map(fact => fact.fact_id));
+  const allDirectionFacts = [...new Map(projectedDirections.map(intent =>
+    [intent.derived_from, factById.get(intent.derived_from)]).filter(entry => entry[1])).values()]
+    .sort((a, b) => Number(b.at) - Number(a.at));
+  const suppressedDirections = allDirectionFacts.filter(fact =>
+    !meaningfulDirectionIds.has(fact.fact_id));
   const contributorByTask = new Map();
   const unboundContributors = [];
   delegations.forEach(row => {
@@ -975,6 +1024,7 @@ function projectLaneRegistry(model, delegations, focus){
   });
   const relevance = new Map();
   const addTask = (workItemId, at, priority) => {
+    workItemId = canonicalItemId(workItemId);
     const item = itemById.get(workItemId);
     if(!workItemId || !item || item.kind === "session_result") return;
     const prior = relevance.get(workItemId) || {priority:0, at:0};
@@ -1014,7 +1064,7 @@ function projectLaneRegistry(model, delegations, focus){
     [intentFactById.get(episode.intent_id), episode]).filter(entry => entry[0]));
   const foLane = {key:foKey, kind:"fo", label:"First Officer", index:0, events:foEvents,
     directions:meaningfulDirections, contributors:unboundContributors, item:null, head:null,
-    branch:"none", merge:"none", episodeByFact, factById};
+    branch:"none", merge:"none", episodeByFact, factById, suppressedDirections};
   const relations = Array.isArray(model.relations) ? model.relations : [];
   const relationEdge = relation => String(relation.confidence || "").includes("derived")
     ? "derived" : "solid";
@@ -1031,7 +1081,7 @@ function projectLaneRegistry(model, delegations, focus){
       ? "solid" : (selected.length ? "derived" : "none");
     const relationAt = relation => Number((factById.get(relation.evidence_ref) || {}).at) || 0;
     const latestDispatchAt = Math.max(0, ...branches.map(relationAt));
-    const taskResults = facts.filter(fact => fact.work_item_id === workItemId &&
+    const taskResults = facts.filter(fact => canonicalItemId(fact.work_item_id) === workItemId &&
       ["work_result", "result"].includes(fact.type) && fact.evidence &&
       fact.evidence.confidence === "exact");
     const latestReturnAt = Math.max(0, ...merges.map(relationAt),
@@ -1039,21 +1089,25 @@ function projectLaneRegistry(model, delegations, focus){
     const retryEvidence = relations.some(relation =>
       ["retries", "retry_of", "failed_attempt"].includes(relation.type) &&
       supported(relation) && (relation.from === taskKey || relation.to === taskKey)) ||
-      facts.some(fact => fact.work_item_id === workItemId &&
+      facts.some(fact => canonicalItemId(fact.work_item_id) === workItemId &&
         ["retry", "failed_attempt"].includes(fact.source_kind) && fact.evidence &&
         fact.evidence.confidence === "exact");
     return {branch:strongest(branchRelations), merge:strongest(mergeRelations),
       dispatchCount:branches.length, latestDispatchAt, latestReturnAt, retryEvidence};
   };
   const taskLanes = taskIds.map(workItemId => {
-    const taskEvents = facts.filter(fact => fact.work_item_id === workItemId)
+    const taskEvents = facts.filter(fact => canonicalItemId(fact.work_item_id) === workItemId)
       .sort((a, b) => Number(b.at) - Number(a.at));
     const contributors = (contributorByTask.get(workItemId) || [])
       .sort((a, b) => String(a.worker).localeCompare(String(b.worker)));
     const topology = topologyForTask(workItemId);
     const head = headByItem.get(workItemId) || null;
+    const headFact = head && factById.get(head.latest_meaningful_event) || null;
     const working = contributors.length > 0 || taskEvents.some(fact =>
-      fact.current_state === true && fact.evidence && fact.evidence.confidence === "exact");
+      fact.current_state === true && fact.evidence && fact.evidence.confidence === "exact") ||
+      Boolean(headFact && headFact.type === "stage_transition" &&
+        headFact.source_kind === "child_assignment" && headFact.evidence &&
+        headFact.evidence.confidence === "exact");
     const unreturned = topology.dispatchCount > 0 &&
       topology.latestDispatchAt > topology.latestReturnAt;
     const returned = topology.latestReturnAt > 0 && !unreturned;
@@ -1061,7 +1115,7 @@ function projectLaneRegistry(model, delegations, focus){
     return {key:`task:${workItemId}`, kind:"task", workItemId,
       label:(itemById.get(workItemId) || {}).label || "Task",
       events:taskEvents, contributors, item:itemById.get(workItemId) || {},
-      head, headFact:head && factById.get(head.latest_meaningful_event) || null,
+      head, headFact,
       current, working, unreturned, returned, dispatchCount:topology.dispatchCount,
       retryEvidence:topology.retryEvidence,
       branch:topology.branch, merge:topology.merge};
@@ -1264,12 +1318,15 @@ function projectRelationEdge(relations){
 
 function projectGlobalEvents(model, registry, focus){
   const relations = Array.isArray(model.relations) ? model.relations : [];
+  const facts = Array.isArray(model.facts) ? model.facts : [];
   const events = [];
   const foLane = registry.laneByKey.get(registry.foKey);
-  (foLane && foLane.directions || []).forEach(fact => {
+  (foLane && foLane.directions || []).forEach((fact, index) => {
     const episode = foLane.episodeByFact.get(fact.fact_id);
     events.push({eventId:fact.fact_id, at:Number(fact.at) || 0, kind:"direction",
       meaning:fact.summary, fact, lane:foLane, branch:"none", merge:"none",
+      rationale:projectDirectionRationale(fact.summary), relations:[],
+      suppressed:index === 0 ? foLane.suppressedDirections : [],
       causal:episode ? (String(episode.confidence || "").includes("derived")
         ? "derived" : "solid") : "none"});
   });
@@ -1281,20 +1338,23 @@ function projectGlobalEvents(model, registry, focus){
     .sort((a, b) => Number(b.at) - Number(a.at))[0];
   if(observed) events.push({eventId:observed.fact_id, at:Number(observed.at) || 0,
     kind:"observed_goal", meaning:observed.summary, fact:observed, lane:foLane,
-    branch:"none", merge:"none"});
+    branch:"none", merge:"none", relations:[],
+    rationale:"Changes understanding of the observed goal."});
   if(focus && focus.state !== "working"){
     const finalOutput = foContext.find(fact => ["final_output", "result"].includes(fact.type));
     if(finalOutput) events.push({eventId:finalOutput.fact_id, at:Number(finalOutput.at) || 0,
       kind:"result", meaning:finalOutput.summary, fact:finalOutput, lane:foLane,
-      branch:"none", merge:"none"});
+      branch:"none", merge:"none", relations:[],
+      rationale:"Changes understanding of an observed outcome."});
   }
   const linkedReactionIds = new Set([...(foLane && foLane.episodeByFact.values() || [])]
     .map(episode => episode.adaptation_fact));
-  foContext.filter(fact => linkedReactionIds.has(fact.fact_id) &&
+  facts.filter(fact => linkedReactionIds.has(fact.fact_id) &&
     ["result", "decision", "final_output"].includes(fact.type)).forEach(fact => {
       if(!events.some(event => event.eventId === fact.fact_id)) events.push({
         eventId:fact.fact_id, at:Number(fact.at) || 0, kind:projectEventKind(fact) || "result",
-        meaning:fact.summary, fact, lane:foLane, branch:"none", merge:"none"
+        meaning:fact.summary, fact, lane:foLane, branch:"none", merge:"none", relations:[],
+        rationale:"Changes understanding of a supported reaction or outcome."
       });
     });
   registry.lanes.filter(lane => lane.kind === "task").forEach(lane => {
@@ -1311,10 +1371,23 @@ function projectGlobalEvents(model, registry, focus){
         (kind === "dispatch" ? fact.summary || "Dispatched" :
           fact.summary || projectTaskTitle(kind));
       events.push({eventId:fact.fact_id, at:Number(fact.at) || 0, kind, meaning, fact, lane,
-        branch:projectRelationEdge(branchRelations), merge:projectRelationEdge(mergeRelations)});
+        branch:projectRelationEdge(branchRelations), merge:projectRelationEdge(mergeRelations),
+        relations:branchRelations.concat(mergeRelations),
+        rationale:kind === "dispatch" ? "Changes understanding of assigned work." :
+          (kind === "progress" ? "Changes understanding of work progress." :
+            (kind === "decision" ? "Changes understanding of a recorded decision." :
+              "Changes understanding of an observed outcome."))});
     });
   });
-  return events.sort((a, b) => b.at - a.at || a.eventId.localeCompare(b.eventId));
+  const seenDispatches = new Set();
+  return events.sort((a, b) => b.at - a.at || a.eventId.localeCompare(b.eventId))
+    .filter(event => {
+      if(event.kind !== "dispatch") return true;
+      const key = `${event.lane.key}\n${String(event.meaning || "").toLowerCase().trim()}`;
+      if(seenDispatches.has(key)) return false;
+      seenDispatches.add(key);
+      return true;
+    });
 }
 
 function projectVisibleRegistry(registry, mode){
@@ -1357,6 +1430,44 @@ function projectTaskSource(lane, fact){
     body, "pc-trail-history")};
 }
 
+function projectGlobalEventDetails(event, lane){
+  const fact = event.fact || {};
+  const evidence = fact.evidence || {};
+  const iso = Number(fact.at) ? new Date(Number(fact.at) * 1000).toISOString() : "";
+  const bindings = lane.kind === "task" && Array.isArray(lane.item.source_bindings)
+    ? lane.item.source_bindings : [];
+  const relations = Array.isArray(event.relations) ? event.relations : [];
+  const relationText = relations.map(relation => relation.type === "dispatches_to"
+    ? `Exact dispatch · First Officer → ${projectTaskTitle(lane.label)}`
+    : (relation.type === "returns_to"
+      ? `Exact return · ${projectTaskTitle(lane.label)} → First Officer`
+      : String(relation.type || "supported relation").replace(/_/g, " ")));
+  const matchingAssignments = event.kind === "dispatch" ? lane.events.filter(candidate =>
+    projectEventKind(candidate) === "dispatch" &&
+    String(candidate.summary || "").trim().toLowerCase() ===
+      String(event.meaning || "").trim().toLowerCase()) : [];
+  const suppressed = Array.isArray(event.suppressed) ? event.suppressed : [];
+  const suppressedDetails = suppressed.length ? projectDisclosure(
+    `timeline-suppressed:${event.eventId}`, `Source-only messages · ${suppressed.length}`,
+    `<div class="pc-entry-source-list">${suppressed.map(row => {
+      const rowIso = Number(row.at) ? new Date(Number(row.at) * 1000).toISOString() : "time unavailable";
+      return `<div><time>${esc(rowIso)}</time> · ${esc(row.summary || row.type)}</div>`;
+    }).join("")}</div>`, "pc-entry-suppressed") : "";
+  return `<div class="pc-entry-details">` +
+    `<div><b>Why included</b> · ${esc(event.rationale || "Changes understanding of the work.")}</div>` +
+    `<div><b>Source</b> · ${esc(evidence.source || fact.source_kind || "source unavailable")}` +
+    (evidence.confidence ? ` · ${esc(evidence.confidence)}` : "") +
+    (iso ? ` · <time datetime="${esc(iso)}">${esc(iso)}</time>` : "") + `</div>` +
+    (relationText.length ? `<div><b>Relation</b> · ${relationText.map(esc).join("<br>")}</div>` : "") +
+    (bindings.length ? `<div><b>Task source</b> · ${bindings.map(binding =>
+      `${esc(binding.source || "task source")} · ${esc(binding.value || "value unavailable")}`
+    ).join("<br>")}</div>` : "") +
+    (matchingAssignments.length > 1 ? `<div><b>Assignment records</b> · ` +
+      `${matchingAssignments.length} exact records; ${matchingAssignments.length - 1} older matching ` +
+      `record${matchingAssignments.length === 2 ? "" : "s"} folded here.</div>` : "") +
+    suppressedDetails + `</div>`;
+}
+
 function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){
   const lane = registry.laneByKey.get(event.lane.key);
   const fact = event.fact || {};
@@ -1380,22 +1491,24 @@ function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){
   const title = lane.kind === "fo" ? "First Officer" : projectTaskTitle(lane.label);
   const source = lane.kind === "task" && first ? projectTaskSource(lane, fact) :
     {binding:"", html:""};
-  const body = `<div class="pc-trail-top">` +
+  const visible = `<div class="pc-trail-summary"><div class="pc-trail-top">` +
     (first ? `<strong class="pc-lane-title">${esc(title)}</strong>` :
       `<span class="pc-event-kind">${esc(projectTaskTitle(event.kind))}</span>`) +
     (first ? `<span>${esc(meta)}</span>` : "") +
     `</div><div class="pc-trail-result">${esc(event.meaning)}</div>` +
     (secondary ? `<div class="pc-trail-quiet">${esc(secondary)}</div>` : "") +
     (attempts ? `<div class="pc-trail-quiet" data-dispatch-count="${dispatchCount}">${esc(attempts)}</div>` : "") +
-    projectFactEvidence(fact, `semantic-event:${event.eventId}`) + source.html;
+    `</div>`;
+  const body = projectDisclosure(`timeline-event:${event.eventId}`, visible,
+    projectGlobalEventDetails(event, lane), "pc-timeline-event");
   const attributes = `data-event-id="${esc(event.eventId)}" data-semantic-kind="${esc(event.kind)}"` +
+    ` data-inclusion-rationale="${esc(event.rationale || "changes work understanding")}"` +
     (lane.kind === "fo" ? (event.kind === "direction"
       ? ` data-steering-state="${event.causal && event.causal !== "none" ? "paired" : "unpaired"}"` +
         ` data-causal-edge="${esc(event.causal || "none")}"` : "") :
       ` data-assignment-lane="${first ? "task-head" : "task-event"}"` +
       ` data-work-item="${esc(lane.workItemId)}" data-task-current="${lane.current ? "true" : "false"}"` +
       (first ? ` data-trail-head="${esc(lane.head && lane.head.status || "latest")}"` : "") +
-      ` data-branch-edge="${esc(event.branch)}" data-merge-edge="${esc(event.merge)}"` +
       (stage ? ` data-work-stage="${esc(stage)}"` : "") +
       (source.binding ? ` data-workflow-binding="${esc(source.binding)}"` : ""));
   return projectGraphRow(d, event.at, event.kind === "direction" ? "steering" : "event",
@@ -1667,7 +1780,5 @@ function projectView(d, draft){
     `${projectActivity(d, group, focus)}</div>` +
     (sessions ? `<div class="pc-other"><div class="pc-active-head"><h3>Other project sessions</h3>` +
       `<span>surrounding context</span></div>${sessions}</div>` : "") +
-    `</section>` +
-    projectDisclosure("evidence-limits", "Evidence / limits",
-      projectEvidenceLimits(group, focus), "pc-sources");
+    `</section>`;
 }

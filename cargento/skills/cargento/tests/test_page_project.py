@@ -206,7 +206,7 @@ console.log(JSON.stringify({
   goalFirst: h.indexOf("add focus") < h.indexOf("Work & steering") &&
     !h.includes("Observed goal") && !h.includes("Goal · derived"),
   mirrorDrilldown: h.includes('data-calm="project-session-focus" data-arg="claude:aaa1"'),
-  secondary: h.indexOf("Evidence / limits") > h.indexOf("Other project sessions")
+  secondary: h.includes("Other project sessions") && !h.includes("Evidence / limits")
 }));
 """
         out = self.run_project(checks)
@@ -344,7 +344,8 @@ console.log(JSON.stringify({
   scoped: h.includes("Observed goal · stale") &&
     !h.includes('data-semantic-kind="observed_goal"'),
   separate: h.indexOf("<b>Focus</b>") < h.indexOf("Observed goal · stale</b> — Derived session goal"),
-  noOverwrite: h.includes("Browser focus is operator-authored"),
+  noOverwrite: !h.includes("Evidence / limits") &&
+    h.indexOf("<b>Focus</b>") < h.indexOf("Observed goal · stale"),
   once: h.split("Derived session goal").length - 1 === 1 &&
     !h.includes('class="pc-observer"') && !h.includes("Goal · derived")
 }));
@@ -528,8 +529,7 @@ const overlay = __els.app.innerHTML;
 console.log(JSON.stringify({
   clear: clear.includes("Working</strong><span>1 task active</span>") &&
     !clear.includes("no request") && !clear.includes('class="pc-needs"') &&
-    clear.indexOf("does not prove unblocked") >
-      clear.indexOf("Evidence / limits") &&
+    !clear.includes("Evidence / limits") &&
     clear.includes('data-operator-state="working"'),
   exactOnly: !clear.includes("Choose the release path?") &&
     asked.includes("Needs you</strong><span>Choose the release path?</span>") &&
@@ -588,13 +588,12 @@ console.log(JSON.stringify({
     !h.includes("reasoning max") &&
     h.split("Shape the focused mirror").length - 1 === 1,
   workflowBoundary: !h.includes("workflow stage unavailable") &&
-    !h.includes("open-block reading unavailable") &&
-    h.includes("Stage and block are omitted when absent"),
+    !h.includes("open-block reading unavailable") && !h.includes("Evidence / limits"),
   attention: !h.includes("no request") && !h.includes("Needs captain"),
-  steering: h.includes("Operator intent") && h.includes("Keep the project as context") &&
+  steering: h.includes("First Officer") && h.includes("Keep the project as context") &&
     h.includes("timestamped non-meta user-role record") && h.includes("1970-01-02T03:46:30.000Z"),
   identity: h.includes("codex:focus-1"),
-  operatorPrecedence: h.includes("Browser focus is operator-authored"),
+  operatorPrecedence: h.indexOf("<b>Focus</b>") < h.indexOf("Observed goal"),
   noDuplicateObserver: !h.includes('class="pc-observer"') &&
     !h.includes("Derived snapshot")
 }));
@@ -716,7 +715,7 @@ console.log(JSON.stringify({
   lanes:h.includes('class="pc-lane-title">Project cockpit</strong><span>Working · shaping') &&
     h.includes('class="pc-lane-title">Session origin</strong><span>Working · shaping'),
   explore:h.includes('data-workflow-binding="/repo/.spacedock/explore"') &&
-    h.includes("workflow explore") && !h.includes("workflow dev"),
+    h.includes("/repo/.spacedock/explore") && !h.includes("/repo/.spacedock/dev"),
   noDuplicate:!h.includes('data-semantic-burst="2"') && !h.includes("2 entities touched")
 }));
 """
@@ -771,7 +770,7 @@ console.log(JSON.stringify({
     html.includes('data-lane-key="task:workflow:dev"') &&
     html.includes('data-workflow-binding="/repo/.spacedock/explore"') &&
     html.includes('data-workflow-binding="/repo/.spacedock/dev"'),
-  inspectable:html.includes("workflow explore") && html.includes("workflow dev")
+  inspectable:html.includes("/repo/.spacedock/explore") && html.includes("/repo/.spacedock/dev")
 }));
 """
         out = self.run_project(checks)
@@ -1077,29 +1076,25 @@ const detail = (control, open) => ({open, getAttribute(name){
   return name === "data-pc-disclosure" ? control : null;
 }});
 const last = detail("last-output", true);
-const eventEvidence = detail("fact:semantic-event:dispatch-focus-1:dispatch-focus-1", true);
-const evidence = detail("evidence-limits", true);
-__els.app.querySelectorAll = () => [last, eventEvidence, evidence];
+const timelineEvent = detail("timeline-event:dispatch-focus-1", true);
+__els.app.querySelectorAll = () => [last, timelineEvent];
 render(Object.assign({}, d, {generated:100001}));
 const firstOpen = __els.app.innerHTML.includes('class="pc-last-output" open') &&
-  __els.app.innerHTML.includes('class="pc-event-evidence" open') &&
-  __els.app.innerHTML.includes('class="pc-sources" open');
-eventEvidence.open = false;
+  __els.app.innerHTML.includes('class="pc-timeline-event" open') &&
+  !__els.app.innerHTML.includes("Evidence / limits");
+timelineEvent.open = false;
 render(Object.assign({}, d, {generated:100002}));
 const explicitClose = __els.app.innerHTML.includes('class="pc-last-output" open') &&
-  !__els.app.innerHTML.includes('class="pc-event-evidence" open') &&
-  __els.app.innerHTML.includes('class="pc-sources" open');
+  !__els.app.innerHTML.includes('class="pc-timeline-event" open');
 __els.app.querySelectorAll = () => [];
 projectQuerySession = "codex:focus-2";
 render(Object.assign({}, d, {generated:100003}));
 const secondClosed = !__els.app.innerHTML.includes('class="pc-last-output" open') &&
-  !__els.app.innerHTML.includes('class="pc-event-evidence" open') &&
-  !__els.app.innerHTML.includes('class="pc-sources" open');
+  !__els.app.innerHTML.includes('class="pc-timeline-event" open');
 projectQuerySession = "codex:focus-1";
 render(Object.assign({}, d, {generated:100004}));
 const firstRestored = __els.app.innerHTML.includes('class="pc-last-output" open') &&
-  !__els.app.innerHTML.includes('class="pc-event-evidence" open') &&
-  __els.app.innerHTML.includes('class="pc-sources" open');
+  !__els.app.innerHTML.includes('class="pc-timeline-event" open');
 console.log(JSON.stringify({firstOpen, explicitClose, secondClosed, firstRestored}));
 """
         out = self.run_project(
@@ -1149,6 +1144,10 @@ __els.app.querySelectorAll = selector => selector === "details[data-pc-disclosur
   ? details : __controls();
 const task = "workflow:returned";
 const context = {observers:[], events:[], semantic:{facts:[
+  {fact_id:"audit", at:99992, type:"user_message", summary:"Audit each timeline entry",
+    evidence:{source:"root transcript", confidence:"exact"}},
+  {fact_id:"ack", at:99989, type:"user_message", summary:"ok.",
+    evidence:{source:"root transcript", confidence:"exact"}},
   {fact_id:"dispatch", at:99990, type:"prepared_dispatch", source_kind:"prepared_dispatch",
     summary:"Dispatch task", work_item_id:task,
     evidence:{source:"dispatch artifact", confidence:"exact"}},
@@ -1167,7 +1166,9 @@ const context = {observers:[], events:[], semantic:{facts:[
   {event_id:"history-result", event_type:"result", at:99991,
     source_ref:"result", source_identity:"codex:focus-1", work_binding:task,
     summary:"Task returned"}
-]}, projections:{operator_intents:[],
+]}, projections:{operator_intents:[
+    {projection_id:"audit", at:99992, summary:"Audit each timeline entry", derived_from:"audit"},
+    {projection_id:"ack", at:99989, summary:"ok.", derived_from:"ack"}],
   steering_episodes:[], trail_heads:[{work_item_id:task, status:"outcome",
     latest_meaningful_event:"result", dispatch_count:1}],
   activity:{nodes:[{kind:"work", at:99991, work_item_ids:[task]}]}}},
@@ -1180,12 +1181,12 @@ const d = payload([mk({project:"repo/proj", harness:"codex", sid:"focus-1",
 Object.assign(d, {ask:true, asks:[]});
 render(d);
 const before = details.find(row =>
-  row.getAttribute("data-pc-disclosure") === "semantic-source-history");
+  row.getAttribute("data-pc-disclosure") === "timeline-suppressed:audit");
 usageCfgOpen = true;
 __fire("click", {target:before.summary});
 const pastOpen = () => {
   const row = details.find(item =>
-    item.getAttribute("data-pc-disclosure") === "semantic-source-history");
+    item.getAttribute("data-pc-disclosure") === "timeline-suppressed:audit");
   return row === undefined ? null : row.open;
 };
 const sameClick = pastOpen();
@@ -1212,7 +1213,7 @@ const refreshed = pastOpen();
 await __settle(); await __settle();
 const afterRefreshContext = pastOpen();
 const current = details.find(row =>
-  row.getAttribute("data-pc-disclosure") === "semantic-source-history");
+  row.getAttribute("data-pc-disclosure") === "timeline-suppressed:audit");
 usageCfgOpen = true;
 __fire("click", {target:current.summary});
 const explicitlyClosed = pastOpen() === false;
@@ -1270,22 +1271,19 @@ const d = payload([mk({project:"repo/proj", harness:"codex", sid:"focus-1",
 Object.assign(d, {ask:true, asks:[]});
 render(d);
 const h = __els.app.innerHTML;
-const primary = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
-const evidence = h.slice(h.indexOf("Evidence / limits"));
+const primary = h.slice(h.indexOf("Work & steering"));
 console.log(JSON.stringify({
   truthfulPrimary:primary.includes("newest first") && !primary.includes("24h history") &&
-    !primary.includes("Semantic work history · 69 source events"),
-  retained:evidence.includes("Semantic work history · 69 source events") &&
-    evidence.includes("23h 48m observed span") && evidence.includes("24h retention"),
-  allDiscoverable:(evidence.match(
-    /data-pc-disclosure="fact:source-history:fo:event-/g) || []).length === 69 &&
-    evidence.includes("Source event 1") && evidence.includes("Source event 69"),
+    !primary.includes("Semantic work history · 69 source events") &&
+    !primary.includes("Evidence / limits"),
+  retained:primary.includes("Source event 1") && primary.includes("Source event 63") &&
+    (primary.match(/class="pc-timeline-event"/g) || []).length === 63,
+  allDiscoverable:(primary.match(/data-inclusion-rationale=/g) || []).length === 63 &&
+    (primary.match(/class="pc-timeline-event"/g) || []).length ===
+      (primary.match(/data-inclusion-rationale=/g) || []).length,
   projectionBounded:semantic.projections.activity.history_nodes.length === 5 &&
     semantic.projections.activity.steering.length === 3,
-  inventory:evidence.includes("Retained</b> · 63 directions · 6 assignments") &&
-    evidence.includes("Primary</b> · 5 heads · 3 directions") &&
-    evidence.includes("Absent</b> · task returns · checkpoints · progress") &&
-    evidence.includes("Unavailable</b> · gate history")
+  inventory:!primary.includes("Retained</b>") && !primary.includes("24h retention")
 }));
 """
         out = self.run_project(
@@ -1337,14 +1335,13 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   graph: h.includes('data-model="fact-projection"') && !h.includes("What you asked") &&
     !h.includes("What happened"),
-  instruction: h.includes("Operator intent") && h.includes("Prepare release path") &&
+  instruction: h.includes("First Officer") && h.includes("Prepare release path") &&
     h.includes("timestamped non-meta user-role record") && !h.includes("captain instruction"),
   decision: h.includes('data-trail-head="decision"') && h.includes("shaping · approve"),
   unrelated: !h.includes("unrelated read") && !h.includes("caused") &&
     !h.includes('data-causal-link="supported"') && !h.includes("Work interval") &&
-    h.includes("chronology alone is not causality"),
-  boundary: h.indexOf("Lifecycle-only transitions stay hidden") >
-    h.indexOf("Evidence / limits"),
+    !h.includes('data-branch-edge=') && !h.includes('data-merge-edge='),
+  boundary: !h.includes("Evidence / limits") && h.includes("Why included"),
   noMockTags: !h.includes("generated</span>") && !h.includes("consistency")
 }));
 """
@@ -1491,7 +1488,7 @@ Object.assign(d, {ask: true, asks: []});
 projectGraphModeBySession.set("pi:asr-root", "all");
 render(d);
 const h = __els.app.innerHTML;
-const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
+const graph = h.slice(h.indexOf("Work & steering"));
 const visibleText = graph;
 const primaryText = Array.from(visibleText.matchAll(
   /<div class="pc-trail-top">([\\s\\S]*?)<\\/div>/g
@@ -1591,8 +1588,8 @@ console.log(JSON.stringify({
     current.includes("Session interaction origin") &&
     current.includes("No active worker · no return observed"),
   noHistory:!html.includes('data-activity-band="earlier-meaningful"'),
-  topology:(html.match(/data-branch-edge="solid"/g) || []).length === 4 &&
-    !html.includes('data-merge-edge="solid"'),
+  topology:!html.includes('data-branch-edge=') && !html.includes('data-merge-edge=') &&
+    html.includes("Exact dispatch · First Officer → Project cockpit"),
   attempts:current.includes("3 dispatches") && !current.includes("retries"),
   contributorLoss:withoutLive.laneByKey.get(`task:${cockpit}`).current === true &&
     withoutLive.laneByKey.get(`task:${cockpit}`).working === false &&
@@ -1891,8 +1888,8 @@ const exactBranchHtml = projectSemanticTimeline({generated:112}, Object.assign({
   {relations:[{from:"fo:codex:focus-1", to:"task:workflow:cockpit", type:"dispatches_to",
     evidence_ref:"dispatch", confidence:"structural"}]}), delegations, focus);
 console.log(JSON.stringify({
-  none:edge([]) === "none/none" &&
-    noRelation.includes('data-branch-edge="none" data-merge-edge="none"'),
+  none:edge([]) === "none/none" && !noRelation.includes('data-branch-edge=') &&
+    !noRelation.includes('data-merge-edge='),
   exactBranch:edge([{from:"fo:codex:focus-1", to:"task:workflow:cockpit", type:"dispatches_to",
     confidence:"structural"}]) === "solid/none",
   derivedBranch:edge([{from:"fo:codex:focus-1", to:"task:workflow:cockpit", type:"dispatches_to",
@@ -1909,8 +1906,9 @@ console.log(JSON.stringify({
       confidence:"structural"}]) === "none/none",
   eventGrammar:!oneStateHtml.includes('data-lane-connect="next"') &&
     noRelation.includes('data-lane-connect="next"') &&
-    exactBranchHtml.includes('data-branch-edge="solid"') &&
-    !exactBranchHtml.includes('data-merge-edge="solid"')
+    exactBranchHtml.includes("<b>Relation</b>") &&
+    !exactBranchHtml.includes('data-branch-edge=') &&
+    !exactBranchHtml.includes('data-merge-edge=')
 }));
 """
         out = self.run_project(checks)
@@ -1962,13 +1960,13 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
+const graph = h.slice(h.indexOf("Work & steering"));
 console.log(JSON.stringify({
   visible: graph.includes("Show current intents") && graph.includes("Keep the lane grammar"),
   diamonds: (graph.match(/data-steering-state="unpaired"/g) || []).length === 2 &&
     (graph.match(/data-lane-connect="next"/g) || []).length === 2 &&
-    !graph.includes("Keep the lane grammar please") && !graph.includes(">ok.<") &&
-    !graph.includes("env | grep TMUX"),
+    !graph.includes('data-event-id="i2"') && !graph.includes('data-event-id="i4"') &&
+    !graph.includes('data-event-id="i5"'),
   noEdges: (graph.match(/data-causal-edge="none"/g) || []).length === 2 &&
     !graph.includes('data-causal-edge="solid"') && !graph.includes('data-causal-edge="derived"')
 }));
@@ -2008,19 +2006,16 @@ const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const activeHtml = __els.app.innerHTML;
-const activeGraph = activeHtml.slice(activeHtml.indexOf("Work & steering"),
-  activeHtml.indexOf("Evidence / limits"));
+const activeGraph = activeHtml.slice(activeHtml.indexOf("Work & steering"));
 projectAction("project-graph-mode", "all");
 const h = __els.app.innerHTML;
-const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
-const evidence = h.slice(h.indexOf("Evidence / limits"));
+const graph = h.slice(h.indexOf("Work & steering"));
 console.log(JSON.stringify({
   finalPrimary: graph.includes("Search index shipped") && graph.includes('data-trail-head="outcome"'),
   historicalHidden: !activeGraph.includes("task is DONE") &&
     !activeGraph.includes("Search index shipped") && !activeGraph.includes("42 validation checks passed"),
   historyPreserved: graph.includes("task is DONE") &&
-    evidence.includes("42 validation checks passed") &&
-    evidence.includes("requested · current state unknown"),
+    !graph.includes("42 validation checks passed") && !h.includes("Evidence / limits"),
   noFalseCurrent: !graph.includes('data-trail-head="started"') &&
     !graph.includes("current state unverified")
 }));
@@ -2047,7 +2042,7 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const primary = h.slice(0, h.indexOf("Evidence / limits"));
+const primary = h;
 const count = phrase => h.split(phrase).length - 1;
 console.log(JSON.stringify({
   omittedEmpty: !primary.includes("Active child hierarchy") &&
@@ -2055,11 +2050,11 @@ console.log(JSON.stringify({
     !primary.includes("open-block reading unavailable"),
   concisePrimary: !primary.includes("no request") && !primary.includes("not proof") &&
     !primary.includes("source unavailable") && primary.includes("1 task active"),
-  limitsOnce: count("Browser focus is operator-authored") === 1 &&
-    count("does not prove unblocked") === 1 &&
-    count("chronology alone is not causality") === 1 &&
-    count("Stage and block are omitted when absent") === 1,
-  oneEvidence: count("Evidence / limits") === 1
+  limitsOnce: count("Browser focus is operator-authored") === 0 &&
+    count("does not prove unblocked") === 0 &&
+    count("chronology alone is not causality") === 0 &&
+    count("Stage and block are omitted when absent") === 0,
+  oneEvidence: count("Evidence / limits") === 0
 }));
 """
         out = self.run_project(
@@ -2100,8 +2095,7 @@ Object.assign(d, {ask: true, asks: []});
 projectGraphModeBySession.set("pi:asr-root", "all");
 render(d);
 const h = __els.app.innerHTML;
-const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
-const evidence = h.slice(h.indexOf("Evidence / limits"));
+const graph = h.slice(h.indexOf("Work & steering"));
 console.log(JSON.stringify({
   tree: graph.split('data-assignment-lane="task-head"').length - 1 === 0 &&
     graph.includes('class="pc-unbound-context"') &&
@@ -2113,10 +2107,10 @@ console.log(JSON.stringify({
   noRoster: !h.includes("Assignments</span>") && !h.includes('class="pc-assignment'),
   lifecycleHidden: !graph.includes("child task started") && !graph.includes("child completed") &&
     !graph.includes("Compile release") && !graph.includes("Codex child rollout lifecycle"),
-  collapsed: evidence.includes("4 typed child lifecycle records") &&
-    evidence.includes("2 task starts · 2 completions · 0 interruptions"),
+  collapsed: !h.includes("4 typed child lifecycle records") &&
+    !h.includes("2 task starts · 2 completions · 0 interruptions"),
   labelWithoutOutcome: !graph.includes("Compile release") &&
-    evidence.includes("Lifecycle labels without demonstrated results stay telemetry")
+    !h.includes("Lifecycle labels without demonstrated results stay telemetry")
 }));
 """
         out = self.run_project(
@@ -2210,17 +2204,16 @@ Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
 const operator = h.slice(h.indexOf('class="pc-operator"'), h.indexOf("Work & steering"));
-const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
-const evidence = h.slice(h.indexOf("Evidence / limits"));
+const graph = h.slice(h.indexOf("Work & steering"));
 console.log(JSON.stringify({
   noFalseRoster: !operator.includes("Assignments") &&
     !operator.includes('data-assignment-state="awaiting_result"'),
   currentWork: graph.includes("Fix current encoder fault") &&
     graph.includes('data-task-current="false"') &&
     !graph.includes("recently dispatched · current state not confirmed"),
-  historyCollapsed: evidence.includes("Past dispatches without observed result · 12") &&
-    evidence.includes("show historical request evidence") &&
-    graph.includes("Historical dispatch 1") && graph.includes('data-graph-mode="all"')
+  historyCollapsed: !h.includes("Past dispatches without observed result") &&
+    graph.includes("Historical dispatch 1") && graph.includes('data-graph-mode="all"') &&
+    graph.includes("Why included")
 }));
 """
         out = self.run_project(
@@ -2555,8 +2548,8 @@ console.log(JSON.stringify({
   foSpan:graphRows.slice(0, 3).map(row => row.includes('data-flow-key="fo:codex:focus-1"')),
   taskSpan:graphRows.slice(1, 4).map(row => row.includes(
     'data-flow-key="task:workflow:project-cockpit"')),
-  exactDispatch:graphRows[1].includes('data-branch-edge="solid"') &&
-    !graphRows[3].includes('data-branch-edge="solid"')
+  relationDetail:graphRows[1].includes("Exact dispatch · First Officer → Project cockpit") &&
+    !graphRows.some(row => row.includes('data-branch-edge=') || row.includes('data-merge-edge='))
 }));
 """
         out = self.run_project(checks)
@@ -2572,7 +2565,7 @@ console.log(JSON.stringify({
         )
         self.assertEqual([True, True, True], out["foSpan"])
         self.assertEqual([True, True, True], out["taskSpan"])
-        self.assertTrue(out["exactDispatch"])
+        self.assertTrue(out["relationDetail"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_active_all_filter_preserves_lane_keys_and_semantic_history(self) -> None:
@@ -2622,8 +2615,11 @@ console.log(JSON.stringify({
     allHtml.includes("Origin probe returned"),
   stable:activeHtml.includes('data-lane-key="task:workflow:project-cockpit"') &&
     allHtml.includes('data-lane-key="task:workflow:project-cockpit"'),
-  filtered:!activeHtml.includes(">ok.<") && !allHtml.includes(">ok.<") &&
-    !activeHtml.includes("env | grep TMUX") && !allHtml.includes("env | grep TMUX"),
+  filtered:!activeHtml.includes('data-event-id="ack"') &&
+    !allHtml.includes('data-event-id="ack"') &&
+    !activeHtml.includes('data-event-id="transport"') &&
+    !allHtml.includes('data-event-id="transport"') &&
+    activeHtml.includes("Source-only messages · 2") && allHtml.includes("env | grep TMUX"),
   noStructuralCompression:!activeHtml.includes('class="pc-event-scroll"') &&
     !allHtml.includes('class="pc-event-scroll"')
 }));
@@ -2635,6 +2631,141 @@ console.log(JSON.stringify({
         self.assertTrue(out["stable"])
         self.assertTrue(out["filtered"])
         self.assertTrue(out["noStructuralCompression"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_live_ledger_is_bounded_rebinds_alias_and_has_entry_owned_details(self) -> None:
+        checks = """
+const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1",
+  active:true, state:"working", last_activity:304000});
+const canonical = "workflow:df5a30b2a535380b0c33:project-cockpit";
+const unbound = "workflow-unbound:project-cockpit";
+const origin = "workflow:df5a30b2a535380b0c33:session-interaction-origin";
+const retainedIds = [
+  "fact:21a8550762c3845d", "fact:82a8984895279e64", "fact:738457077778c743",
+  "fact:45aa76b95428197e", "fact:6e7aa1d11f668c05", "fact:73ea27e2e5db9273",
+  "fact:63bd1cd638fbe5e0", "fact:b4acc86e934536ac", "fact:413db8bf0e75803f",
+  "fact:db9189af8e1aa1f1", "fact:a479a81d57875894", "fact:4205df239b956b3c",
+  "fact:b7e163a322bbb958", "fact:de5c86355543403d", "fact:6c14e9d645e0dcfa",
+  "fact:5b040bbb6ba97b3b", "fact:87de679d9cca1303", "fact:2cc265de3ac24202",
+  "fact:782f80138452e30e", "fact:ba3aad3120ff2c99", "fact:a7a43358aed222ca",
+  "fact:1a3441d444051aaf", "fact:de02775f810e1c40", "fact:e0ba4b0ee1cfdb60",
+  "fact:de4e4c95dcdd24fc", "fact:938c40ff2ec3e9ef", "fact:d5812713e5f42ccd",
+  "fact:1deb46a1a7f17234", "fact:fea6267d2d9026d3", "fact:5823f7f697ae7a12",
+  "fact:1c555c0fa04f43fa", "fact:e95e8d3582ee2240", "fact:79e295352a3f7a62",
+  "fact:560dc284cf8fedf0", "fact:5620d89de9c17f0a", "fact:cf383683d84e15c0",
+  "fact:100ee43737f23ecc", "fact:362d970fddedaf22", "fact:011ecf3bbe2cd49b",
+  "fact:dc4ca983e1a9d74d", "fact:85ea72266a5dadd1", "fact:55f401044ae034ce",
+  "fact:b2714f3a14ea7f7f"
+];
+const topSummaries = [
+  "look at each entry on the timeline, and justify it belongs there.",
+  "we just recovered from crash.",
+  "great, except they should interleve by time, that's the point.",
+  "do we currently model meaningful direction / correction and task / subagent events?",
+  "and we definitely have a lot of disjoint steers not like 62 sourced events compressed to FO"
+];
+const directionFacts = retainedIds.map((fact_id, index) => ({fact_id,
+  at:303000 - index * 1000, type:"user_message",
+  summary:topSummaries[index] || `intent${index} changes a distinct product requirement`,
+  evidence:{source:"root transcript", confidence:"exact"}}));
+const removed = [
+  ["fact:8c82b1d6e4197fb7", "interleved events?"],
+  ["fact:381d10a1d28f259e", "if i click last."],
+  ["fact:66322f9fbba50308", "do 5 more rounds of mirror reflection."],
+  ["fact:a76dcfef0cf06391", "oh now i see it."],
+  ["fact:b7747c34c4f02f20", "not sure if this is useful: https://github.com/ampcode/wmux"],
+  ["fact:cb07236aabf5b01d", "run it, and continue the loop."],
+  ["fact:728ee4a553f90f74", "id you run the server?"],
+  ["fact:a0ec17a49525f456", "we just recovered from crash."],
+  ["fact:ff648881c8517e40", "read ~/git/spacedock-research/spacedock-strategy/projects/cargento/spec"],
+  ["fact:9cea848e43531e01", "look here: https://example.test/mock"],
+  ["fact:fedf4a634a700c37", "and tell me what you find in the mock"],
+  ["fact:8f7eacbdd39672d1", "continue the rounds."],
+  ["fact:0d3b8892d44f05c7", "ok let's try this"],
+  ["fact:1ee81765834e5640", "what is this?"],
+  ["fact:b4f74328254cdba0", "keep going"],
+  ["fact:1b0bd3c98f3ac7fc", "let's get that panel review"],
+  ["fact:45152d8410c089a4", "did you get a review from IA advisor and UX expert?"]
+].map(([fact_id, summary], index) => ({fact_id, summary, at:200000-index*1000,
+  type:"user_message", evidence:{source:"root transcript", confidence:"exact"}}));
+removed[0].at = 302500;
+const projectDispatches = ["dispatch-new", "dispatch-duplicate-a", "dispatch-duplicate-b",
+  "dispatch-duplicate-c"].map((fact_id, index) => ({fact_id, at:302000-index*100,
+  type:"prepared_dispatch", summary:"Project cockpit and remembered goal",
+  work_item_id:canonical, evidence:{source:"structured dispatch artifact", confidence:"exact"}}));
+const stage = {fact_id:"stage-live", at:304000, type:"stage_transition",
+  source_kind:"child_assignment", stage:"shaping", summary:"Project cockpit and remembered goal",
+  work_item_id:unbound, evidence:{source:"structured dispatch artifact", confidence:"exact"}};
+const originDispatch = {fact_id:"origin-dispatch", at:250000, type:"prepared_dispatch",
+  summary:"Session interaction origin", work_item_id:origin,
+  evidence:{source:"structured dispatch artifact", confidence:"exact"}};
+const facts = [stage, ...directionFacts, ...removed, ...projectDispatches, originDispatch];
+const operatorIntents = facts.filter(fact => fact.type === "user_message").map(fact => ({
+  projection_id:`intent:${fact.fact_id}`, at:fact.at, summary:fact.summary,
+  derived_from:fact.fact_id}));
+const model = {facts, work_items:[
+  {work_item_id:unbound, label:"Project cockpit", kind:"workflow_item",
+    source_bindings:[{source:"structured child assignment", value:"project-cockpit"}]},
+  {work_item_id:canonical, label:"project-cockpit", kind:"workflow_item",
+    source_bindings:[{source:"structured Spacedock dispatch artifact", value:"/tmp/dispatch.md"}]},
+  {work_item_id:origin, label:"session-interaction-origin", kind:"workflow_item",
+    source_bindings:[{source:"structured Spacedock dispatch artifact", value:"/tmp/origin.md"}]}
+], relations:[...projectDispatches.map(fact => ({type:"dispatches_to",
+  from:"fo:codex:focus-1", to:`task:${canonical}`, evidence_ref:fact.fact_id,
+  confidence:"exact"})), {type:"dispatches_to", from:"fo:codex:focus-1",
+  to:`task:${origin}`, evidence_ref:"origin-dispatch", confidence:"exact"}], projections:{
+  operator_intents:operatorIntents, steering_episodes:[], trail_heads:[
+    {work_item_id:unbound, status:"current stage", latest_meaningful_event:"stage-live"},
+    {work_item_id:canonical, status:"prepared", latest_meaningful_event:"dispatch-new"},
+    {work_item_id:origin, status:"prepared", latest_meaningful_event:"origin-dispatch"}],
+  activity:{nodes:[{kind:"work", at:304000, work_item_ids:[unbound]},
+    {kind:"work", at:302000, work_item_ids:[canonical]},
+    {kind:"work", at:250000, work_item_ids:[origin]}]}}};
+projectQuerySession = "codex:focus-1";
+const ledgerHtml = projectSemanticTimeline({generated:305000}, model, [], focus);
+const ledgerRows = [...ledgerHtml.matchAll(/<article class="pc-graph-row[\\s\\S]*?<\\/article>/g)]
+  .map(match => match[0]);
+const ledgerPrimary = ledgerHtml.split('data-activity-band="earlier-meaningful"')[0];
+const projectKeys = new Set(ledgerRows.filter(row => row.includes("Project cockpit"))
+  .map(row => (row.match(/data-lane-key="([^"]+)/) || [])[1]));
+console.log(JSON.stringify({
+  bounded:ledgerRows.length === 46 &&
+    (ledgerPrimary.match(/<article class="pc-graph-row/g) || []).length === 7 &&
+    ledgerHtml.includes("Earlier meaningful · 39"),
+  exactWorkingSet:ledgerRows.slice(0, 7).map(row =>
+    (row.match(/data-event-id="([^"]+)/) || [])[1]),
+  removed:removed.every(fact => !ledgerHtml.includes(`data-event-id="${fact.fact_id}"`)) &&
+    ledgerHtml.includes("Source-only messages · 17"),
+  canonical:projectKeys.size === 1 && projectKeys.has(`task:${canonical}`) &&
+    !ledgerHtml.includes(`data-lane-key="task:${unbound}"`),
+  assignmentFold:ledgerRows.filter(row => row.includes("Project cockpit and remembered goal")).length === 1 &&
+    ledgerHtml.includes("4 exact records; 3 older matching records folded here."),
+  entryOwned:(ledgerHtml.match(/class="pc-timeline-event"/g) || []).length === 46 &&
+    (ledgerHtml.match(/data-inclusion-rationale=/g) || []).length === 46 &&
+    ledgerHtml.includes("<b>Why included</b>") && ledgerHtml.includes("<b>Source</b>"),
+  railsOnly:!ledgerHtml.includes("Evidence / limits") && !ledgerHtml.includes('data-branch-edge=') &&
+    !ledgerHtml.includes('data-merge-edge=') && ledgerHtml.includes('data-flow-key=')
+}));
+"""
+        out = self.run_project(checks)
+        self.assertTrue(out["bounded"])
+        self.assertEqual(
+            [
+                "stage-live",
+                "fact:21a8550762c3845d",
+                "dispatch-new",
+                "fact:82a8984895279e64",
+                "fact:738457077778c743",
+                "fact:45aa76b95428197e",
+                "fact:6e7aa1d11f668c05",
+            ],
+            out["exactWorkingSet"],
+        )
+        self.assertTrue(out["removed"])
+        self.assertTrue(out["canonical"])
+        self.assertTrue(out["assignmentFold"])
+        self.assertTrue(out["entryOwned"])
+        self.assertTrue(out["railsOnly"])
 
 
 if __name__ == "__main__":
