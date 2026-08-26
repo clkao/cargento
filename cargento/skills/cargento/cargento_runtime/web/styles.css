@@ -748,20 +748,23 @@
   .pc-activity{padding:20px;border-bottom:1px solid var(--line2)}
   .pc-semantic-graph{min-width:0}
   .pc-semantic-timeline{min-width:0;position:relative;padding:4px 0}
-  .pc-graph-row{--lane-x:9px;display:grid;grid-template-columns:42px 64px minmax(0,1fr);align-items:start;min-height:48px}
+  .pc-lane-legend{display:grid;grid-template-columns:42px calc(var(--lane-count) * 44px) minmax(0,1fr);margin-bottom:3px}
+  .pc-lane-labels{grid-column:2;display:grid;grid-template-columns:repeat(var(--lane-count),minmax(0,1fr));font:var(--fs-2xs) var(--mono);color:var(--ink3);text-align:center}
+  .pc-lane-labels span{padding:0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pc-graph-row{display:grid;grid-template-columns:42px calc(var(--lane-count) * 44px) minmax(0,1fr);align-items:start;min-height:48px}
   .pc-graph-row>time{padding-top:8px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);text-align:right}
-  .pc-graph-rail{position:relative;align-self:stretch;min-height:48px;background:linear-gradient(90deg,transparent 8px,var(--line2) 8px,var(--line2) 9px,transparent 9px,transparent 27px,var(--line2) 27px,var(--line2) 28px,transparent 28px,transparent 46px,var(--line2) 46px,var(--line2) 47px,transparent 47px)}
-  .pc-graph-rail.lane-1{--lane-x:28px}
-  .pc-graph-rail.lane-2{--lane-x:47px}
-  .pc-graph-mark{position:absolute;z-index:1;left:calc(var(--lane-x) - 4px);top:9px;width:9px;height:9px;border-radius:50%;background:var(--panel);border:2px solid var(--ink2);box-shadow:0 0 0 3px var(--panel)}
+  .pc-graph-rail{position:relative;align-self:stretch;display:grid;grid-template-columns:repeat(var(--lane-count),minmax(0,1fr));min-height:48px}
+  .pc-rail-cell{position:relative;border-left:1px solid var(--line2)}
+  .pc-rail-cell:last-child{border-right:1px solid var(--line2)}
+  .pc-graph-mark{position:absolute;z-index:1;left:-5px;top:9px;width:9px;height:9px;border-radius:50%;background:var(--panel);border:2px solid var(--ink2);box-shadow:0 0 0 3px var(--panel)}
   .pc-graph-mark.stage{border-radius:1px;background:var(--accent);border-color:var(--accent)}
   .pc-graph-mark.result{background:var(--ink2)}
   .pc-graph-mark.burst{left:calc(var(--lane-x) - 5px);top:10px;width:11px;height:7px;border-radius:2px;background:var(--ink3);border:0}
-  .pc-graph-mark.steering{left:25px;top:10px;width:7px;height:7px;border-radius:1px;background:var(--accent-ink);border:0;transform:rotate(45deg)}
-  .pc-graph-row.steering .pc-graph-rail::after{content:"";position:absolute;left:32px;right:-5px;top:13px;border-top:1px solid transparent}
-  .pc-graph-row.steering[data-causal-edge="solid"] .pc-graph-rail::after{border-color:var(--accent-ink)}
-  .pc-graph-row.steering[data-causal-edge="derived"] .pc-graph-rail::after{border-color:var(--accent-ink);border-top-style:dashed;opacity:.55}
-  .pc-graph-row.steering[data-causal-edge="supported"] .pc-graph-rail::after{border-color:var(--ink3);border-top-style:dashed;opacity:.7}
+  .pc-graph-mark.steering{top:10px;width:7px;height:7px;border-radius:1px;background:var(--accent-ink);border:0;transform:rotate(45deg)}
+  .pc-graph-row[data-branch-edge="solid"] .pc-graph-rail::after,.pc-graph-row[data-branch-edge="derived"] .pc-graph-rail::after,.pc-graph-row[data-merge-edge="solid"] .pc-graph-rail::before,.pc-graph-row[data-merge-edge="derived"] .pc-graph-rail::before{content:"";position:absolute;left:calc((100% / var(--lane-count)) / 2);width:calc((100% / var(--lane-count)) * var(--lane-index));border-top:1px solid var(--accent-ink)}
+  .pc-graph-row[data-branch-edge="solid"] .pc-graph-rail::after,.pc-graph-row[data-branch-edge="derived"] .pc-graph-rail::after{top:12px}
+  .pc-graph-row[data-merge-edge="solid"] .pc-graph-rail::before,.pc-graph-row[data-merge-edge="derived"] .pc-graph-rail::before{top:18px;border-color:var(--ink3)}
+  .pc-graph-row[data-branch-edge="derived"] .pc-graph-rail::after,.pc-graph-row[data-merge-edge="derived"] .pc-graph-rail::before{border-top-style:dashed;opacity:.55}
   .pc-graph-row>.pc-trail-body{padding:5px 0 13px}
   .pc-semantic-lane{min-width:0}
   .pc-semantic-lane h4{margin:0 0 9px;font-size:var(--fs-sm);color:var(--ink2)}

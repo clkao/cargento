@@ -344,7 +344,7 @@ console.log(JSON.stringify({
   scoped: h.includes("Derived snapshot") && h.includes("cached observer snapshot"),
   separate: h.indexOf("<b>Focus</b>") < h.indexOf("Observed goal · stale</b> — Derived session goal"),
   noOverwrite: h.includes("Browser focus is operator-authored"),
-  once: h.split("Derived session goal").length - 1 === 2 &&
+  once: h.split("Derived session goal").length - 1 === 4 &&
     !h.includes('class="pc-observer"') && !h.includes("Goal · derived")
 }));
 """
@@ -427,20 +427,33 @@ console.log(JSON.stringify({
 projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generated: 100000,
   data: {observers: [], events: [], semantic: {facts: [
     {fact_id: "result-1", at: 99995, type: "result", summary: "Assignment roster restored",
-      work_item_id: "work-1", evidence: {source: "paired result", confidence: "exact"}}
-  ], work_items: [{work_item_id: "work-1", label: "Project cockpit", kind: "workflow_item"}],
+      work_item_id: "work-1", evidence: {source: "paired result", confidence: "exact"}},
+    {fact_id: "dispatch-2", at: 99994, type: "prepared_dispatch",
+      summary: "Session interaction origin", work_item_id: "work-2",
+      evidence: {source: "structured dispatch artifact", confidence: "exact"}}
+  ], work_items: [
+    {work_item_id: "work-1", label: "Project cockpit", kind: "workflow_item",
+      source_bindings: [{source: "structured child assignment",
+        value: "/repo/.spacedock/explore:project-cockpit"}]},
+    {work_item_id: "work-2", label: "Session interaction origin", kind: "workflow_item",
+      source_bindings: [{source: "structured child assignment",
+        value: "/repo/.spacedock/explore:session-interaction-origin"}]}
+  ],
   projections: {assignments: [], operator_intents: [], steering_episodes: [],
-    candidate_goal_shifts: [], trail_heads: [{work_item_id: "work-1", status: "outcome",
-      latest_meaningful_event: "result-1"}]}},
+    candidate_goal_shifts: [], trail_heads: [
+      {work_item_id: "work-1", status: "outcome", latest_meaningful_event: "result-1"},
+      {work_item_id: "work-2", status: "prepared", latest_meaningful_event: "dispatch-2"}
+    ]}},
   sources: {gate: {}, steer: {unavailable: []}}}};
 const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
   active: true, state: "working", last_activity: 99990, subagent_hierarchy: [
     {name: "Einstein", depth: 1, assignment: "Project cockpit and remembered goal",
       assignment_status: "structured dispatch artifact", workflow_entity: "project-cockpit",
-      workflow_stage: "shaping"},
+      workflow_stage: "shaping", workflow_binding: "/repo/.spacedock/explore"},
     {name: "Ampere", depth: 1, assignment: "Session interaction origin",
       assignment_status: "structured dispatch artifact",
-      workflow_entity: "session-interaction-origin", workflow_stage: "shaping"},
+      workflow_entity: "session-interaction-origin", workflow_stage: "shaping",
+      workflow_binding: "/repo/.spacedock/explore"},
     {name: "James", depth: 1, assignment: "Review cockpit taxonomy",
       assignment_status: "exact parent dispatch"}
   ]})]);
@@ -451,8 +464,8 @@ console.log(JSON.stringify({
   ordinary: !h.includes("Recovery mirror") && !h.includes("Safe resume") &&
     !h.includes("checkpoint") && h.includes("Project context") && h.includes('class="pc-operator"'),
   toward: h.includes("Maintain orientation from ordinary project context"),
-  assignments: h.includes('data-work-item="project-cockpit"') &&
-    h.includes('data-work-item="session-interaction-origin"') &&
+  assignments: h.includes('data-work-item="work-1"') &&
+    h.includes('data-work-item="work-2"') &&
     h.includes('data-work-stage="shaping"') &&
     h.includes("Project cockpit") && h.includes("Project cockpit and remembered goal") &&
     h.includes("Session interaction origin") && h.includes("structured dispatch artifact"),
@@ -460,13 +473,13 @@ console.log(JSON.stringify({
     h.indexOf("Project cockpit") < h.indexOf("Einstein") &&
     h.indexOf("Session interaction origin") < h.indexOf("Ampere") &&
     h.indexOf("Review cockpit taxonomy") < h.indexOf("James"),
-  oneTaxonomy: h.split('data-assignment-lane="current"').length - 1 === 3 &&
+  oneTaxonomy: h.split('data-assignment-lane="task-head"').length - 1 === 2 &&
     h.split('data-work-stage="shaping"').length - 1 === 2 &&
-    h.includes("Review cockpit taxonomy") && h.includes("current assignment") &&
+    h.includes("Review cockpit taxonomy") && h.includes("unbound contributor") &&
     !h.includes("Assignments</span>"),
   compact: h.split('data-work-item=').length - 1 === 2 &&
-    h.includes('data-graph-layout="time-spine-work-lanes"') &&
-    !h.includes('class="pc-work-item') && !h.includes("<details><summary>source</summary>"),
+    h.includes('data-graph-layout="fo-task-lanes"') &&
+    !h.includes('class="pc-work-item'),
   changed: h.includes("Assignment roster restored") && h.includes("5s ago") &&
     h.includes('data-trail-head="outcome"'),
   freshness: h.includes("Working</strong><span>3 tasks active</span>") &&
@@ -709,18 +722,40 @@ console.log(JSON.stringify({
     def test_same_entity_slug_in_two_workflows_has_distinct_lane_identity(self) -> None:
         checks = """
 const d = {generated:100};
-const explore = projectWorkflowLaneRow(d, {entity:"project-cockpit", stage:"shaping",
-  workflowBinding:"/repo/.spacedock/explore", assignment:"Shape prototype", worker:"Einstein",
-  relation:"direct child", source:"structured dispatch artifact", depth:1, at:99}, 1);
-const dev = projectWorkflowLaneRow(d, {entity:"project-cockpit", stage:"shaping",
-  workflowBinding:"/repo/.spacedock/dev", assignment:"Shape release", worker:"Legacy",
-  relation:"direct child", source:"structured dispatch artifact", depth:1, at:98}, 2);
+const model = {facts:[
+  {fact_id:"explore", at:99, type:"prepared_dispatch", summary:"Shape prototype",
+    work_item_id:"workflow:explore", evidence:{confidence:"exact"}},
+  {fact_id:"dev", at:98, type:"prepared_dispatch", summary:"Shape release",
+    work_item_id:"workflow:dev", evidence:{confidence:"exact"}}
+], work_items:[
+  {work_item_id:"workflow:explore", label:"Project cockpit", kind:"workflow_item",
+    source_bindings:[{value:"/repo/.spacedock/explore:project-cockpit"}]},
+  {work_item_id:"workflow:dev", label:"Project cockpit", kind:"workflow_item",
+    source_bindings:[{value:"/repo/.spacedock/dev:project-cockpit"}]}
+], projections:{trail_heads:[
+  {work_item_id:"workflow:explore", status:"prepared", latest_meaningful_event:"explore"},
+  {work_item_id:"workflow:dev", status:"prepared", latest_meaningful_event:"dev"}
+], activity:{nodes:[
+  {kind:"work", at:99, work_item_ids:["workflow:explore"]},
+  {kind:"work", at:98, work_item_ids:["workflow:dev"]}
+]}, operator_intents:[], steering_episodes:[]}};
+const delegationRows = [
+  {entity:"project-cockpit", stage:"shaping", workflowBinding:"/repo/.spacedock/explore",
+    assignment:"Shape prototype", worker:"Einstein", relation:"direct child",
+    source:"structured dispatch artifact", depth:1, at:99},
+  {entity:"project-cockpit", stage:"shaping", workflowBinding:"/repo/.spacedock/dev",
+    assignment:"Shape release", worker:"Legacy", relation:"direct child",
+    source:"structured dispatch artifact", depth:1, at:98}
+];
+const html = projectSemanticTimeline(d, model, delegationRows,
+  {harness:"codex", sid:"focus-1", last_activity:99});
 console.log(JSON.stringify({
-  sameHeading:(explore.match(/Project cockpit · shaping/g) || []).length === 2 &&
-    (dev.match(/Project cockpit · shaping/g) || []).length === 2,
-  distinct:explore.includes('data-workflow-binding="/repo/.spacedock/explore"') &&
-    dev.includes('data-workflow-binding="/repo/.spacedock/dev"'),
-  inspectable:explore.includes("workflow explore") && dev.includes("workflow dev")
+  sameHeading:(html.match(/Project cockpit · shaping/g) || []).length === 4,
+  distinct:html.includes('data-lane-key="task:workflow:explore"') &&
+    html.includes('data-lane-key="task:workflow:dev"') &&
+    html.includes('data-workflow-binding="/repo/.spacedock/explore"') &&
+    html.includes('data-workflow-binding="/repo/.spacedock/dev"'),
+  inspectable:html.includes("workflow explore") && html.includes("workflow dev")
 }));
 """
         out = self.run_project(checks)
@@ -1149,8 +1184,8 @@ const primaryText = Array.from(visibleText.matchAll(
 )).map(match => match[1]).join("");
 console.log(JSON.stringify({
   bounded: (visibleText.match(/<article class="pc-graph-row/g) || []).length === 4 &&
-    graph.includes("6 entities touched") &&
-    graph.includes('data-graph-layout="time-spine-work-lanes"'),
+    graph.includes("4 task lanes folded") &&
+    graph.includes('data-graph-layout="fo-task-lanes"'),
   separated: graph.includes('data-model="fact-projection"') &&
     !graph.includes("What you asked") && !graph.includes("What happened"),
   mixed: graph.includes("task-one → shaping") && graph.includes("Meaningful result"),
@@ -1160,7 +1195,7 @@ console.log(JSON.stringify({
   supportedTagOnly: primaryText.includes("Correct the session grouping") &&
     graph.includes('data-steering-state="unpaired"') &&
     !primaryText.includes("generated</span>"),
-  noCausalGuess: (graph.match(/data-causal-edge="none"/g) || []).length === 2 &&
+  noCausalGuess: (graph.match(/data-causal-edge="none"/g) || []).length === 1 &&
     !graph.includes('data-causal-edge="solid"') &&
     !graph.includes('data-causal-edge="derived"'),
   noRepeatedUnpairedProse: !primaryText.includes("unpaired") &&
@@ -1184,6 +1219,92 @@ console.log(JSON.stringify({
         self.assertTrue(out["noCausalGuess"])
         self.assertTrue(out["noRepeatedUnpairedProse"])
         self.assertTrue(out["lifecycleSuppressed"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_lane_registry_keeps_fo_and_task_identity_stable(self) -> None:
+        checks = """
+const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1", active:true,
+  state:"working", last_activity:110});
+const delegations = [
+  {worker:"Einstein", assignment:"Shape cockpit", entity:"project-cockpit", stage:"shaping",
+    workflowBinding:"/repo/.spacedock/explore", observerSid:"child-1", source:"structured dispatch artifact",
+    relation:"direct child", depth:1, at:110},
+  {worker:"Ampere", assignment:"Review cockpit", entity:"project-cockpit", stage:"shaping",
+    workflowBinding:"/repo/.spacedock/explore", observerSid:"child-2", source:"structured dispatch artifact",
+    relation:"direct child", depth:1, at:109},
+  {worker:"Godel", assignment:"Give UX feedback", entity:"", stage:"", workflowBinding:"",
+    observerSid:"child-3", source:"exact parent dispatch", relation:"direct child", depth:1, at:108}
+];
+const foFacts = Array.from({length:5}, (_, i) => ({fact_id:`fo-${i}`, at:100-i,
+  type:i < 2 ? "user_message" : "final_output", summary:`FO event ${i + 1}`,
+  work_item_id:i === 0 ? null : "session:codex:focus-1",
+  evidence:{source:i === 0 ? "user-role record" : "assistant final_answer", confidence:"exact"}}));
+const model = {facts: foFacts.concat([
+  {fact_id:"dispatch", at:107, type:"prepared_dispatch", summary:"Cockpit dispatched",
+    work_item_id:"workflow:cockpit", evidence:{source:"structured dispatch artifact", confidence:"exact"}},
+  {fact_id:"stage", at:108, type:"stage_transition", summary:"Shaping",
+    work_item_id:"workflow:cockpit", evidence:{source:"Explore state", confidence:"exact"}},
+  {fact_id:"checkpoint", at:109, type:"checkpoint", summary:"Viewport fixed",
+    work_item_id:"workflow:cockpit", evidence:{source:"bound git checkpoint", confidence:"exact"}},
+  {fact_id:"result", at:110, type:"work_result", summary:"Cockpit ready",
+    work_item_id:"workflow:cockpit", evidence:{source:"paired result", confidence:"exact"}},
+  {fact_id:"other", at:106, type:"work_birth", summary:"Terminal dispatched",
+    work_item_id:"workflow:terminal", evidence:{source:"structured dispatch artifact", confidence:"exact"}}
+]), work_items:[
+  {work_item_id:"session:codex:focus-1", label:"Last output", kind:"session_result"},
+  {work_item_id:"workflow:cockpit", label:"Project cockpit", kind:"workflow_item",
+    source_bindings:[{source:"structured child assignment",
+      value:"/repo/.spacedock/explore:project-cockpit"}]},
+  {work_item_id:"workflow:terminal", label:"Session origin", kind:"workflow_item"}
+], relations:[], history:{events:[
+  {event_type:"assignment", source_identity:"codex:child-1", work_binding:"workflow:cockpit"},
+  {event_type:"assignment", source_identity:"codex:child-2", work_binding:"workflow:cockpit"}
+]}, projections:{operator_intents:[
+  {projection_id:"intent-unpaired", at:100, summary:"FO event 1", derived_from:"fo-0"},
+  {projection_id:"intent-paired", at:99, summary:"FO event 2", derived_from:"fo-1"}
+], trail_heads:[
+  {work_item_id:"workflow:cockpit", status:"outcome", latest_meaningful_event:"result"},
+  {work_item_id:"workflow:terminal", status:"prepared", latest_meaningful_event:"other"}
+], activity:{nodes:[
+  {kind:"work", at:110, status:"outcome", work_item_ids:["workflow:cockpit"], latest_event:"result"},
+  {kind:"work", at:106, status:"prepared", work_item_ids:["workflow:terminal"], latest_event:"other"}
+]}, steering_episodes:[{intent_id:"intent-paired", adaptation_fact:"dispatch",
+  confidence:"structural"}], candidate_goal_shifts:[]}};
+const shuffled = Object.assign({}, model, {facts:model.facts.slice().reverse(),
+  projections:Object.assign({}, model.projections, {activity:{nodes:model.projections.activity.nodes.slice().reverse()}})});
+const first = projectLaneRegistry(model, delegations, focus);
+const second = projectLaneRegistry(shuffled, delegations.slice().reverse(), focus);
+const html = projectSemanticTimeline({generated:111}, model, delegations, focus);
+const keys = first.lanes.map(lane => lane.key);
+const cockpit = first.laneByKey.get("task:workflow:cockpit");
+console.log(JSON.stringify({
+  stable:keys.every(key => first.laneByKey.get(key).index === second.laneByKey.get(key).index) &&
+    new Set(keys).size === keys.length,
+  oneFoHead:(html.match(/data-lane-key="fo:codex:focus-1"/g) || []).length === 1 &&
+    first.laneByKey.get("fo:codex:focus-1").events.length === 5,
+  oneCockpitLane:cockpit && cockpit.events.length === 4 && cockpit.contributors.length === 2 &&
+    (html.match(/data-lane-key="task:workflow:cockpit"/g) || []).length === 1 &&
+    html.includes("Project cockpit · shaping") && html.includes("Ampere · Einstein"),
+  godelFolded:first.lanes.filter(lane => lane.kind === "task").length === 2 &&
+    first.unboundContributors.length === 1 && html.includes("Godel") &&
+    !html.includes('data-lane-key="task:Godel"'),
+  relations:html.includes('data-branch-edge="solid"') &&
+    html.includes('data-merge-edge="solid"') &&
+    html.includes('data-steering-state="unpaired"') &&
+    html.includes('data-causal-edge="none"') &&
+    first.laneByKey.get("fo:codex:focus-1").episodeByFact.has("fo-1"),
+  distinctRails:html.includes('data-rail-key="fo:codex:focus-1"') &&
+    html.includes('data-rail-key="task:workflow:cockpit"') &&
+    html.includes('data-rail-key="task:workflow:terminal"')
+}));
+"""
+        out = self.run_project(checks)
+        self.assertTrue(out["stable"])
+        self.assertTrue(out["oneFoHead"])
+        self.assertTrue(out["oneCockpitLane"])
+        self.assertTrue(out["godelFolded"])
+        self.assertTrue(out["relations"])
+        self.assertTrue(out["distinctRails"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_recent_intent_selection_enters_graph(self) -> None:
@@ -1214,8 +1335,9 @@ const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
   visible: graph.includes("Show current intents") && graph.includes("Keep the lane grammar"),
-  diamonds: (graph.match(/data-steering-state="unpaired"/g) || []).length === 2,
-  noEdges: (graph.match(/data-causal-edge="none"/g) || []).length === 2 &&
+  diamonds: (graph.match(/data-steering-state="unpaired"/g) || []).length === 1 &&
+    graph.includes("2 sourced events"),
+  noEdges: (graph.match(/data-causal-edge="none"/g) || []).length === 1 &&
     !graph.includes('data-causal-edge="solid"') && !graph.includes('data-causal-edge="derived"')
 }));
 """
@@ -1343,11 +1465,11 @@ const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
 const evidence = h.slice(h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
-  tree: graph.split('data-assignment-lane="current"').length - 1 === 2 &&
-    h.includes('data-subagent-depth="1"') && h.includes('data-subagent-depth="2"'),
-  nested: graph.indexOf("Make assignments visible") < graph.indexOf("Volta") &&
-    graph.indexOf("assignment unavailable") < graph.indexOf("Turing") &&
-    graph.includes("child of Volta") &&
+  tree: graph.split('data-assignment-lane="task-head"').length - 1 === 0 &&
+    graph.split('data-lane-key="fo:codex:focus-1"').length - 1 === 1,
+  nested: graph.includes("2 unbound contributors") &&
+    graph.indexOf("Volta") < graph.indexOf("Turing") &&
+    graph.includes("Make assignments visible") && graph.includes("assignment unavailable") &&
     !h.includes("gpt-5.6-sol"),
   noRoster: !h.includes("Assignments</span>") && !h.includes('class="pc-assignment'),
   lifecycleHidden: !graph.includes("child task started") && !graph.includes("child completed") &&
@@ -1487,7 +1609,7 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const row = h.slice(h.indexOf('data-assignment-lane="current"'), h.indexOf("Evidence / limits"));
+const row = h.slice(h.indexOf('data-lane-key="fo:codex:focus-1"'), h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
   visible: row.includes("Volta") && row.includes("Improve the assignment roster") &&
     !row.includes("working now"),
@@ -1736,7 +1858,8 @@ console.log(JSON.stringify({
   staleRejected: afterStale.includes("Keep the old direction visible") &&
     !afterStale.includes("Show stale direction"),
   updated: graph.includes("Show newest direction") &&
-    (graph.match(/data-steering-state="unpaired"/g) || []).length === 3,
+    (graph.match(/data-steering-state="unpaired"/g) || []).length === 1 &&
+    graph.includes("4 sourced events"),
   automatic: pending.every(call => !String(call.url).includes("refresh=1")),
   settled: projectContextByLabel[key].dashboard_revision === 100001
 }));

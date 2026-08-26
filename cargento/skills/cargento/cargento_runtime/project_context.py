@@ -1862,6 +1862,15 @@ def _active_child_assignments(
                         if isinstance(workflow_binding, str) and workflow_binding
                         else {}
                     ),
+                    **(
+                        {
+                            "work_item_id": semantic_history.workflow_work_item_id(
+                                workflow_binding, workflow_entity
+                            )
+                        }
+                        if isinstance(workflow_binding, str) and workflow_binding
+                        else {}
+                    ),
                 }
             )
         exact = child.get("assignment")

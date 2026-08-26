@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from cargento_runtime import observer, project_context, spacedock
+from cargento_runtime import observer, project_context, semantic_history, spacedock
 from cargento_runtime.config import build_runtime_config
 from cargento_runtime.state import build_runtime_state
 
@@ -906,6 +906,10 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual("project-cockpit", refreshed[0]["workflow_entity"])
         self.assertEqual("shaping", refreshed[0]["workflow_stage"])
         self.assertEqual("/repo/.spacedock/explore", refreshed[0]["workflow_binding"])
+        self.assertEqual(
+            semantic_history.workflow_work_item_id("/repo/.spacedock/explore", "project-cockpit"),
+            refreshed[0]["work_item_id"],
+        )
         self.assertTrue(observe.call_args.kwargs["refresh"])
 
         with (

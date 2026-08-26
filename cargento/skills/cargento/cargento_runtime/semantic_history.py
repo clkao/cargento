@@ -33,6 +33,12 @@ _FACT_EVENT_TYPES = {
 }
 
 
+def workflow_work_item_id(workflow: str, entity: str) -> str:
+    """Return the durable task identity shared by assignments and projections."""
+    workflow_digest = hashlib.blake2b(workflow.encode(), digest_size=10).hexdigest()
+    return f"workflow:{workflow_digest}:{entity}"
+
+
 def store_path(config: RuntimeConfig) -> str:
     return os.path.join(config.state_home, STORE_NAME)
 
@@ -204,9 +210,8 @@ def _assignment_events(
         identity = f"{observer_sid}\0{worker}\0{workflow}\0{entity}\0{stage}\0{summary}"
         digest = hashlib.blake2b(identity.encode(), digest_size=12).hexdigest()
         event_id = f"assignment:{digest}"
-        workflow_digest = hashlib.blake2b(workflow.encode(), digest_size=10).hexdigest()
         work_item_id = (
-            f"workflow:{workflow_digest}:{entity}"
+            workflow_work_item_id(workflow, entity)
             if entity and workflow
             else (f"workflow-unbound:{entity}" if entity else f"assignment:{digest}")
         )
