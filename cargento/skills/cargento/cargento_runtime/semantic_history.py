@@ -22,6 +22,7 @@ MAX_EVENTS_PER_PROJECT = 512
 HISTORY_WINDOW_SEC = 24 * 60 * 60
 STORE_NAME = "semantic-work-history.json"
 RESCAN_OVERLAP_BYTES = 64 * 1024
+BACKFILL_SCHEMA_VERSION = 2
 
 _FACT_EVENT_TYPES = {
     "user_message": "operator_direction",
@@ -94,6 +95,7 @@ def backfill_scan_bytes(
     mtime_ns = int(signature.get("mtime_ns") or 0)
     if (
         isinstance(prior, dict)
+        and int(prior.get("schema") or 0) == BACKFILL_SCHEMA_VERSION
         and int(prior.get("size") or 0) == size
         and int(prior.get("mtime_ns") or 0) == mtime_ns
     ):
@@ -438,6 +440,7 @@ def update(
             "window_sec": HISTORY_WINDOW_SEC,
             "source_scans": {
                 key: {
+                    "schema": BACKFILL_SCHEMA_VERSION,
                     "size": int(value.get("size") or 0),
                     "mtime_ns": int(value.get("mtime_ns") or 0),
                 }

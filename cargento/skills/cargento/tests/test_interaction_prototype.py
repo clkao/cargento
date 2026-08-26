@@ -531,6 +531,63 @@ class CollectedSessionOriginHTTPTest(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_new_server_generation_atomically_supersedes_old_bootstrap(self) -> None:
+        adapter_a = FakeTmuxAdapter()
+        adapter_b = FakeTmuxAdapter()
+        adapter_a.prepare()
+        origin_b = adapter_b.prepare()
+        prototype_a = interaction.InteractionPrototype(
+            adapter_a,
+            collected_session_id=self.session_id,
+            session_exists=lambda value: value == self.session_id,
+            registration_file=self.registration_file,
+        )
+        prototype_b = interaction.InteractionPrototype(
+            adapter_b,
+            collected_session_id=self.session_id,
+            session_exists=lambda value: value == self.session_id,
+            registration_file=self.registration_file,
+        )
+        prototype_a.start(8766)
+        bootstrap_a = json.loads(self.registration_file.read_text(encoding="utf-8"))
+        prototype_b.start(8766)
+        bootstrap_b = json.loads(self.registration_file.read_text(encoding="utf-8"))
+
+        self.assertNotEqual(bootstrap_a["registration_token"], bootstrap_b["registration_token"])
+        self.assertNotEqual(bootstrap_a["server_generation"], bootstrap_b["server_generation"])
+        prototype_a.stop()
+        self.assertEqual(
+            bootstrap_b,
+            json.loads(self.registration_file.read_text(encoding="utf-8")),
+        )
+        self.assertEqual(
+            {"state": "refused", "reason": "invalid-registration-token"},
+            prototype_b.register(
+                bootstrap_a["registration_token"],
+                self.session_id,
+                origin_b.as_dict(),
+                now=1.0,
+            ),
+        )
+        registered = prototype_b.register(
+            bootstrap_b["registration_token"],
+            self.session_id,
+            origin_b.as_dict(),
+            now=1.0,
+        )
+        self.assertEqual("registered", registered["state"])
+        self.assertEqual(
+            {"state": "refused", "reason": "registration-token-consumed"},
+            prototype_b.register(
+                bootstrap_b["registration_token"],
+                self.session_id,
+                origin_b.as_dict(),
+                now=1.0,
+            ),
+        )
+        prototype_b.stop()
+        self.assertFalse(self.registration_file.exists())
+
     def test_collected_session_bootstrap_resolves_only_exact_live_origin(self) -> None:
         _status, waiting = self._request("GET", "/api/interaction/state")
         self.assertEqual("unregistered", waiting["origin_state"])

@@ -1341,7 +1341,7 @@ def _semantic_work_identity(
         workflow_binding = str(source_event.get("workflow_binding") or "")
         artifact = str(source_event.get("dispatch_artifact") or "")
         work_item_id = (
-            _semantic_id("workflow-item", workflow_binding, source_event["entity"])
+            semantic_history.workflow_work_item_id(workflow_binding, str(source_event["entity"]))
             if workflow_binding
             else _semantic_id("workflow-item-artifact", artifact)
         )
@@ -1352,7 +1352,7 @@ def _semantic_work_identity(
     if raw_kind in {"prepared_dispatch", "gate"} and source_event.get("entity"):
         workflow_binding = str(source_event.get("workflow_binding") or "unbound-workflow")
         return (
-            _semantic_id("workflow-item", workflow_binding, source_event["entity"]),
+            semantic_history.workflow_work_item_id(workflow_binding, str(source_event["entity"])),
             "workflow_item",
             str(source_event["entity"]),
             binding,

@@ -479,6 +479,7 @@ class InteractionPrototype:
         self._adapter = adapter or TmuxAdapter(owns_server=collected_session_id is None)
         self._lease_sec = lease_sec
         self._registration_token = secrets.token_urlsafe(24)
+        self._server_generation = ""
         self._expected_session_id = collected_session_id or ""
         self._expected_origin: TmuxOrigin | None = None
         self._lease: OriginLease | None = None
@@ -870,7 +871,14 @@ class InteractionPrototype:
 
     def stop(self) -> None:
         """Stop only the disposable tmux server owned by this prototype."""
+        self._remove_registration_file()
         self._adapter.stop()
+
+    def start(self, port: int) -> None:
+        """Publish this server generation's bootstrap before readiness."""
+        self._ensure_started(port)
+        if self._start_error:
+            raise OriginUnavailableError(self._start_error)
 
     def _ensure_started(self, port: int) -> None:
         with self._condition:
@@ -878,6 +886,7 @@ class InteractionPrototype:
                 return
             self._started = True
             try:
+                self._server_generation = secrets.token_urlsafe(16)
                 if self._external_session_id is not None:
                     self._generation += 1
                     self._write_registration_file(port)
@@ -908,26 +917,44 @@ class InteractionPrototype:
         path = self._registration_file
         if path is None:
             raise OriginUnavailableError("external registration file is missing")
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_suffix(path.suffix + ".tmp")
-            temporary.write_text(
-                json.dumps(
-                    {
-                        "port": port,
-                        "registration_token": self._registration_token,
-                        "cargento_session_id": self._expected_session_id,
-                        "lease_sec": self._lease_sec,
-                        "require_session_environment": True,
-                    },
-                    separators=(",", ":"),
-                ),
-                encoding="utf-8",
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            payload = json.dumps(
+                {
+                    "port": port,
+                    "registration_token": self._registration_token,
+                    "cargento_session_id": self._expected_session_id,
+                    "lease_sec": self._lease_sec,
+                    "require_session_environment": True,
+                    "server_generation": self._server_generation,
+                },
+                separators=(",", ":"),
             )
-            temporary.chmod(0o600)
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(temporary, path)
         except OSError as exc:
             raise OriginUnavailableError("cannot write external registration file") from exc
+        finally:
+            with contextlib.suppress(OSError):
+                temporary.unlink()
+
+    def _remove_registration_file(self) -> None:
+        path = self._registration_file
+        generation = self._server_generation
+        if path is None or not generation:
+            return
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict) or value.get("server_generation") != generation:
+                return
+            path.unlink()
+        except (OSError, ValueError, json.JSONDecodeError, RecursionError):
+            return
 
     def _on_stream_output(self, pane_id: str, text: str) -> None:
         with self._condition:
