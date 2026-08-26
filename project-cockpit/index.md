@@ -337,3 +337,20 @@ UX round 1 turns the project header into a compact recovery surface: outcome-fir
 ### Summary
 
 IA round 2 makes the project/session boundary visible and enforces it in the source model: overview, status, plan, activity, Focus, and delegation remain project-wide, while only Timeline and Terminal follow session selection. Canonical gate identity now scopes focused evidence and supplies one human label map across views. Checkpoint `d042adc` is live on 8766 and work stops here for the fresh AI/data-semantics review.
+
+## Stage Report: shaping (cycle 10)
+
+- DONE: Persisted history replays only facts explicitly promoted as human operator intent; injected collaboration/interruption envelopes remain evidence and never render as `You directed`.
+  Commit `b4faf97b9b29f84bdd6bb73da30c66e946f6e846` stores `intent_promoted` on every user-message fact, persists both decisions, and replays only `true`; the restart/DOM falsifier fails if a rejected `do it` row or measured `Message Type: MESSAGE` collaboration envelope becomes an intent or `You` action. Live 8766 exposes 23 rejected and 91 promoted facts with zero injected-envelope intents.
+- DONE: Focused gate eligibility includes exact current and persisted session/child task evidence plus workflow-bound aliases, retaining only those tasks' project gates without cross-workflow slug collapse.
+  Focus eligibility is built before project-gate filtering from current transcript/backfill events, restart-safe facts belonging to the selected root or verified children, and structured child assignments. The falsifier keeps current, child-only, and persisted-only gates while removing a peer gate and the same slug from another workflow; changing either exact workflow or entity identity fails it.
+- DONE: Gate application state survives event → fact → persistence → renderer; pending, superseded, or unapplied approvals read as recorded decisions without a completed stage-transition arrow.
+  `application_state`, `target_stage`, decision, and `by` now survive parser, semantic fact, persisted history, and API. DOM tests require arrows only for `consumed`/`applied`; `pending`/`unspent` say pending application, `superseded` says superseded, and a missing application says unknown.
+- DONE: Serve and exercise the AI/data-semantics round-3 checkpoint without widening prototype authority.
+  Stable `http://127.0.0.1:8766/?next=true#n=project:spacedock-research%2Fspacedock-v1` runs PID `981` from `b4faf97`, serving 347,728 bytes at SHA-256 `de9ac2026b08085a689331398a64ff4625966ce7afc74ac0bbc515435ef8526b`. The 156-test focused suite, six boundary tests, Ruff, format, strict mypy over 116 files, embedded lint, plugin validation, version parity, live API, focus isolation, and exact-payload DOM harness are green; browser control could not initialize in this runtime, so no browser-only claim is made.
+- DONE: Preserve the exact live hierarchy and read-only terminal while stopping for the next review.
+  Exact collected root session `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` is registered at tmux `$4/@4/%10`, 174×42, stream connected, `read-only-control-stream`, keyboard input `not-exposed`. Candidate 8767 and its renewal client were stopped after the controlled swap; no code ref was pushed or integrated, no version field changed, and `.spacedock/dev` was not read or mutated.
+
+### Summary
+
+AI/data-semantics round 3 makes operator intent and gate consequence explicit data decisions instead of renderer inference. Restart-safe focus now follows exact task provenance without importing peer or cross-workflow gates, and approval arrows appear only after exact application. Checkpoint `b4faf97` is live on 8766 and work stops here for the COO/operations review requested by the captain.
