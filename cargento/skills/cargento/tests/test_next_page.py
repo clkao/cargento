@@ -46,6 +46,8 @@ class NextPageAssetContractTest(unittest.TestCase):
             asset.parent.mkdir(parents=True, exist_ok=True)
             asset.write_text("d09GMg==\n", encoding="ascii")
         (next_web / "next-boot.js").write_text("const first = 1;\n", encoding="utf-8")
+        (next_web / "next-cockpit-compat.js").write_text("const compat = 1;\n", encoding="utf-8")
+        (web / "project.js").write_text("const shared = 1;\n", encoding="utf-8")
         (next_web / "next-chrome.js").write_text("const middle = 2;\n", encoding="utf-8")
         (next_web / "next-projects.js").write_text("const projects = 3;\n", encoding="utf-8")
         (next_web / "next-project.js").write_text("const project = 4;\n", encoding="utf-8")
@@ -54,6 +56,7 @@ class NextPageAssetContractTest(unittest.TestCase):
         (next_web / "next-workstream.js").write_text("const workstream = 7;\n", encoding="utf-8")
         (next_web / "next-delegation.js").write_text("const delegation = 8;\n", encoding="utf-8")
         (next_web / "next-controls.js").write_text("const controls = 9;\n", encoding="utf-8")
+        (next_web / "next-cockpit.js").write_text("const cockpit = 9;\n", encoding="utf-8")
         (next_web / "next-sessions.js").write_text("const sessions = 3;\n", encoding="utf-8")
         (next_web / "next-render.js").write_text("const second = 2;\n", encoding="utf-8")
         (next_web / "next-live.js").write_text("const live = 10;\n", encoding="utf-8")
@@ -76,11 +79,11 @@ class NextPageAssetContractTest(unittest.TestCase):
             )
         self.assertEqual(
             (f"<style>{embedded_styles}.next{{color:red}}\n</style>").encode()
-            + b"<script>const first = 1;\nconst middle = 2;\n"
+            + b"<script>const first = 1;\nconst compat = 1;\nconst shared = 1;\nconst middle = 2;\n"
             b"const sessions = 3;\nconst projects = 3;\n"
             b"const project = 4;\nconst activity = 5;\n"
             b"const session = 6;\nconst workstream = 7;\nconst delegation = 8;\n"
-            b"const controls = 9;\n"
+            b"const controls = 9;\nconst cockpit = 9;\n"
             b"const second = 2;\nconst live = 10;\n</script>",
             actual,
         )
@@ -175,6 +178,7 @@ class NextPageAssetContractTest(unittest.TestCase):
         self.assertEqual(
             (
                 "next-boot.js",
+                "next-cockpit-compat.js",
                 "next-chrome.js",
                 "next-sessions.js",
                 "next-projects.js",
@@ -184,6 +188,7 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "next-workstream.js",
                 "next-delegation.js",
                 "next-controls.js",
+                "next-cockpit.js",
                 "next-render.js",
                 "next-live.js",
             ),
@@ -507,9 +512,13 @@ class NextPageAssetContractTest(unittest.TestCase):
                 4_918,
                 "4b801dc5c185732eaddd86501f1e866cb062d11a739e2696df5a45044aac9a3f",
             ),
+            "next-cockpit-compat.js": (
+                599,
+                "ebc70801be79cd5805a85a281dd0566a08a97bab72d0356ae923d20f60310db4",
+            ),
             "next-chrome.js": (
-                6_990,
-                "a1937f422d61aba21c0f96d11731649705d1b5aac1889220759d0f61c2f9010a",
+                7_047,
+                "d441715c80fd1d5cc76de4e234a8bacb71bf03cde9bab61c0525f2a32f34ae12",
             ),
             "next-sessions.js": (
                 3_961,
@@ -520,8 +529,8 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "c430a56866fd1219b97267375f2b0b3bad3acf3b2dfbcb34c54e51e6845a68ce",
             ),
             "next-project.js": (
-                8_057,
-                "6896fd91fe77c9a239ae4282c530697aac7b9281855ccb50d9f41c1e14f8c62c",
+                8_143,
+                "8e484a79508eaa091b7919e706e807d891560dd058dbebb55d2bb04055d57ebd",
             ),
             "next-activity.js": (
                 4_370,
@@ -543,6 +552,10 @@ class NextPageAssetContractTest(unittest.TestCase):
                 6_777,
                 "4da6527bbf6401db716ab5807748ac01a64aecce996e993ff9e0b42c22fdc811",
             ),
+            "next-cockpit.js": (
+                7_847,
+                "ab9787dc0217fc07445ff6a3c0f2846af4da51885f6305764e11163bb667a77e",
+            ),
             "next-render.js": (
                 802,
                 "fc842fa72b4c12e25ee34c6aa0403e12689653985be5e198677e3cfb831234b3",
@@ -560,16 +573,16 @@ class NextPageAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.next_asset_path("styles.css").read_bytes()
-        self.assertEqual(24_200, len(styles))
+        self.assertEqual(29_215, len(styles))
         self.assertEqual(
-            "2ae8e188d4fbe009b6eacf28e8396b5dbd1b98b02a7984baf0ed1328b94cd249",
+            "b7f85cdfc61c1e9578494f4a42bde10c4f40c7872e35548473b67f00ecb1e896",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_next_page()
-        self.assertEqual(225_179, len(assembled))
+        self.assertEqual(332_058, len(assembled))
         self.assertEqual(
-            "443c083e0d50fe75a2d60f40df66a63c7d12d6dc5bb8af439e83924dffb259ed",
+            "fa7c8a4a5fe19f110aa878644d6282d63e7160141724d9272896ff23d33d3bc5",
             hashlib.sha256(assembled).hexdigest(),
         )
 

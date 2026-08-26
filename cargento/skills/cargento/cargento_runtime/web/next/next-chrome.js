@@ -70,6 +70,7 @@ function nextViewBody(counts){
 function renderNext(){
   const app = document.getElementById("app");
   if(!app) return;
+  nextCockpitBeforeRender();
   const counts = nextCounts();
   const gate = counts.gates > 0
     ? `<button type="button" class="next-gate" data-next-action="needs-input">${counts.gates} need you</button>`
@@ -89,6 +90,7 @@ function renderNext(){
     '<button type="button" data-next-action="dashboard">dashboard mode <kbd>d</kbd></button>' +
     "</div></details></div></header>" +
     stalled + nextViewBody(counts);
+  nextCockpitAfterRender();
 }
 
 function navigateNext(route){

@@ -412,7 +412,7 @@ function projectAction(act, arg){
   return projectGoalAction(act, String(arg || ""));
 }
 
-document.addEventListener("keydown", e => {
+if(typeof NEXT_COCKPIT_SHARED === "undefined") document.addEventListener("keydown", e => {
   const field = e.target;
   if(!field || !field.getAttribute || field.getAttribute("role") !== "tab") return;
   if(!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
@@ -430,7 +430,8 @@ document.addEventListener("keydown", e => {
   if(targetTab && targetTab.focus) targetTab.focus();
 });
 
-if(typeof window !== "undefined" && window.addEventListener){
+if(typeof NEXT_COCKPIT_SHARED === "undefined" &&
+    typeof window !== "undefined" && window.addEventListener){
   window.addEventListener("popstate", () => {
     try{
       const priorSession = projectQuerySession;
