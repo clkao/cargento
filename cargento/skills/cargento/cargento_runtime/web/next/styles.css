@@ -113,6 +113,14 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
 [data-next-project-section]:empty{display:none}
 [data-next-project-section="plan"],[data-next-project-section="workstream"]{grid-column:1/-1}
 .next-project-plan{margin-bottom:30px;border-top:1px solid var(--line2)}
+.next-project-workflow-definition{margin-bottom:30px;border-top:1px solid var(--line2);border-bottom:1px solid var(--line)}
+.next-project-workflow-definition>header{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 14px;padding:12px 10px;border-bottom:1px solid var(--line);font-family:var(--mono)}
+.next-project-workflow-definition>header>span{color:var(--ink3);font-size:var(--fs-2xs);font-weight:400}
+.next-project-workflow-definition>header>strong{font-size:var(--fs-xs);font-weight:500}
+.next-project-workflow-definition>header>p{grid-column:2;margin:0;color:var(--ink3);font-family:var(--sans);font-size:var(--fs-xs)}
+.next-project-workflow-stages{display:grid;grid-template-columns:140px minmax(0,1fr);gap:12px;padding:12px 10px;font-family:var(--mono);font-size:var(--fs-xs)}
+.next-project-workflow-stages span,.next-project-workflow-definition>small{color:var(--ink3);font-weight:400}
+.next-project-workflow-definition>small{display:block;padding:0 10px 12px;font-size:var(--fs-2xs)}
 .next-project-plan>header{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 14px;padding:12px 10px;border-bottom:1px solid var(--line);font-family:var(--mono)}
 .next-project-plan>header>span{color:var(--ink3);font-size:var(--fs-2xs);font-weight:400}
 .next-project-plan>header>strong{font-size:var(--fs-xs);font-weight:500}

@@ -45,6 +45,12 @@ function nextCockpitContextKey(group, focus){
   return `${nextCockpitStableKey(group)}\n${focus ? sessKey(focus) : ""}`;
 }
 
+function nextCockpitProjectObservation(group){
+  const focus = nextCockpitFocusedSession(group);
+  const entry = nextCockpitContexts.get(nextCockpitContextKey(group, focus));
+  return entry && entry.data || null;
+}
+
 function nextCockpitLoadContext(group, focus){
   if(!nextData) return;
   const key = nextCockpitContextKey(group, focus);

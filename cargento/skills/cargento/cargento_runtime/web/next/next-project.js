@@ -103,22 +103,70 @@ function nextProjectPlan(plan, harnesses){
     `<div class="next-project-plan-rows">${rows}</div></section>`;
 }
 
-function nextProjectEmptyState(sessions){
-  const spacedock = sessions.map(session => session.spacedock).filter(Boolean);
-  if(spacedock.some(value => value.role === "first-officer")){
-    return "A workflow exists, but nothing is fresh enough to show.";
+function nextProjectWorkflowDefinition(workflow){
+  const name = String(workflow && workflow.workflow || "").trim();
+  const goal = String(workflow && workflow.goal || "").trim();
+  const stages = Array.isArray(workflow && workflow.stages)
+    ? workflow.stages.map(value => String(value || "").trim()).filter(Boolean)
+    : [];
+  const goalLine = goal ? `<p>${esc(goal)}</p>` : "";
+  const stagesLine = stages.length
+    ? `<div class="next-project-workflow-stages"><span>DECLARED STAGES</span><strong>${esc(stages.join(" · "))}</strong></div>`
+    : '<div class="next-project-workflow-stages"><span>DECLARED STAGES</span><strong>definition unavailable</strong></div>';
+  return `<section class="next-project-workflow-definition" data-next-workflow-definition="${esc(name)}">` +
+    `<header><span>PROJECT WORKFLOW</span><strong>${esc(name)}</strong>${goalLine}</header>${stagesLine}` +
+    '<small>Observed by Spacedock project discovery; no live entity state is inferred.</small></section>';
+}
+
+function nextProjectWorkflowEvidence(discovery){
+  const semantic = discovery && discovery.semantic || {};
+  const workItems = Array.isArray(semantic.work_items) ? semantic.work_items : [];
+  return workItems.some(item =>
+    String(item && item.kind || "") === "workflow_item" ||
+    String(item && item.work_item_id || "").startsWith("workflow:")
+  );
+}
+
+function nextProjectEmptyState(context, observation){
+  const spacedock = context.group.sessions.map(session => session.spacedock).filter(Boolean);
+  const firstOfficer = spacedock.some(value => value.role === "first-officer");
+  const ensign = spacedock.some(value => value.role === "ensign");
+  const semanticEvidence = nextProjectWorkflowEvidence(observation);
+  const discovery = observation && observation.workflow_discovery || {};
+  const state = String(discovery.state || "loading");
+  const reason = String(discovery.reason || "").trim();
+  let prefix = "No live session plan was observed.";
+  if(firstOfficer){
+    prefix = "A first-officer attachment was observed, but it exposed no current plan.";
+  }else if(ensign){
+    prefix = "An ensign attachment was observed, but attachment metadata is not the project workflow definition.";
+    if(semanticEvidence) prefix += " Workflow activity is present in the semantic timeline.";
+  }else if(semanticEvidence){
+    prefix = "Workflow activity is present in the semantic timeline, but no live session plan was observed.";
   }
-  if(spacedock.some(value => value.role === "ensign")){
-    return "This worker's plan lives with its first officer.";
+  if(state === "none"){
+    return `${prefix} Spacedock project discovery observed no commissioned workflow directories.`;
   }
-  return "This project declares no workflow.";
+  if(state === "unavailable"){
+    return `${prefix} Project workflow definitions are unavailable${reason ? `: ${reason}` : "."}`;
+  }
+  if(state === "error"){
+    return `${prefix} Project workflow discovery failed${reason ? `: ${reason}` : "."}`;
+  }
+  return `${prefix} Checking project workflow definitions…`;
 }
 
 function nextProjectPlanBlock(context){
-  if(!context.plans.length){
-    return `<div class="next-project-detail-empty">${esc(nextProjectEmptyState(context.group.sessions))}</div>`;
+  if(context.plans.length){
+    return context.plans.map(plan => nextProjectPlan(plan, context.harnesses)).join("");
   }
-  return context.plans.map(plan => nextProjectPlan(plan, context.harnesses)).join("");
+  const observation = nextCockpitProjectObservation(context.group);
+  const discovery = observation && observation.workflow_discovery || {};
+  const workflows = Array.isArray(discovery.workflows) ? discovery.workflows : [];
+  if(discovery.state === "observed" && workflows.length){
+    return workflows.map(nextProjectWorkflowDefinition).join("");
+  }
+  return `<div class="next-project-detail-empty">${esc(nextProjectEmptyState(context, observation))}</div>`;
 }
 
 function nextProjectUnhealthyCount(plans){

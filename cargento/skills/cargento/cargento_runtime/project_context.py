@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
 import re
 import shlex
+import subprocess
 from typing import TYPE_CHECKING, Any
 
+from . import claude_data, observer, records, semantic_history, spacedock, transcripts
 from . import io as runtime_io
-from . import observer, records, semantic_history, spacedock
+from . import sessions as runtime_sessions
+from . import state as runtime_state
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -28,6 +32,11 @@ MAX_PRIMARY_ACTIVITY_NODES = 5
 MAX_PRIMARY_STEERING_NODES = 3
 SEMANTIC_HISTORY_HORIZON_SEC = 24 * 60 * 60
 SEMANTIC_BACKFILL_MAX_BYTES = 32 * 1024 * 1024
+WORKFLOW_DISCOVERY_TIMEOUT_SEC = 2.0
+WORKFLOW_DISCOVERY_CACHE_SEC = 30.0
+WORKFLOW_DISCOVERY_MAX_BYTES = 64 * 1024
+WORKFLOW_DISCOVERY_MAX_DIRS = 64
+WORKFLOW_DISCOVERY_SOURCE = "spacedock status --discover"
 
 _DIRECTIVE_PREFIX_RE = re.compile(
     r"^(?:please\s+|captain(?:\s+(?:says|asks|adds|clarifies|refines|clarification|refinement|correction))?\s*[:—-]\s*)+",
@@ -71,6 +80,197 @@ _DISPATCH_VALUE_OPTIONS = {
     "--workflow-dir",
 }
 _CODEX_ENSIGN_TASK_RE = re.compile(r"^spacedock_ensign_([a-z0-9_]+?)(?:_cycle\d+)?$")
+
+
+def _discovery_result(state: str, reason: str = "") -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "state": state,
+        "source": WORKFLOW_DISCOVERY_SOURCE,
+        "workflows": [],
+    }
+    if reason:
+        result["reason"] = reason
+    return result
+
+
+def _parse_discovery_output(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    root: str,
+    stdout: object,
+) -> dict[str, Any]:
+    if not isinstance(stdout, str) or (
+        len(stdout.encode("utf-8", "replace")) > WORKFLOW_DISCOVERY_MAX_BYTES
+    ):
+        return _discovery_result("error", "Spacedock discovery returned invalid output")
+    raw_paths = [line.strip() for line in stdout.splitlines() if line.strip()]
+    base = os.path.realpath(os.path.join(root, ".spacedock"))
+    workflows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_path in raw_paths[:WORKFLOW_DISCOVERY_MAX_DIRS]:
+        if not os.path.isabs(raw_path):
+            continue
+        candidate = os.path.realpath(raw_path)
+        try:
+            contained = os.path.commonpath((base, candidate)) == base
+        except ValueError:
+            contained = False
+        name = os.path.basename(candidate)
+        if (
+            not contained
+            or os.path.dirname(candidate) != base
+            or not name
+            or name in seen
+            or not os.path.isdir(candidate)
+        ):
+            continue
+        seen.add(name)
+        definition = spacedock.read_workflow(
+            config,
+            state,
+            candidate,
+            definition_root=base,
+        )
+        workflows.append(
+            {
+                "workflow": name,
+                "goal": str((definition or {}).get("goal") or ""),
+                "stages": list((definition or {}).get("stages") or []),
+                "definition": "read" if definition is not None else "unavailable",
+            }
+        )
+    if raw_paths and not workflows:
+        return _discovery_result(
+            "error", "Spacedock discovery returned no valid project workflow paths"
+        )
+    result = _discovery_result("observed" if workflows else "none")
+    result["workflows"] = workflows
+    return result
+
+
+def _run_project_workflow_discovery(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    root: str,
+    runner: Any,
+) -> dict[str, Any]:
+    executable = os.environ.get("SPACEDOCK_BIN") or "spacedock"
+    argv = [executable, "status", "--discover"]
+    try:
+        completed = runner(
+            argv,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=WORKFLOW_DISCOVERY_TIMEOUT_SEC,
+            check=False,
+            shell=False,
+        )
+    except FileNotFoundError:
+        return _discovery_result("unavailable", "Spacedock discovery command unavailable")
+    except subprocess.TimeoutExpired:
+        return _discovery_result("error", "Spacedock discovery timed out")
+    except (OSError, ValueError):
+        return _discovery_result("error", "Spacedock discovery could not run")
+    if completed.returncode != 0:
+        return _discovery_result(
+            "error", f"Spacedock discovery exited with status {completed.returncode}"
+        )
+    return _parse_discovery_output(config, state, root, completed.stdout)
+
+
+def discover_project_workflows(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    project_root: str,
+    *,
+    now: float,
+    runner: Any = subprocess.run,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Discover commissioned workflows from one verified project root.
+
+    Spacedock owns workflow discovery. Cargento invokes its fixed read-only
+    command without a shell, then accepts only immediate children of this
+    project's ``.spacedock`` directory. The browser receives derived plan
+    scalars, never filesystem paths or a way to invoke the command itself.
+    """
+    if not config.spacedock_enabled:
+        return _discovery_result("unavailable", "Spacedock observation is disabled")
+    root = os.path.realpath(project_root)
+    if not os.path.isabs(project_root) or not os.path.isdir(root):
+        return _discovery_result("unavailable", "project root unavailable")
+    with state.cache_lock:
+        cached = state.spacedock_discovery_cache.get(root)
+    if cached and not force and now - cached[0] < WORKFLOW_DISCOVERY_CACHE_SEC:
+        return copy.deepcopy(cached[1])
+
+    result = _run_project_workflow_discovery(config, state, root, runner)
+
+    detached = copy.deepcopy(result)
+    with state.cache_lock:
+        runtime_state.bounded_put(
+            state.spacedock_discovery_cache,
+            root,
+            (now, detached),
+            limit=config.max_cache_entries,
+        )
+    return copy.deepcopy(detached)
+
+
+def _transcript_cwd(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    harness: str,
+    transcript_path: str,
+) -> str:
+    if harness == "claude":
+        return claude_data.session_cwd(config, state, transcript_path)
+    if harness == "codex":
+        return str(transcripts.codex_meta(config, state, transcript_path).get("cwd") or "")
+    if harness == "pi":
+        return str(transcripts.pi_meta(config, state, transcript_path).get("cwd") or "")
+    return ""
+
+
+def _project_workflow_discovery(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    analysis_sessions: Sequence[Mapping[str, Any]],
+    project: str,
+    *,
+    now: float,
+    refresh: bool,
+    runner: Any = subprocess.run,
+) -> dict[str, Any]:
+    for session in analysis_sessions:
+        harness = str(session.get("harness") or "")
+        sid = str(session.get("sid") or "")
+        transcript_path = observer.resolve_transcript(config, state, harness, sid)
+        if transcript_path is None:
+            continue
+        cwd = _transcript_cwd(config, state, harness, transcript_path)
+        identity = runtime_sessions.project_identity(config, cwd)
+        root = runtime_sessions.project_root(cwd)
+        recorded_key = str(session.get("project_key") or "")
+        recorded_label = str(session.get("project") or "")
+        if not root or not identity:
+            continue
+        # The transcript cwd must agree with the collector's stable identity.
+        # A label-only legacy request remains valid only for its own session.
+        if recorded_key and recorded_key != identity.get("key"):
+            continue
+        if project not in {identity.get("key"), recorded_key, recorded_label}:
+            continue
+        return discover_project_workflows(
+            config,
+            state,
+            root,
+            now=now,
+            runner=runner,
+            force=refresh,
+        )
+    return _discovery_result("unavailable", "project root unavailable from observed sessions")
 
 
 def _semantic_id(prefix: str, *parts: object) -> str:
@@ -2322,6 +2522,14 @@ def collect(
     analysis_sessions, omitted, scope, surrounding_active = _context_sessions(
         sessions, project, focus
     )
+    workflow_discovery = _project_workflow_discovery(
+        config,
+        state,
+        analysis_sessions,
+        project,
+        now=now,
+        refresh=refresh,
+    )
     observers: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
     history_events: list[dict[str, Any]] = []
@@ -2426,6 +2634,7 @@ def collect(
         "observers": observers,
         "events": timeline,
         "semantic": semantic,
+        "workflow_discovery": workflow_discovery,
         "child_assignments": child_assignments,
         "sources": {
             "scope": scope,

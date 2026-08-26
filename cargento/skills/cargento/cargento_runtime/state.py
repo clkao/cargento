@@ -76,6 +76,11 @@ class RuntimeState:
     spacedock_workflow_cache: dict[tuple[str, int, int], dict[str, Any] | None] = field(
         default_factory=dict
     )
+    # Canonical project root -> (observation time, detached discovery result).
+    # The command is bounded, but it is still a subprocess; one project-context
+    # poll must not spawn it again while its project declaration has not aged
+    # past the short observation floor.
+    spacedock_discovery_cache: dict[str, tuple[float, dict[str, Any]]] = field(default_factory=dict)
     spacedock_entity_cache: dict[tuple[str, int, int], str] = field(default_factory=dict)
     cursor_metadata_cache: dict[str, tuple[float, str | None, str]] = field(default_factory=dict)
     # The quota fetch. One cache entry per vendor key, stamped with the fetch

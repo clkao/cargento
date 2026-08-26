@@ -137,6 +137,16 @@ def _git_identity_root(cwd: str) -> str | None:
     return os.path.dirname(common_dir) if os.path.basename(common_dir) == ".git" else repo_root
 
 
+def project_root(cwd: str) -> str | None:
+    """Canonical project root for a measured absolute working directory."""
+    if not cwd or not os.path.isabs(cwd):
+        return None
+    canonical = os.path.realpath(cwd)
+    if not os.path.isdir(canonical):
+        return None
+    return _git_identity_root(canonical) or canonical
+
+
 def project_identity(config: RuntimeConfig, cwd: str) -> dict[str, str]:
     """Stable local project key and basename from a measured working directory.
 

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from cargento_runtime import observer, project_context, semantic_history, spacedock
+from cargento_runtime import observer, project_context, semantic_history, sessions, spacedock
 from cargento_runtime.config import build_runtime_config
 from cargento_runtime.state import build_runtime_state
 
@@ -141,6 +142,193 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual("shaping", observer["stage"])
         self.assertEqual(["gate", "steer"], [event["kind"] for event in events])
         self.assertEqual("application consumed", events[0]["phase"].split(" · ")[-1])
+
+    def test_project_workflows_are_discovered_without_session_attachment_metadata(self) -> None:
+        repository = self.root / "repository"
+        (repository / ".git").mkdir(parents=True)
+        workflow_dirs = [repository / ".spacedock" / name for name in ("dev", "explore")]
+        for workflow_dir in workflow_dirs:
+            workflow_dir.mkdir(parents=True)
+            (workflow_dir / "README.md").write_text(
+                "---\ncommissioned-by: spacedock@0.28.0-pre0\n"
+                f"title: Shape {workflow_dir.name}\n"
+                "stages:\n  states:\n    - name: shaping\n    - name: review\n---\n",
+                encoding="utf-8",
+            )
+        calls: list[dict[str, object]] = []
+
+        def runner(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append({"argv": argv, **kwargs})
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout="\n".join(str(path) for path in workflow_dirs) + "\n",
+                stderr="",
+            )
+
+        state = build_runtime_state(self.config, started=self.NOW)
+        with mock.patch.dict(os.environ, {"SPACEDOCK_BIN": "spacedock"}):
+            result = project_context.discover_project_workflows(
+                self.config,
+                state,
+                str(repository),
+                now=self.NOW,
+                runner=runner,
+            )
+
+        self.assertEqual("observed", result["state"])
+        self.assertEqual(["dev", "explore"], [row["workflow"] for row in result["workflows"]])
+        self.assertEqual(["shaping", "review"], result["workflows"][0]["stages"])
+        self.assertEqual([["spacedock", "status", "--discover"]], [call["argv"] for call in calls])
+        self.assertEqual(os.path.realpath(repository), calls[0]["cwd"])
+        self.assertFalse(calls[0].get("shell", False))
+
+    def test_project_workflow_discovery_caches_the_bounded_result(self) -> None:
+        repository = self.root / "repository"
+        (repository / ".git").mkdir(parents=True)
+        calls = 0
+
+        def runner(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            nonlocal calls
+            calls += 1
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        state = build_runtime_state(self.config, started=self.NOW)
+        first = project_context.discover_project_workflows(
+            self.config, state, str(repository), now=self.NOW, runner=runner
+        )
+        second = project_context.discover_project_workflows(
+            self.config, state, str(repository), now=self.NOW + 1, runner=runner
+        )
+
+        self.assertEqual("none", first["state"])
+        self.assertEqual(first, second)
+        self.assertEqual(1, calls)
+
+    def test_project_workflow_discovery_reports_unavailable_and_error_honestly(self) -> None:
+        repository = self.root / "repository"
+        (repository / ".git").mkdir(parents=True)
+
+        def missing(_argv: list[str], **_kwargs: object) -> None:
+            raise FileNotFoundError
+
+        def timeout(argv: list[str], **_kwargs: object) -> None:
+            raise subprocess.TimeoutExpired(argv, timeout=2)
+
+        missing_result = project_context.discover_project_workflows(
+            self.config,
+            build_runtime_state(self.config, started=self.NOW),
+            str(repository),
+            now=self.NOW,
+            runner=missing,
+        )
+        timeout_result = project_context.discover_project_workflows(
+            self.config,
+            build_runtime_state(self.config, started=self.NOW),
+            str(repository),
+            now=self.NOW,
+            runner=timeout,
+        )
+
+        self.assertEqual("unavailable", missing_result["state"])
+        self.assertIn("command", missing_result["reason"])
+        self.assertEqual("error", timeout_result["state"])
+        self.assertIn("timed out", timeout_result["reason"])
+
+    def test_linked_worktree_session_discovers_from_the_canonical_checkout(self) -> None:
+        checkout = self.root / "checkout"
+        git_dir = checkout / ".git"
+        worktree = checkout / ".worktrees" / "prototype"
+        worktree_git_dir = git_dir / "worktrees" / "prototype"
+        worktree.mkdir(parents=True)
+        worktree_git_dir.mkdir(parents=True)
+        (worktree / ".git").write_text(
+            f"gitdir: {worktree_git_dir}\n",
+            encoding="utf-8",
+        )
+        (worktree_git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+        workflow_dirs = [checkout / ".spacedock" / name for name in ("dev", "explore")]
+        for workflow_dir in workflow_dirs:
+            workflow_dir.mkdir(parents=True)
+            (workflow_dir / "README.md").write_text(
+                "---\ncommissioned-by: spacedock@0.28.0-pre0\n"
+                f"title: Shape {workflow_dir.name}\n"
+                "stages:\n  states:\n    - name: shaping\n---\n",
+                encoding="utf-8",
+            )
+        sid = "linked-worktree"
+        transcript = self.root / "linked-worktree.jsonl"
+        transcript.write_text(
+            json.dumps({"type": "session", "id": sid, "cwd": str(worktree)}) + "\n",
+            encoding="utf-8",
+        )
+        project_key = sessions.project_identity(self.config, str(worktree))["key"]
+        calls: list[str] = []
+
+        def runner(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(str(kwargs["cwd"]))
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout="\n".join(str(path) for path in workflow_dirs) + "\n",
+                stderr="",
+            )
+
+        result = project_context._project_workflow_discovery(
+            self.config,
+            build_runtime_state(self.config, started=self.NOW),
+            [
+                {
+                    "project": "checkout/prototype",
+                    "project_key": project_key,
+                    "harness": "pi",
+                    "sid": sid,
+                }
+            ],
+            project_key,
+            now=self.NOW,
+            refresh=False,
+            runner=runner,
+        )
+
+        self.assertEqual([os.path.realpath(checkout)], calls)
+        self.assertEqual("observed", result["state"])
+        self.assertEqual(["dev", "explore"], [row["workflow"] for row in result["workflows"]])
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "platform has no symlink")
+    def test_discovery_reads_only_project_local_linked_definitions(self) -> None:
+        repository = self.root / "repository"
+        definition_root = repository / ".spacedock"
+        workflow = definition_root / "dev"
+        shared = definition_root / "repo"
+        workflow.mkdir(parents=True)
+        shared.mkdir()
+        target = shared / "README.md"
+        target.write_text(
+            "---\ncommissioned-by: spacedock@0.28.0-pre0\n"
+            "title: Linked project definition\n"
+            "stages:\n  states:\n    - name: shaping\n---\n",
+            encoding="utf-8",
+        )
+        try:
+            (workflow / "README.md").symlink_to(target)
+        except OSError:  # pragma: no cover - Windows without the privilege
+            self.skipTest("symlink creation not permitted")
+
+        def runner(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, 0, stdout=f"{workflow}\n", stderr="")
+
+        result = project_context.discover_project_workflows(
+            self.config,
+            build_runtime_state(self.config, started=self.NOW),
+            str(repository),
+            now=self.NOW,
+            runner=runner,
+        )
+
+        self.assertEqual("observed", result["state"])
+        self.assertEqual("Linked project definition", result["workflows"][0]["goal"])
+        self.assertEqual(["shaping"], result["workflows"][0]["stages"])
 
     def test_source_changes_move_events_and_source_removal_does_not_leave_rows(self) -> None:
         before = self.collect()
