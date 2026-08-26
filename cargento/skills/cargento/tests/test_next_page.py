@@ -146,6 +146,18 @@ class NextPageAssetContractTest(unittest.TestCase):
         self.assertIn("animation:next-live-pulse", live_rule.group(1) if live_rule else "")
         self.assertIn("animation:none", reduced.group(1) if reduced else "")
 
+    def test_activity_subagent_names_can_shrink_inside_the_card(self) -> None:
+        styles = (frontend_page.WEB_DIR / "next" / "styles.css").read_text(encoding="utf-8")
+        pill = re.search(r"\.next-activity-subagent\{([^}]*)\}", styles)
+        name = re.search(r"\.next-activity-subagent-name\{([^}]*)\}", styles)
+
+        self.assertIsNotNone(pill)
+        self.assertIsNotNone(name)
+        self.assertIn("min-width:0", pill.group(1) if pill else "")
+        self.assertIn("max-width:100%", pill.group(1) if pill else "")
+        self.assertIn("min-width:0", name.group(1) if name else "")
+        self.assertIn("overflow-wrap:anywhere", name.group(1) if name else "")
+
     def test_load_next_page_preserves_its_byte_oracles(self) -> None:
         # Per-part first, deliberately. Every part feeds the assembled page, so a
         # one-part edit fails the assembled oracle too. Naming the part that moved
@@ -172,8 +184,8 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "fc7ccdbceaf571623b8771dd78287d36d8271a6b7b6b4ad02acb93c277e56be8",
             ),
             "next-activity.js": (
-                3_264,
-                "3207c30ecb13c5fc441a5007c28412e56de32f952b0d8da2c858694bf2e12c1a",
+                4_370,
+                "ee01ddb17dcc561196af143115e21d429f6b44d845513c40a12f119d354f5ef8",
             ),
             "next-session.js": (
                 10_783,
@@ -208,16 +220,16 @@ class NextPageAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.next_asset_path("styles.css").read_bytes()
-        self.assertEqual(19_821, len(styles))
+        self.assertEqual(20_215, len(styles))
         self.assertEqual(
-            "b1861b64cba7100810546a7b707d6d0cd63a2573eec9bbc0452d3d880123235f",
+            "4db56fcbb545efabc513e5bd7d513958a4be3ea99e252c9f61bc934d80404487",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_next_page()
-        self.assertEqual(91_027, len(assembled))
+        self.assertEqual(92_527, len(assembled))
         self.assertEqual(
-            "1d2912b703eddc9e145338c28fd8df3942f39fb27faa7de9cdd444428d61a6c2",
+            "837e2ce7e144f79c46c419d10d88f1fc0fcc2ab258ad5eb25a1e9f2552e1b01c",
             hashlib.sha256(assembled).hexdigest(),
         )
 
