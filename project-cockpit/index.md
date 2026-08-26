@@ -160,3 +160,20 @@ The correction closes the rejected evidence gap by making each live inventory cl
 ### Summary
 
 The corrected breadboard validates the current data plane without producing or serving a UI. It demonstrates a small read-only cockpit substrate while preserving the important negative evidence: no stable project identity, no persisted browser-owned project goal, no trusted ask-to-project authority, and no exercised non-empty live ask. The probe, measurement, inventory, and focused checks are committed at `4f98613fa814a210b1a36c7f9ab4758b03542d5a`; no rolling prototype ref was updated.
+
+## Stage Report: shaping (cycle 2)
+
+- DONE: Reproduce and correct the visible `Last` disclosure collapse from a live dashboard revision rather than treating it as a timer.
+  The falsifier opened the focused session's native `<details>`, advanced the dashboard payload, and proved `render(d)` replaced `#app.innerHTML` with a new closed node. Commit `2dea3605cf05ee5ad98423b5aa116c005c68ab9f` captures the outgoing disclosure state by exact `harness:sid` before each replacement and restores both explicit open and explicit closed state. The executed DOM test proves closed → open across advancing revisions → explicitly closed across the next revision.
+- DONE: Rebase the owned prototype onto Cargento 0.15 and audit the project-first source, UI, and state boundaries before revising product code.
+  Fetched `origin/main` at `7317941` and replayed all 66 prototype commits; `origin/main` is an ancestor of the final checkpoint. The rebase retains 0.15's canonical Git common-directory project key and short name, separately assembled `?next=true` page, current-payload project/session/Spacedock plan views, Claude completed-task snapshot, tab-local workstream and ten-minute delegation metrics, and namespaced local-only steer/guardrail controls. The prototype reuses the canonical project identity and page/server assembly seams. Its restart-safe 24-hour semantic work history, explicit FO/task relation graph, browser focus text, and exact read-only terminal origin remain Explore-only; they are not represented as 0.15 production behavior.
+- DONE: Preserve the terminal and task-lane contracts while resolving rebase-specific schema/test drift.
+  The rebased collector retains measured child `started_at`, exact workflow-path identity, and the stopped-versus-running task boundary. The registered origin remains exact collected session `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` → tmux `$0/@0/%0`, stable server PID 4792 and tty `/dev/ttys006`, source grid 202×58, streamed read-only with keyboard input not exposed.
+- DONE: Restore and verify the stable review surface at the exact rebased checkpoint.
+  `http://127.0.0.1:8766/` runs PID 84208 and serves assembled page SHA-256 `4418c2fa462226aaff0df8aeb775048175c41aba38dc49dba6aef2cc256a41ab`. A 25-second live stream produced four successive revision events (`1787724418.5` through `.8`). The same render reducer exercised by those revisions preserves the disclosure state; the focused origin lookup reports registered, stream connected, and 202×58. Browser automation exposed no controllable browser, so executable DOM/API/SSE proof is recorded separately from visual judgment.
+- DONE: Run the focused quality checks appropriate to the rebased prototype.
+  Ruff, Ruff format, mypy over 115 files, `scripts/lint_embedded.py`, the 42-test project cockpit module, and a 192-test rebase-sensitive set covering Codex, interaction origin, byte oracles, and project behavior passed. The canonical default-page byte oracles were recomputed from the assembled assets after the additive rebase.
+
+### Summary
+
+The project cockpit is rebased onto Cargento 0.15 and keeps explicit `Last` disclosure state across live outer renders. The live 8766 generation is stable at `2dea360`, its SSE stream is advancing, and its exact read-only terminal remains attached. Cargento 0.15's canonical project identity and isolated project-first preview are reused where authoritative; durable semantic history, FO/task topology, remembered focus, and terminal adjacency remain clearly bounded prototype exploration.
