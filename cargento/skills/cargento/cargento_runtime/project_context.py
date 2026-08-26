@@ -2101,7 +2101,7 @@ def _history_activity_nodes(
 def _materialize_history_topology(
     facts: list[dict[str, Any]],
     relations: list[dict[str, Any]],
-    relation_keys: set[tuple[Any, Any, Any]],
+    relation_keys: set[tuple[Any, ...]],
 ) -> None:
     for fact in facts:
         work_item_id = str(fact.get("work_item_id") or "")
@@ -2119,10 +2119,21 @@ def _materialize_history_topology(
             source_event, source_kind, str(fact.get("fact_id") or ""), work_item_id
         )
         for relation in topology:
-            key = (relation.get("from"), relation.get("to"), relation.get("type"))
+            key = _semantic_relation_key(relation)
             if key not in relation_keys:
                 relations.append(relation)
                 relation_keys.add(key)
+
+
+def _semantic_relation_key(relation: Mapping[str, Any]) -> tuple[Any, ...]:
+    key: tuple[Any, ...] = (
+        relation.get("from"),
+        relation.get("to"),
+        relation.get("type"),
+    )
+    if relation.get("type") in {"dispatches_to", "returns_to"}:
+        return (*key, relation.get("evidence_ref"))
+    return key
 
 
 def _merge_semantic_history(
@@ -2136,11 +2147,7 @@ def _merge_semantic_history(
         projections = {}
         semantic["projections"] = projections
     relations = list(semantic.get("relations") or [])
-    relation_keys = {
-        (row.get("from"), row.get("to"), row.get("type"))
-        for row in relations
-        if isinstance(row, dict)
-    }
+    relation_keys = {_semantic_relation_key(row) for row in relations if isinstance(row, dict)}
     _materialize_history_topology(facts, relations, relation_keys)
     for event in history.get("events", []):
         if not isinstance(event, dict):
@@ -2148,7 +2155,7 @@ def _merge_semantic_history(
         for relation in event.get("relations", []):
             if not isinstance(relation, dict):
                 continue
-            key = (relation.get("from"), relation.get("to"), relation.get("type"))
+            key = _semantic_relation_key(relation)
             if key in relation_keys:
                 continue
             relations.append(relation)
