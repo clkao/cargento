@@ -106,7 +106,7 @@ class ValidatorTests(unittest.TestCase):
         for path in (skill / "cargento_runtime").rglob("*"):
             if not path.is_file() or "__pycache__" in path.parts:
                 continue
-            if path.suffix in {".py", ".html", ".css", ".js"}:
+            if path.suffix in {".py", ".html", ".css", ".js", ".b64", ".txt"}:
                 shipped.add(path.relative_to(validator.ROOT / "cargento").as_posix())
 
         self.assertEqual(sorted(shipped), sorted(validator.CARGENTO_RUNTIME_FILES))
@@ -162,6 +162,46 @@ class ValidatorTests(unittest.TestCase):
         validator.parse_frontmatter(path, validation)
 
         self.assertTrue(any("license must be a string" in error for error in validation.errors))
+
+    def test_the_shipped_skill_declares_every_distributed_license(self) -> None:
+        path = validator.ROOT / "cargento" / "skills" / "cargento" / "SKILL.md"
+        validation = validator.Validation()
+
+        metadata = validator.parse_frontmatter(path, validation)
+
+        self.assertEqual([], validation.errors)
+        self.assertIsNotNone(metadata)
+        assert metadata is not None
+        self.assertEqual(
+            validator.SHIPPED_SKILL_LICENSES[("cargento", "cargento")],
+            metadata["license"],
+        )
+
+    def test_cargento_rejects_an_incomplete_license_declaration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = Path(tmp) / "cargento"
+            skill = plugin / "skills" / "cargento"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(
+                "---\nname: cargento\ndescription: Map local agents.\nlicense: Apache-2.0\n---\n",
+                encoding="utf-8",
+            )
+            validation = validator.Validation()
+
+            with mock.patch.object(
+                validator,
+                "render_catalog_estimate_line",
+                return_value="- cargento:cargento: Map local agents.",
+            ):
+                validator.validate_skills(plugin, validation)
+
+        self.assertTrue(
+            any(
+                "frontmatter license must be 'Apache-2.0 AND OFL-1.1'" in error
+                for error in validation.errors
+            ),
+            validation.errors,
+        )
 
     def test_openai_metadata_rejects_invalid_optional_types(self) -> None:
         path = self.write_temp(
