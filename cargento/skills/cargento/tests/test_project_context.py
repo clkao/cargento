@@ -633,7 +633,9 @@ class ProjectContextTest(unittest.TestCase):
         activity = model["projections"]["activity"]
         self.assertEqual([], activity["nodes"])
         self.assertEqual(1, activity["historical_unresolved"])
-        self.assertEqual(self.NOW - project_context.SEMANTIC_CURRENT_HORIZON_SEC, activity["current_after"])
+        self.assertEqual(
+            self.NOW - project_context.SEMANTIC_CURRENT_HORIZON_SEC, activity["current_after"]
+        )
 
     def test_primary_activity_collapses_dispatch_burst_and_old_retry(self) -> None:
         events = [
@@ -875,6 +877,7 @@ class ProjectContextTest(unittest.TestCase):
                     "assignment_status": "unavailable",
                     "workflow_entity": "project-cockpit",
                     "workflow_stage": "shaping",
+                    "workflow_binding": "/repo/.spacedock/explore",
                 }
             ]
         }
@@ -902,6 +905,7 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual("derived", refreshed[0]["confidence"])
         self.assertEqual("project-cockpit", refreshed[0]["workflow_entity"])
         self.assertEqual("shaping", refreshed[0]["workflow_stage"])
+        self.assertEqual("/repo/.spacedock/explore", refreshed[0]["workflow_binding"])
         self.assertTrue(observe.call_args.kwargs["refresh"])
 
         with (

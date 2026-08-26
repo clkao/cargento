@@ -26,6 +26,8 @@ const projectTerminalBySession = {};
 let projectTerminalOpenKey = null;
 let projectTerminalSocket = null;
 let projectTerminal = null;
+let projectTerminalKey = null;
+let projectTerminalSequence = 0;
 let projectTerminalXtermPromise = null;
 let projectTerminalReconnect = null;
 const PROJECT_XTERM_JS = "https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.js";
@@ -201,6 +203,8 @@ function projectFocusSession(group){
 
 function setProjectCockpit(label){
   projectCaptureDraft();
+  projectTerminalOpenKey = null;
+  projectTerminalDispose();
   projectCockpitLabel = String(label || "");
   projectQueryLabel = projectCockpitLabel;
   projectQuerySession = null;
@@ -312,6 +316,10 @@ function projectAction(act, arg){
     projectCaptureDraft();
     projectQueryLabel = projectCockpitLabel;
     projectQuerySession = String(arg || "");
+    if(projectTerminalOpenKey && projectTerminalOpenKey !== projectQuerySession){
+      projectTerminalOpenKey = null;
+      projectTerminalDispose();
+    }
     projectGoalNote = "focused session changed";
     projectSyncUrl(projectCockpitLabel, projectQuerySession, false);
     if(lastData) render(lastData);
@@ -354,8 +362,13 @@ document.addEventListener("keydown", e => {
 if(typeof window !== "undefined" && window.addEventListener){
   window.addEventListener("popstate", () => {
     try{
+      const priorSession = projectQuerySession;
       projectQueryLabel = new URLSearchParams(location.search || "").get("project");
       projectQuerySession = new URLSearchParams(location.search || "").get("session");
+      if(projectTerminalOpenKey && projectQuerySession !== priorSession){
+        projectTerminalOpenKey = null;
+        projectTerminalDispose();
+      }
       const mode = new URLSearchParams(location.search || "").get("mode");
       if(mode === "calm" || mode === "project" || mode === "regular" || mode === "session"){
         displayMode = mode;
@@ -426,7 +439,9 @@ function projectDelegationLanes(sess, group){
       row.observer_sid === agent.observer_sid) || {};
     const entity = agent.workflow_entity || fallback.workflow_entity || "";
     const stage = agent.workflow_stage || fallback.workflow_stage || "";
-    return {entity, stage, observerSid:agent.observer_sid || fallback.observer_sid || "",
+    const workflowBinding = agent.workflow_binding || fallback.workflow_binding || "";
+    return {entity, stage, workflowBinding,
+      observerSid:agent.observer_sid || fallback.observer_sid || "",
       worker:agent.name || fallback.name || "Ensign",
       assignment:agent.assignment || fallback.assignment || "assignment unavailable",
       source:agent.assignment ? (agent.assignment_status || "exact parent dispatch") :
@@ -456,6 +471,19 @@ function projectTerminalDispose(){
     projectTerminalSocket = null;
   }
   if(projectTerminal){ projectTerminal.dispose(); projectTerminal = null; }
+  projectTerminalKey = null;
+  projectTerminalSequence = 0;
+}
+
+function projectTerminalBeforeRender(){
+  if(!projectTerminal || !projectTerminalKey) return null;
+  return document.getElementById("pc-terminal-screen");
+}
+
+function projectTerminalAfterRender(screen){
+  if(!screen || !projectTerminal || projectTerminalKey !== projectTerminalOpenKey) return;
+  const replacement = document.getElementById("pc-terminal-screen");
+  if(replacement && replacement !== screen) replacement.replaceWith(screen);
 }
 
 function projectTerminalLookup(d, sess){
@@ -463,8 +491,10 @@ function projectTerminalLookup(d, sess){
   const key = sessKey(sess);
   const revision = Number(d.generated) || 0;
   const current = projectTerminalBySession[key];
-  if(current && (current.state === "loading" || Number(current.revision) >= revision)) return;
-  projectTerminalBySession[key] = {state:"loading", revision};
+  if(current && (current.loading || Number(current.revision) >= revision)) return;
+  projectTerminalBySession[key] = current && current.state === "registered"
+    ? {state:"registered", revision, data:current.data, loading:true}
+    : {state:"loading", revision, loading:true};
   const path = "/api/interaction/origin?harness=" + encodeURIComponent(sess.harness) +
     "&sid=" + encodeURIComponent(sess.sid);
   fetch(path).then(response => {
@@ -509,24 +539,35 @@ function projectTerminalLoadXterm(){
   return projectTerminalXtermPromise;
 }
 
-function projectTerminalConnect(key, originHint){
-  if(projectTerminalOpenKey !== key || !projectTerminal) return;
+function projectTerminalConnect(key, originHint, terminal){
+  if(projectTerminalOpenKey !== key || projectTerminalKey !== key || projectTerminal !== terminal ||
+      projectTerminalSocket) return;
   const scheme = location.protocol === "https:" ? "wss" : "ws";
-  projectTerminalSocket = new WebSocket(`${scheme}://${location.host}/api/interaction/stream`);
-  projectTerminalSocket.onmessage = event => {
+  const socket = new WebSocket(`${scheme}://${location.host}/api/interaction/stream`);
+  projectTerminalSocket = socket;
+  projectTerminalSequence = 0;
+  socket.onmessage = event => {
+    if(projectTerminalSocket !== socket || projectTerminal !== terminal) return;
     const frame = JSON.parse(event.data);
     if(frame.state !== "streamed"){
-      projectTerminal.writeln(`\r\n[${frame.state}: ${frame.reason}]`);
+      terminal.writeln(`\r\n[${frame.state}: ${frame.reason}]`);
       return;
     }
-    if(originHint && frame.origin_id_hint !== originHint){ projectTerminalSocket.close(); return; }
-    if(frame.reset) projectTerminal.reset();
-    if(frame.data) projectTerminal.write(frame.data);
+    if(originHint && frame.origin_id_hint !== originHint){ socket.close(); return; }
+    const sequence = Number(frame.sequence);
+    if(!Number.isInteger(sequence) || sequence <= projectTerminalSequence) return;
+    if(frame.reset) terminal.reset();
+    if(frame.data) terminal.write(frame.data);
+    projectTerminalSequence = sequence;
   };
-  projectTerminalSocket.onclose = event => {
+  socket.onclose = event => {
+    if(projectTerminalSocket !== socket) return;
     projectTerminalSocket = null;
     if(event.code !== 1008 && projectTerminalOpenKey === key){
-      projectTerminalReconnect = setTimeout(() => projectTerminalConnect(key, originHint), 1000);
+      projectTerminalReconnect = setTimeout(() => {
+        projectTerminalReconnect = null;
+        projectTerminalConnect(key, originHint, terminal);
+      }, 1000);
     }
   };
 }
@@ -534,18 +575,26 @@ function projectTerminalConnect(key, originHint){
 function projectTerminalMount(key, originHint){
   const screen = document.getElementById("pc-terminal-screen");
   if(!screen || projectTerminalOpenKey !== key) return;
+  if(projectTerminal && projectTerminalKey === key) return;
+  if(projectTerminal) projectTerminalDispose();
   projectTerminalLoadXterm().then(() => {
     if(!document.getElementById("pc-terminal-screen") || projectTerminalOpenKey !== key) return;
-    projectTerminal = new window.Terminal({disableStdin:true, cursorBlink:false, rows:14,
+    if(projectTerminal && projectTerminalKey === key) return;
+    const terminal = new window.Terminal({disableStdin:true, cursorBlink:false, rows:14,
       scrollback:500, fontSize:12, fontFamily:"'SFMono-Regular', Consolas, monospace",
       theme:{background:"#11141a", foreground:"#dbe5ee", cursor:"#11141a"}});
-    projectTerminal.open(document.getElementById("pc-terminal-screen"));
-    projectTerminalConnect(key, originHint);
+    projectTerminal = terminal;
+    projectTerminalKey = key;
+    terminal.open(document.getElementById("pc-terminal-screen"));
+    projectTerminalConnect(key, originHint, terminal);
   }).catch(() => { screen.textContent = "Terminal renderer unavailable."; });
 }
 
 function projectTerminalSurface(sess){
-  if(!sess) return "";
+  if(!sess){
+    if(projectTerminalOpenKey){ projectTerminalOpenKey = null; projectTerminalDispose(); }
+    return "";
+  }
   const key = sessKey(sess);
   const entry = projectTerminalBySession[key];
   if(!entry || entry.state !== "registered") return "";
@@ -557,7 +606,9 @@ function projectTerminalSurface(sess){
   const origin = data.origin || {};
   const title = `${origin.session_name || "tmux"}:${origin.window_index || "?"}.` +
     `${origin.pane_index || "?"}`;
-  setTimeout(() => projectTerminalMount(key, data.origin_id_hint || ""), 0);
+  if(!projectTerminal || projectTerminalKey !== key){
+    setTimeout(() => projectTerminalMount(key, data.origin_id_hint || ""), 0);
+  }
   return `<aside class="pc-terminal" aria-label="Read-only terminal output">` +
     `<div class="pc-terminal-bar"><strong>${esc(title)}</strong><span>read-only</span>` +
     `<button type="button" class="quiet" data-calm="project-terminal-close"` +
@@ -788,10 +839,13 @@ function projectWorkflowLaneRow(d, row, lane){
     (workflow ? `<div class="pc-trail-result">${esc(row.assignment)}</div>` : "") +
     `<div class="pc-trail-quiet">${esc(row.worker)}` +
     (row.relation === "direct child" ? "" : ` · ${esc(row.relation)}`) + `</div>` +
-    `<details class="pc-trail-history"><summary>source</summary>${esc(row.source)}</details>`;
+    `<details class="pc-trail-history"><summary>source</summary>${esc(row.source)}` +
+    (row.workflowBinding ? ` · workflow ${esc(String(row.workflowBinding).split("/").filter(Boolean).pop() || row.workflowBinding)}` +
+      `<code>${esc(row.workflowBinding)}</code>` : "") + `</details>`;
   return projectGraphRow(d, row.at, kind, lane, body,
     `data-assignment-lane="current" data-subagent-depth="${row.depth}"` +
-      (workflow ? ` data-work-item="${esc(row.entity)}" data-work-stage="${esc(row.stage)}"` : ""),
+      (workflow ? ` data-work-item="${esc(row.entity)}" data-work-stage="${esc(row.stage)}"` +
+        ` data-workflow-binding="${esc(row.workflowBinding)}"` : ""),
     heading);
 }
 

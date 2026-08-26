@@ -1851,11 +1851,17 @@ def _active_child_assignments(
         }
         workflow_entity = child.get("workflow_entity")
         workflow_stage = child.get("workflow_stage")
+        workflow_binding = child.get("workflow_binding")
         if isinstance(workflow_entity, str) and isinstance(workflow_stage, str):
             row.update(
                 {
                     "workflow_entity": workflow_entity,
                     "workflow_stage": workflow_stage,
+                    **(
+                        {"workflow_binding": workflow_binding}
+                        if isinstance(workflow_binding, str) and workflow_binding
+                        else {}
+                    ),
                 }
             )
         exact = child.get("assignment")

@@ -28,6 +28,10 @@ function render(d){
     document.title = (queue.length > 0 ? `(${queue.length}!) ` : "") + "Cargento";
     return;
   }
+  if(displayMode !== "project" && projectTerminalOpenKey){
+    projectTerminalOpenKey = null;
+    projectTerminalDispose();
+  }
   if(displayMode === "calm"){
     // Carry the outgoing ledger's scroll offset across the DOM swap — unless
     // the last action re-filtered the list, where the old offset is meaningless.
@@ -55,10 +59,12 @@ function render(d){
        stop the refresh loop from erasing text while the operator is typing. */
     const projectDraft = projectCaptureDraft();
     const projectControlFocus = calmFocusKey();
+    const projectTerminalScreen = projectTerminalBeforeRender();
     renderInProgress = true;
     app.className = "wrap project";
     app.innerHTML = modeBar() + usageBanner(d, true) + projectView(d, projectDraft);
     renderInProgress = false;
+    projectTerminalAfterRender(projectTerminalScreen);
     projectRestoreFocus(projectDraft);
     calmRestoreFocus(projectControlFocus);
     projectLoadContext(d);

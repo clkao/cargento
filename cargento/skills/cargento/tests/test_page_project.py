@@ -680,15 +680,19 @@ projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
 const d = payload([mk({project:"repo/proj", harness:"codex", sid:"focus-1", active:true,
   state:"working", last_activity:99999, subagent_hierarchy:[
     {name:"Einstein", observer_sid:"child-1", depth:1, assignment:"Shape cockpit",
-      workflow_entity:"project-cockpit", workflow_stage:"shaping"},
+      workflow_entity:"project-cockpit", workflow_stage:"shaping",
+      workflow_binding:"/repo/.spacedock/explore"},
     {name:"Ampere", observer_sid:"child-2", depth:1, assignment:"Shape terminal",
-      workflow_entity:"session-origin", workflow_stage:"shaping"}
+      workflow_entity:"session-origin", workflow_stage:"shaping",
+      workflow_binding:"/repo/.spacedock/explore"}
   ]})]);
 Object.assign(d, {ask:true, asks:[]});
 render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   lanes:h.includes("Project cockpit · shaping") && h.includes("Session origin · shaping"),
+  explore:h.includes('data-workflow-binding="/repo/.spacedock/explore"') &&
+    h.includes("workflow explore") && !h.includes("workflow dev"),
   noDuplicate:!h.includes('data-semantic-burst="2"') && !h.includes("2 entities touched")
 }));
 """
@@ -698,7 +702,31 @@ console.log(JSON.stringify({
             query_session="codex:focus-1",
         )
         self.assertTrue(out["lanes"])
+        self.assertTrue(out["explore"])
         self.assertTrue(out["noDuplicate"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_same_entity_slug_in_two_workflows_has_distinct_lane_identity(self) -> None:
+        checks = """
+const d = {generated:100};
+const explore = projectWorkflowLaneRow(d, {entity:"project-cockpit", stage:"shaping",
+  workflowBinding:"/repo/.spacedock/explore", assignment:"Shape prototype", worker:"Einstein",
+  relation:"direct child", source:"structured dispatch artifact", depth:1, at:99}, 1);
+const dev = projectWorkflowLaneRow(d, {entity:"project-cockpit", stage:"shaping",
+  workflowBinding:"/repo/.spacedock/dev", assignment:"Shape release", worker:"Legacy",
+  relation:"direct child", source:"structured dispatch artifact", depth:1, at:98}, 2);
+console.log(JSON.stringify({
+  sameHeading:(explore.match(/Project cockpit · shaping/g) || []).length === 2 &&
+    (dev.match(/Project cockpit · shaping/g) || []).length === 2,
+  distinct:explore.includes('data-workflow-binding="/repo/.spacedock/explore"') &&
+    dev.includes('data-workflow-binding="/repo/.spacedock/dev"'),
+  inspectable:explore.includes("workflow explore") && dev.includes("workflow dev")
+}));
+"""
+        out = self.run_project(checks)
+        self.assertTrue(out["sameHeading"])
+        self.assertTrue(out["distinct"])
+        self.assertTrue(out["inspectable"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_exact_registered_origin_opens_adjacent_read_only_terminal(self) -> None:
@@ -746,6 +774,109 @@ console.log(JSON.stringify({
         self.assertTrue(out["absent"])
         self.assertTrue(out["focus"])
         self.assertTrue(out["reconnect"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_terminal_rerender_reuses_one_socket_and_applies_each_sequence_once(self) -> None:
+        checks = """
+const key = "codex:focus-1";
+location.protocol = "http:"; location.host = "127.0.0.1:8766";
+const operations = [];
+let terminalCount = 0;
+window.Terminal = class {
+  constructor(){ terminalCount += 1; }
+  open(node){ operations.push(`open:${node.name}`); }
+  reset(){ operations.push("reset"); }
+  write(data){ operations.push(`write:${data}`); }
+  writeln(data){ operations.push(`writeln:${data}`); }
+  dispose(){ operations.push("dispose"); }
+};
+const sockets = [];
+globalThis.WebSocket = class {
+  constructor(url){ this.url = url; sockets.push(this); }
+  close(){ this.closed = true; }
+};
+const firstScreen = {name:"first"};
+__els["pc-terminal-screen"] = firstScreen;
+projectTerminalOpenKey = key;
+projectTerminalMount(key, "origin01");
+await __settle(); await __settle();
+projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:5,
+  reset:true, data:"snapshot", origin_id_hint:"origin01"})});
+projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:5,
+  reset:true, data:"duplicate", origin_id_hint:"origin01"})});
+projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:4,
+  reset:false, data:"old", origin_id_hint:"origin01"})});
+projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:6,
+  reset:false, data:"delta", origin_id_hint:"origin01"})});
+projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:6,
+  reset:false, data:"duplicate-delta", origin_id_hint:"origin01"})});
+const preserved = projectTerminalBeforeRender();
+let replacedWith = null;
+__els["pc-terminal-screen"] = {name:"replacement", replaceWith(node){ replacedWith = node; }};
+projectTerminalAfterRender(preserved);
+projectTerminalMount(key, "origin01");
+await __settle();
+const firstSocket = projectTerminalSocket;
+firstSocket.onclose({code:1006});
+__timers[__timers.length - 1]();
+const secondSocket = projectTerminalSocket;
+secondSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:8,
+  reset:true, data:"reconnected", origin_id_hint:"origin01"})});
+firstSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:9,
+  reset:false, data:"orphan", origin_id_hint:"origin01"})});
+firstSocket.onclose({code:1006});
+__els["pc-terminal-screen"] = firstScreen;
+let settleOrigin = null;
+__fetchImpl = url => String(url).includes("/api/interaction/origin")
+  ? new Promise(resolve => { settleOrigin = resolve; }) : new Promise(() => {});
+projectTerminalBySession[key] = {state:"registered", revision:99, data:{
+  state:"registered", origin_id_hint:"origin01", origin:{session_name:"Cargento",
+    window_index:"1", pane_index:"1"}}};
+const session = mk({project:"repo/proj", harness:"codex", sid:"focus-1", active:true,
+  state:"working", last_activity:99});
+const d = payload([session]); Object.assign(d, {generated:100, ask:true, asks:[]});
+lastData = d;
+projectTerminalLookup(d, session);
+const pendingKeepsSlot = projectTerminalBySession[key].state === "registered" &&
+  projectTerminalBySession[key].loading === true &&
+  projectTerminalSurface(session).includes('class="pc-terminal"');
+settleOrigin({ok:true, json:() => Promise.resolve({state:"registered",
+  origin_id_hint:"origin01", origin:{session_name:"Cargento", window_index:"1", pane_index:"1"}})});
+await __settle(); await __settle(); await __settle();
+console.log(JSON.stringify({
+  oneTerminal:terminalCount === 1,
+  oneSocketBeforeReconnect:sockets.length === 2 && firstSocket !== secondSocket,
+  oneLiveSocket:projectTerminalSocket === secondSocket,
+  pendingKeepsSlot,
+  oneAfterLookup:terminalCount === 1 && sockets.length === 2,
+  operations,
+  preserved:replacedWith === firstScreen,
+  sequence:projectTerminalSequence
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["oneTerminal"])
+        self.assertTrue(out["oneSocketBeforeReconnect"])
+        self.assertTrue(out["oneLiveSocket"])
+        self.assertTrue(out["pendingKeepsSlot"])
+        self.assertTrue(out["oneAfterLookup"])
+        self.assertEqual(
+            [
+                "open:first",
+                "reset",
+                "write:snapshot",
+                "write:delta",
+                "reset",
+                "write:reconnected",
+            ],
+            out["operations"],
+        )
+        self.assertTrue(out["preserved"])
+        self.assertEqual(8, out["sequence"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_awaiting_session_shows_escaped_final_output_compact_then_full(self) -> None:

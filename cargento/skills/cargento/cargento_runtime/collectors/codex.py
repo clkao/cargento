@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from typing import TYPE_CHECKING, Any
 
 # Absolute on the canonical top-level package: a sub-package cannot use
@@ -35,6 +36,22 @@ _ENSIGN_AGENT_PATH_RE = re.compile(
     r"^/root/spacedock_ensign_([a-z0-9][a-z0-9_]*?)(?:_cycle[0-9]+)?$"
 )
 _DISPATCH_DIRECTORY = "/tmp/spacedock-dispatch"  # noqa: S108
+
+
+def _dispatch_workflow_dir(line: str) -> str:
+    """Return only an absolute workflow directory explicitly named by a dispatch."""
+    if "--workflow-dir" not in line:
+        return ""
+    try:
+        parts = shlex.split(line)
+    except ValueError:
+        return ""
+    if "--workflow-dir" not in parts:
+        return ""
+    index = parts.index("--workflow-dir") + 1
+    if index >= len(parts) or not os.path.isabs(parts[index]):
+        return ""
+    return records.safe_text(os.path.realpath(parts[index]), 1024)
 
 
 def _usage_window(now: float, raw: Any) -> tuple[str, dict[str, Any]] | None:
@@ -217,15 +234,16 @@ def _assignment_summary(message: str) -> str:
     return ""
 
 
-def _ensign_dispatch_metadata(agent_path: str) -> tuple[str, str, str]:
-    """Human title plus entity/stage identity from one durable ensign artifact."""
+def _ensign_dispatch_metadata(agent_path: str) -> tuple[str, str, str, str]:
+    """Human title plus exact workflow/entity/stage identity from one ensign artifact."""
     match = _ENSIGN_AGENT_PATH_RE.fullmatch(agent_path)
     if match is None or not match.group(1):
-        return "", "", ""
+        return "", "", "", ""
     slug = match.group(1).replace("_", "-")
     artifact = f"{_DISPATCH_DIRECTORY}/spacedock-ensign-{slug}.md"
     title = ""
     stage = ""
+    workflow = ""
     for raw in runtime_io.iter_bounded_text_lines(
         artifact,
         max_lines=40,
@@ -241,22 +259,25 @@ def _ensign_dispatch_metadata(agent_path: str) -> tuple[str, str, str]:
             candidate = line[len("Stage:") :].strip()
             if re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate):
                 stage = candidate
-        if title and stage:
+        workflow = workflow or _dispatch_workflow_dir(line)
+        if title and stage and workflow:
             break
     suffix = f"-{stage}" if stage else ""
     entity = slug[: -len(suffix)] if suffix and slug.endswith(suffix) else ""
-    return title, entity, stage
+    return title, entity, stage, workflow
 
 
 def _child_assignment(
     config: RuntimeConfig,
     parent_path: str,
     agent_path: str,
-) -> tuple[str | None, str, str, str]:
+) -> tuple[str | None, str, str, str, str]:
     """Latest exact plaintext parent assignment for one child path."""
     if not agent_path:
-        return None, "unavailable", "", ""
-    artifact_assignment, workflow_entity, workflow_stage = _ensign_dispatch_metadata(agent_path)
+        return None, "unavailable", "", "", ""
+    artifact_assignment, workflow_entity, workflow_stage, workflow_binding = (
+        _ensign_dispatch_metadata(agent_path)
+    )
     task_name = agent_path.rstrip("/").rsplit("/", 1)[-1]
     latest: str | None = None
     for raw in runtime_io.read_tail(config, parent_path) if parent_path else ():
@@ -284,15 +305,16 @@ def _child_assignment(
             continue
         latest = _assignment_summary(message) or None
     if latest:
-        return latest, "exact parent dispatch", workflow_entity, workflow_stage
+        return latest, "exact parent dispatch", workflow_entity, workflow_stage, workflow_binding
     if artifact_assignment:
         return (
             artifact_assignment,
             "structured dispatch artifact",
             workflow_entity,
             workflow_stage,
+            workflow_binding,
         )
-    return None, "unavailable", "", ""
+    return None, "unavailable", "", "", ""
 
 
 def _rollouts(
@@ -342,7 +364,7 @@ def collect(
     agent_data: dict[str, dict[str, Any]] = {}
     found, rollouts, meta_by_sid = _rollouts(config, state)
     path_by_sid = {sid: fp for sid, _, fp, _ in rollouts}
-    assignment_cache: dict[tuple[str, str], tuple[str | None, str, str, str]] = {}
+    assignment_cache: dict[tuple[str, str], tuple[str | None, str, str, str, str]] = {}
     lifecycle_paths = set(
         [
             fp
@@ -425,6 +447,7 @@ def collect(
                         assignment[1],
                         assignment[2],
                         assignment[3],
+                        assignment[4],
                         sid,
                     )
                 )
@@ -450,7 +473,6 @@ def collect(
         # for no scan. Such a row reports no model rather than an old one: the
         # collector has not read it this pass, and that is the honest reading.
         scan = turns.scan_turns(config, state, fp, "codex") if info else None
-        last_event_sources = (info["last_event_ts"] if info else 0, *activity_sources)
         subagents = [
             {"name": label, "model": model, "started_at": started_at}
             for label, _, model, started_at, *_ in agents
@@ -469,24 +491,26 @@ def collect(
                     {
                         "workflow_entity": workflow_entity,
                         "workflow_stage": workflow_stage,
+                        "workflow_binding": workflow_binding,
                     }
                     if workflow_entity and workflow_stage
                     else {}
                 ),
             }
             for (
-                 label,
-                 _,
-                 model,
-                 started_at,
-                 depth,
-                 parent_name,
-                 assignment,
-                 assignment_status,
-                 workflow_entity,
-                 workflow_stage,
-                 observer_sid,
-             ) in sorted(
+                label,
+                _,
+                model,
+                started_at,
+                depth,
+                parent_name,
+                assignment,
+                assignment_status,
+                workflow_entity,
+                workflow_stage,
+                workflow_binding,
+                observer_sid,
+            ) in sorted(
                 agents,
                 key=lambda agent: (agent[4], -agent[1], agent[0]),
             )

@@ -447,6 +447,7 @@ class CodexCollectorTest(RuntimeTestCase):
             artifact_lines=(
                 "You are working on: Project cockpit and remembered goal\n",
                 "Stage: shaping\n",
+                "spacedock dispatch show-stage-def --workflow-dir /repo/.spacedock/explore --stage shaping\n",
             ),
             agent_path="/root/spacedock_ensign_project_cockpit_shaping_cycle2",
         )
@@ -458,6 +459,7 @@ class CodexCollectorTest(RuntimeTestCase):
         self.assertEqual("structured dispatch artifact", recovered["assignment_status"])
         self.assertEqual("project-cockpit", recovered["workflow_entity"])
         self.assertEqual("shaping", recovered["workflow_stage"])
+        self.assertEqual("/repo/.spacedock/explore", recovered["workflow_binding"])
 
     def test_codex_meta_tolerates_malformed_payload_types(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

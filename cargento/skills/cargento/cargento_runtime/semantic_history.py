@@ -200,10 +200,16 @@ def _assignment_events(
         worker = records.safe_text(assignment.get("name"), 70) or "subagent"
         entity = records.safe_text(assignment.get("workflow_entity"), 112)
         stage = records.safe_text(assignment.get("workflow_stage"), 70)
-        identity = f"{observer_sid}\0{worker}\0{entity}\0{stage}\0{summary}"
+        workflow = records.safe_text(assignment.get("workflow_binding"), 1024)
+        identity = f"{observer_sid}\0{worker}\0{workflow}\0{entity}\0{stage}\0{summary}"
         digest = hashlib.blake2b(identity.encode(), digest_size=12).hexdigest()
         event_id = f"assignment:{digest}"
-        work_item_id = f"workflow:{entity}" if entity else f"assignment:{digest}"
+        workflow_digest = hashlib.blake2b(workflow.encode(), digest_size=10).hexdigest()
+        work_item_id = (
+            f"workflow:{workflow_digest}:{entity}"
+            if entity and workflow
+            else (f"workflow-unbound:{entity}" if entity else f"assignment:{digest}")
+        )
         fact: dict[str, Any] = {
             "fact_id": event_id,
             "at": observed_at,
@@ -221,6 +227,9 @@ def _assignment_events(
         }
         if stage:
             fact["stage"] = stage
+        if workflow:
+            fact["workflow_binding"] = workflow
+            fact["workflow_entity"] = entity
         source_identity = f"codex:{observer_sid}" if observer_sid else f"worker:{worker}"
         found.append(
             {
@@ -239,7 +248,9 @@ def _assignment_events(
                     "source_bindings": [
                         {
                             "source": "structured child assignment",
-                            "value": entity or summary,
+                            "value": (
+                                f"{workflow}:{entity}" if workflow and entity else entity or summary
+                            ),
                         }
                     ],
                     "contributor_refs": [],
@@ -269,6 +280,20 @@ def _merge(existing: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> li
                     and prior.get("work_binding") == work_binding
                 )
             }
+        if event_type == "assignment" and work_binding:
+            fact = merged_event.get("fact")
+            entity = fact.get("workflow_entity") if isinstance(fact, dict) else None
+            if entity and str(work_binding).startswith("workflow:"):
+                legacy_binding = f"workflow:{entity}"
+                by_id = {
+                    key: prior
+                    for key, prior in by_id.items()
+                    if not (
+                        prior.get("event_type") == "assignment"
+                        and prior.get("source_identity") == source_identity
+                        and prior.get("work_binding") == legacy_binding
+                    )
+                }
         if event_type == "observed_goal":
             same_source = [
                 prior

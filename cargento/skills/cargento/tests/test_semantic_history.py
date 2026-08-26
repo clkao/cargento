@@ -157,6 +157,7 @@ class SemanticHistoryTest(unittest.TestCase):
                     "source": "structured dispatch artifact",
                     "workflow_entity": "project-cockpit",
                     "workflow_stage": "shaping",
+                    "workflow_binding": "/repo/.spacedock/explore",
                 },
                 {
                     "name": "James",
@@ -171,9 +172,47 @@ class SemanticHistoryTest(unittest.TestCase):
         events = result["events"]
         self.assertEqual(["assignment", "assignment"], [event["event_type"] for event in events])
         workflow = next(
-            event for event in events if event["work_binding"] == "workflow:project-cockpit"
+            event for event in events if event["work_binding"].endswith(":project-cockpit")
         )
         generic = next(event for event in events if event is not workflow)
         self.assertEqual("shaping", workflow["fact"]["stage"])
         self.assertNotIn("stage", generic["fact"])
         self.assertEqual("one_off", generic["work_item"]["kind"])
+
+    def test_same_entity_slug_in_two_workflows_retains_distinct_exact_bindings(self) -> None:
+        assignments = [
+            {
+                "name": name,
+                "observer_sid": sid,
+                "assignment": f"Shape {workflow}",
+                "confidence": "exact",
+                "source": "structured dispatch artifact",
+                "workflow_entity": "project-cockpit",
+                "workflow_stage": "shaping",
+                "workflow_binding": f"/repo/.spacedock/{workflow}",
+            }
+            for name, sid, workflow in (
+                ("Einstein", "explore-child", "explore"),
+                ("Legacy", "dev-child", "dev"),
+            )
+        ]
+        result = semantic_history.update(
+            self.config,
+            build_runtime_state(self.config, started=1),
+            "git:project",
+            {"facts": [], "work_items": []},
+            [],
+            assignments,
+            now=100,
+        )
+        bindings = {event["work_binding"] for event in result["events"]}
+        self.assertEqual(2, len(bindings))
+        self.assertTrue(all(binding.endswith(":project-cockpit") for binding in bindings))
+        sources = {event["work_item"]["source_bindings"][0]["value"] for event in result["events"]}
+        self.assertEqual(
+            {
+                "/repo/.spacedock/explore:project-cockpit",
+                "/repo/.spacedock/dev:project-cockpit",
+            },
+            sources,
+        )
