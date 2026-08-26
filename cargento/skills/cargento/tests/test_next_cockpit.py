@@ -399,6 +399,33 @@ console.log(JSON.stringify({html:nextCockpitRecoveryStrip(group, observation)}))
         self.assertIn("consumed/applied 1", html)
         self.assertNotIn("blocker", html.casefold())
 
+    def test_command_attention_leads_with_exact_authorization_and_assigns_fo_recovery(self) -> None:
+        out = self.run_fixture(
+            """
+const group = nextProjectGroups()[0];
+const semantic = JSON.parse(JSON.stringify(__semantic));
+semantic.projections.command_attention = [{projection_id:"auth",at:109,
+  owner:"CAPTAIN",kind:"push_pr",label:"The completion-guard error names the failing sub-check",
+  question:"Approve pushing this candidate and creating the PR?",
+  evidence:{source:"assistant final_answer followed by terminal turn state",confidence:"exact"}}];
+semantic.facts.push({fact_id:"pending",at:108,type:"gate_decision",by:"person:captain",
+  application_state:"pending",work_item_id:__task});
+semantic.projections.trail_heads.push({work_item_id:"workflow:return",status:"prepared",
+  dispatch_count:2,latest_meaningful_event:"return"});
+const observation = {semantic,workflow_discovery:{state:"error",reason:"timed out"},sources:{}};
+const items = nextCockpitCommandAttention(group, observation);
+console.log(JSON.stringify({items,html:nextCockpitRecoveryStrip(group, observation, items)}));
+""",
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual("CAPTAIN", out["items"][0]["owner"])
+        self.assertIn("authorize push + PR", out["items"][0]["label"])
+        self.assertTrue(all(row["owner"] == "FO" for row in out["items"][1:]))
+        self.assertIn("assistant final_answer followed by terminal turn state", out["html"])
+        self.assertIn("exact", out["html"])
+        self.assertLess(out["html"].index("CAPTAIN"), out["html"].index("FO"))
+
     def test_focus_reads_label_alias_then_saves_only_under_the_stable_project_key(self) -> None:
         label_key = "cargento.projectGoal.v1:cargento"
         stable_key = "cargento.projectGoal.v1:spacedock-research%2Fcargento"

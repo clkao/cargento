@@ -1677,6 +1677,70 @@ class ProjectContextTest(unittest.TestCase):
             [row["projection_id"] for row in focused["projections"]["operator_intents"]],
         )
 
+    def test_command_attention_keeps_exact_authorization_open_until_direct_resolution(
+        self,
+    ) -> None:
+        request = {
+            "fact_id": "request",
+            "at": 10.0,
+            "type": "result",
+            "work_item_id": "workflow:task",
+            "source_session": {"harness": "codex", "sid": "root"},
+            "authorization_request": {
+                "kind": "push_pr",
+                "question": "Approve pushing this candidate and creating the PR?",
+                "status": "open",
+            },
+            "evidence": {"source": "assistant final_answer", "confidence": "exact"},
+        }
+        semantic: dict[str, Any] = {
+            "facts": [request],
+            "work_items": [{"work_item_id": "workflow:task", "label": "Completion guard"}],
+            "projections": {},
+        }
+
+        open_projection = project_context._command_attention_projection(semantic)
+        self.assertEqual("CAPTAIN", open_projection[0]["owner"])
+        self.assertEqual("push_pr", open_projection[0]["kind"])
+        self.assertEqual("exact", open_projection[0]["evidence"]["confidence"])
+
+        semantic["facts"].insert(
+            0,
+            {
+                "fact_id": "answer",
+                "at": 11.0,
+                "type": "user_message",
+                "summary": "I authorize pushing this candidate and creating the PR.",
+                "source_session": {"harness": "codex", "sid": "root"},
+                "evidence": {"source": "captain message", "confidence": "exact"},
+            },
+        )
+        self.assertEqual([], project_context._command_attention_projection(semantic))
+
+    def test_bound_result_makes_one_task_returned_not_simultaneously_unreturned(self) -> None:
+        work_item_id = "workflow:task"
+        dispatch = {
+            "fact_id": "dispatch",
+            "at": 10.0,
+            "type": "prepared_dispatch",
+            "source_kind": "prepared_dispatch",
+            "work_item_id": work_item_id,
+        }
+        result = {
+            "fact_id": "result",
+            "at": 11.0,
+            "type": "result",
+            "work_item_id": work_item_id,
+        }
+
+        trails = project_context._semantic_trail_heads(
+            {work_item_id: [dispatch, result]}, [dispatch, result]
+        )
+
+        self.assertEqual(1, len(trails))
+        self.assertEqual("returned", trails[0]["status"])
+        self.assertEqual("result", trails[0]["latest_meaningful_event"])
+
     def test_focused_gates_require_exact_current_child_or_persisted_identity(self) -> None:
         workflow = "/repo/docs/dev"
 

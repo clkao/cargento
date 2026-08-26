@@ -54,6 +54,14 @@ _TASK_DIRECTIVE_RE = re.compile(
     r"prepare|remove|replace|review|revise|run|test|update|verify|write)\b",
     re.IGNORECASE,
 )
+_AUTHORIZATION_ANSWER_RE = re.compile(
+    r"\b(?:approve|authorize)(?:d)?\b[^.\n]*\bpush(?:ing)?\b[^.\n]*\bPR\b",
+    re.IGNORECASE,
+)
+_AUTHORIZATION_RESULT_RE = re.compile(
+    r"\bpush(?:ed|ing)\b[^.\n]*\b(?:created|opened|published)\b[^.\n]*\bPR\b",
+    re.IGNORECASE,
+)
 _SEMANTIC_FACT_TYPES = {
     "steer": "user_message",
     "prepared_dispatch": "prepared_dispatch",
@@ -2066,6 +2074,7 @@ def _semantic_trail_heads(
             "prepared_dispatch": "prepared",
             "work_birth": "requested",
             "work_result": "outcome",
+            "result": "returned",
             "gate_decision": "decision",
         }.get(str(newest.get("type")), "latest")
         head = {
@@ -2856,6 +2865,64 @@ def _semantic_for_focus(
     return _focused_semantic_graph(semantic, focus, child_assignments, now=now)
 
 
+def _authorization_resolved(request: Mapping[str, Any], facts: list[dict[str, Any]]) -> bool:
+    source = request.get("source_session")
+    request_at = float(request.get("at") or 0)
+    for fact in facts:
+        if float(fact.get("at") or 0) <= request_at or fact.get("source_session") != source:
+            continue
+        evidence = fact.get("evidence")
+        if not isinstance(evidence, dict) or evidence.get("confidence") != "exact":
+            continue
+        text = str(fact.get("detail") or fact.get("summary") or "")
+        if fact.get("type") == "user_message" and _AUTHORIZATION_ANSWER_RE.search(text):
+            return True
+        if fact.get("type") == "result" and _AUTHORIZATION_RESULT_RE.search(text):
+            return True
+    return False
+
+
+def _command_attention_projection(semantic: Mapping[str, Any]) -> list[dict[str, Any]]:
+    facts = [fact for fact in semantic.get("facts", []) if isinstance(fact, dict)]
+    labels = {
+        str(item.get("work_item_id") or ""): str(item.get("label") or "")
+        for item in semantic.get("work_items", [])
+        if isinstance(item, dict)
+    }
+    projected: list[dict[str, Any]] = []
+    for fact in facts:
+        request = fact.get("authorization_request")
+        if not isinstance(request, dict) or request.get("status") != "open":
+            continue
+        if _authorization_resolved(fact, facts):
+            continue
+        work_item_id = str(fact.get("work_item_id") or "")
+        label = labels.get(work_item_id) or "Codex session result"
+        projected.append(
+            {
+                "projection_id": _semantic_id("command-attention", fact.get("fact_id")),
+                "at": fact.get("at"),
+                "owner": "CAPTAIN",
+                "kind": str(request.get("kind") or "authorization"),
+                "label": label,
+                "question": str(request.get("question") or ""),
+                "work_item_id": work_item_id or None,
+                "source_fact": fact.get("fact_id"),
+                "evidence": copy.deepcopy(fact.get("evidence") or {}),
+            }
+        )
+    return sorted(projected, key=lambda item: float(item.get("at") or 0), reverse=True)
+
+
+def _with_command_attention(semantic: dict[str, Any]) -> dict[str, Any]:
+    projections = semantic.get("projections")
+    if not isinstance(projections, dict):
+        projections = {}
+        semantic["projections"] = projections
+    projections["command_attention"] = _command_attention_projection(semantic)
+    return semantic
+
+
 def _active_child_assignments(
     config: RuntimeConfig,
     state: RuntimeState,
@@ -3085,11 +3152,13 @@ def collect(
         now=now,
         source_scans=history_source_scans,
     )
-    semantic = _semantic_for_focus(
-        _merge_semantic_history(semantic, history, now=now),
-        focus,
-        child_assignments,
-        now=now,
+    semantic = _with_command_attention(
+        _semantic_for_focus(
+            _merge_semantic_history(semantic, history, now=now),
+            focus,
+            child_assignments,
+            now=now,
+        )
     )
     return {
         "project": project,

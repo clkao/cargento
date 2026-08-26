@@ -214,16 +214,17 @@ function nextProjectView(project){
   const focus = nextCockpitFocusedSession(group);
   nextCockpitLoadContext(group, null);
   const observation = nextCockpitProjectObservation(group);
+  const commandAttention = nextCockpitCommandAttention(group, observation);
   const status = observation && observation.semantic
     ? nextCockpitProjectStatus(group, observation.semantic) : "";
   return `<article class="next-project-detail" data-next-project-detail="${esc(group.label)}">` +
     nextProjectDetailHeader(context) +
     nextCockpitSessionNav(group, focus) + nextCockpitProjectScope() + status +
-    nextCockpitRecoveryStrip(group, observation) +
+    nextCockpitRecoveryStrip(group, observation, commandAttention) +
     '<div class="next-project-detail-layout">' +
     '<main class="next-project-detail-main" data-next-project-main>' +
     `<div data-next-project-section="plan">${nextProjectPlanBlock(context)}</div>` +
-    `<div data-next-project-section="going-on">${nextProjectGoingOn(context)}</div>` +
+    `<div data-next-project-section="going-on">${nextProjectGoingOn(context, commandAttention)}</div>` +
     `<div data-next-project-section="done">${nextProjectDone(context)}</div>` +
     `<div data-next-project-section="workstream">${nextProjectWorkstream(context)}</div>` +
     `<div data-next-project-section="cockpit">${nextProjectCockpit(context)}</div></main>` +

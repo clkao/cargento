@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from cargento_runtime import semantic_history
 from cargento_runtime.config import build_runtime_config
@@ -58,7 +59,7 @@ class SemanticHistoryTest(unittest.TestCase):
             self._fact("checkpoint", 13, "result", "checkpoint", "Checkpoint fb056", work_item_id),
             self._fact("lifecycle", 14, "task_complete", "task_complete", "worker stopped", None),
         ]
-        semantic = {
+        semantic: dict[str, Any] = {
             "facts": facts,
             "work_items": [
                 {
@@ -111,9 +112,94 @@ class SemanticHistoryTest(unittest.TestCase):
         final = next(
             event for event in restarted["events"] if event["event_type"] == "final_output"
         )
+        self.assertEqual("session:codex:root", final["work_binding"])
         self.assertEqual("Ready for review.\nExact bounded final output.", final["fact"]["detail"])
         self.assertTrue(restarted["persisted"])
         self.assertEqual(final["event_id"], restarted["cursors"]["codex:root"]["event_id"])
+
+    def test_final_output_binds_only_through_unique_exact_workflow_alias_and_title(self) -> None:
+        work_item_id = semantic_history.workflow_work_item_id("/repo/docs/dev", "9xnaq83nry")
+        dispatch = self._fact(
+            "dispatch",
+            10,
+            "prepared_dispatch",
+            "prepared_dispatch",
+            "The completion-guard error names the failing sub-check",
+            work_item_id,
+        )
+        dispatch["source_session"] = {"harness": "codex", "sid": "root"}
+        gate = self._fact(
+            "gate",
+            11,
+            "gate_decision",
+            "gate",
+            "validation approved",
+            work_item_id,
+        )
+        gate["workflow_entity"] = "9xnaq83nry"
+        semantic: dict[str, Any] = {
+            "facts": [dispatch, gate],
+            "work_items": [
+                {
+                    "work_item_id": work_item_id,
+                    "label": "The completion-guard error names the failing sub-check",
+                    "kind": "workflow_item",
+                }
+            ],
+        }
+        output = (
+            "`9xn` passed validation. A separate authorization is required to push and create "
+            "the PR.\n- Title: The completion-guard error names the failing sub-check\n"
+            "- Candidate: `d24e90a`\n[9xn](/repo/blob/sha/task.md)\n"
+            "Approve pushing this candidate and creating the PR?"
+        )
+        session = {
+            "harness": "codex",
+            "sid": "root",
+            "state": "idle",
+            "last_activity": 12.0,
+            "last_output": output,
+        }
+
+        result = semantic_history.update(
+            self.config,
+            build_runtime_state(self.config, started=1),
+            "git:project",
+            semantic,
+            [session],
+        )
+        final = next(row for row in result["events"] if row["event_type"] == "final_output")
+
+        self.assertEqual(work_item_id, final["work_binding"])
+        self.assertEqual(work_item_id, final["fact"]["work_item_id"])
+        self.assertEqual("push_pr", final["fact"]["authorization_request"]["kind"])
+        self.assertEqual("exact", final["fact"]["result_binding"]["confidence"])
+
+        duplicate = dict(semantic["work_items"][0])
+        duplicate["work_item_id"] = semantic_history.workflow_work_item_id(
+            "/repo/docs/explore", "9xnother"
+        )
+        duplicate_dispatch = dict(dispatch)
+        duplicate_dispatch["fact_id"] = "dispatch-other"
+        duplicate_dispatch["work_item_id"] = duplicate["work_item_id"]
+        duplicate_gate = dict(gate)
+        duplicate_gate["fact_id"] = "gate-other"
+        duplicate_gate["work_item_id"] = duplicate["work_item_id"]
+        duplicate_gate["workflow_entity"] = "9xnother"
+        ambiguous = semantic_history.update(
+            self.config,
+            build_runtime_state(self.config, started=2),
+            "git:ambiguous",
+            {
+                "facts": [dispatch, gate, duplicate_dispatch, duplicate_gate],
+                "work_items": [semantic["work_items"][0], duplicate],
+            },
+            [session],
+        )
+        ambiguous_final = next(
+            row for row in ambiguous["events"] if row["event_type"] == "final_output"
+        )
+        self.assertEqual("session:codex:root", ambiguous_final["work_binding"])
 
     def test_unchanged_observer_refresh_replaces_freshness_and_change_records_shift(self) -> None:
         state = build_runtime_state(self.config, started=1)

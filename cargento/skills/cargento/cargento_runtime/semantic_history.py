@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 from typing import TYPE_CHECKING, Any
 
 from . import records
@@ -23,6 +24,16 @@ HISTORY_WINDOW_SEC = 24 * 60 * 60
 STORE_NAME = "semantic-work-history.json"
 RESCAN_OVERLAP_BYTES = 64 * 1024
 BACKFILL_SCHEMA_VERSION = 5
+
+_RESULT_ALIAS_RE = re.compile(r"\[([a-z0-9][a-z0-9_-]{2,31})\]\([^)]+\)", re.IGNORECASE)
+_RESULT_TITLE_RE = re.compile(r"(?m)^- Title:\s*(\S.*)$")
+_AUTHORIZATION_REQUIRED_RE = re.compile(
+    r"\b(?:separate|explicit) authorization is required\b[^.\n]*(?:push|create)[^.\n]*\bPR\b",
+    re.IGNORECASE,
+)
+_AUTHORIZATION_QUESTION_RE = re.compile(
+    r"(?im)^(?:approve|authorize)[^?\n]*\bpush(?:ing)?\b[^?\n]*\bPR\b\?\s*$"
+)
 
 _FACT_EVENT_TYPES = {
     "user_message": "operator_direction",
@@ -241,6 +252,14 @@ def _final_output_events(sessions: Iterable[Mapping[str, Any]]) -> list[dict[str
             "detail": exact,
             "source_session": {"harness": harness, "sid": sid},
         }
+        required = _AUTHORIZATION_REQUIRED_RE.search(exact)
+        question = _AUTHORIZATION_QUESTION_RE.search(exact)
+        if required and question:
+            fact["authorization_request"] = {
+                "kind": "push_pr",
+                "question": records.safe_text(question.group(0), 240),
+                "status": "open",
+            }
         found.append(
             {
                 "event_id": event_id,
@@ -263,6 +282,64 @@ def _final_output_events(sessions: Iterable[Mapping[str, Any]]) -> list[dict[str
             }
         )
     return found
+
+
+def _bind_final_output_events(events: list[dict[str, Any]]) -> None:
+    workflow_events = [
+        event
+        for event in events
+        if isinstance(event, dict) and str(event.get("work_binding") or "").startswith("workflow:")
+    ]
+    for event in events:
+        if event.get("event_type") != "final_output":
+            continue
+        fact = event.get("fact")
+        if not isinstance(fact, dict):
+            continue
+        detail = str(fact.get("detail") or "")
+        title_match = _RESULT_TITLE_RE.search(detail)
+        aliases = {match.casefold() for match in _RESULT_ALIAS_RE.findall(detail)}
+        if title_match is None or not aliases:
+            continue
+        title = title_match.group(1).strip()
+        source_identity = str(event.get("source_identity") or "")
+        candidates: dict[str, dict[str, Any]] = {}
+        for candidate in workflow_events:
+            binding = str(candidate.get("work_binding") or "")
+            item = candidate.get("work_item")
+            candidate_fact = candidate.get("fact")
+            if not isinstance(item, dict) or str(item.get("label") or "") != title:
+                continue
+            has_assignment = any(
+                row.get("event_type") == "assignment"
+                and row.get("work_binding") == binding
+                and row.get("source_identity") == source_identity
+                for row in workflow_events
+            )
+            entities = {
+                str(row.get("fact", {}).get("workflow_entity") or "").casefold()
+                for row in workflow_events
+                if row.get("work_binding") == binding and isinstance(row.get("fact"), dict)
+            }
+            if (
+                has_assignment
+                and any(entity.startswith(alias) for entity in entities for alias in aliases)
+            ) or (
+                isinstance(candidate_fact, dict)
+                and candidate.get("source_identity") == source_identity
+                and str(candidate_fact.get("workflow_entity") or "").casefold() in aliases
+            ):
+                candidates[binding] = item
+        if len(candidates) != 1:
+            continue
+        binding, item = next(iter(candidates.items()))
+        fact["work_item_id"] = binding
+        fact["result_binding"] = {
+            "confidence": "exact",
+            "source": "unique workflow entity alias, exact task title, and session assignment",
+        }
+        event["work_binding"] = binding
+        event["work_item"] = dict(item)
 
 
 def _assignment_events(
@@ -475,6 +552,7 @@ def update(
         projects = payload["projects"]
         prior = projects.get(project)
         existing = prior.get("events", []) if isinstance(prior, dict) else []
+        _bind_final_output_events([*(existing if isinstance(existing, list) else []), *incoming])
         merged = _merge(existing if isinstance(existing, list) else [], incoming)
         if isinstance(now, (int, float)):
             floor = float(now) - HISTORY_WINDOW_SEC

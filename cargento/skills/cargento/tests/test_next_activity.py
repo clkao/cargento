@@ -316,8 +316,25 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         )
         assert isinstance(html, str)
 
-        self.assertIn("Nothing active or waiting on you in this project.", html)
+        self.assertIn("No session currently running. Command attention remains above.", html)
         self.assertIn("No completed tracked tasks in this payload.", html)
+
+    def test_going_on_empty_copy_never_claims_all_clear_with_command_attention(self) -> None:
+        out = self._run_page_js(
+            """
+nextData = {generated:100,sessions:[],harnesses:[]};
+const context = {group:{label:"quiet/repo",sessions:[{sid:"idle",harness:"codex",
+  state:"idle",active:true,last_activity:99}]},harnesses:new Map()};
+const attention = [{owner:"CAPTAIN",label:"authorize push + PR"}];
+console.log(JSON.stringify({withAttention:nextProjectGoingOn(context, attention),
+  withoutAttention:nextProjectGoingOn(context, [])}));
+""",
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("No session currently running", out["withAttention"])
+        self.assertNotIn("Nothing active or waiting on you", out["withAttention"])
+        self.assertIn("Nothing active or waiting on you", out["withoutAttention"])
 
 
 if __name__ == "__main__":

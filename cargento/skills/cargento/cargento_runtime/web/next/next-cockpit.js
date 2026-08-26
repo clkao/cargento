@@ -147,31 +147,47 @@ function nextCockpitSourceFailures(observation){
   return failures;
 }
 
-function nextCockpitRecoveryAttention(group, observation){
+function nextCockpitCommandAttention(group, observation){
   const attention = [];
+  const add = (owner, label, source, confidence = "exact") => attention.push({
+    owner, label, evidence:{source, confidence},
+  });
+  const semantic = observation && observation.semantic || {};
+  const projected = semantic.projections && Array.isArray(semantic.projections.command_attention)
+    ? semantic.projections.command_attention : [];
+  for(const item of projected){
+    if(!item || item.owner !== "CAPTAIN") continue;
+    const label = item.kind === "push_pr"
+      ? `authorize push + PR for ${String(item.label || "Codex session result")}`
+      : String(item.question || item.label || "answer explicit authorization request");
+    attention.push({owner:"CAPTAIN",label,evidence:item.evidence || {}});
+  }
   const needs = nextCockpitProjectNeeds(group);
-  if(needs) attention.push(`${needs} gate or ask ${needs === 1 ? "needs" : "need"} attention`);
+  if(needs) add("CAPTAIN", `${needs} gate or ask ${needs === 1 ? "needs" : "need"} attention`,
+    "AskRegistry or exact session needs-input state");
 
   const discovery = observation && observation.workflow_discovery || {};
   if(discovery.state === "error"){
     const reason = String(discovery.reason || "source error").trim();
-    attention.push(`workflow discovery failed${reason ? ` · ${reason}` : ""}`);
+    add("FO", `workflow discovery failed${reason ? ` · ${reason}` : ""}`,
+      String(discovery.source || "project workflow discovery"));
   }else if(discovery.state === "unavailable"){
     const reason = String(discovery.reason || "source unavailable").trim();
-    attention.push(`workflow discovery unavailable${reason ? ` · ${reason}` : ""}`);
+    add("FO", `workflow discovery unavailable${reason ? ` · ${reason}` : ""}`,
+      String(discovery.source || "project workflow discovery"));
   }
   const failures = nextCockpitSourceFailures(observation);
-  if(failures.length) attention.push(`source unavailable · ${failures[0]}` +
-    (failures.length > 1 ? ` · ${failures.length - 1} more` : ""));
+  if(failures.length) add("FO", `source unavailable · ${failures[0]}` +
+    (failures.length > 1 ? ` · ${failures.length - 1} more` : ""), "project context sources");
 
-  const semantic = observation && observation.semantic || {};
   const decisions = nextCockpitCaptainDecisionCounts(semantic);
   const unresolvedDecisions = decisions.pending + decisions.unknown;
   if(unresolvedDecisions){
     const parts = [];
     if(decisions.pending) parts.push(`${decisions.pending} pending`);
     if(decisions.unknown) parts.push(`${decisions.unknown} unknown`);
-    attention.push(`decision application · ${parts.join(" · ")}`);
+    add("FO", `decision application · ${parts.join(" · ")}`,
+      "exact captain gate decision facts");
   }
 
   const trails = semantic.projections && Array.isArray(semantic.projections.trail_heads)
@@ -179,8 +195,8 @@ function nextCockpitRecoveryAttention(group, observation){
   const unreturned = trails.filter(row => row && ["prepared", "requested"].includes(row.status));
   if(unreturned.length){
     const retried = unreturned.filter(row => Number(row.dispatch_count || 0) > 1).length;
-    attention.push(`assignment return not observed · ${unreturned.length}` +
-      (retried ? ` · ${retried} retried` : ""));
+    add("FO", `assignment return not observed · ${unreturned.length}` +
+      (retried ? ` · ${retried} retried` : ""), "semantic task trail heads");
   }
 
   const idle = group.sessions.filter(session => session.state === "idle");
@@ -192,12 +208,20 @@ function nextCockpitRecoveryAttention(group, observation){
     const parts = [];
     if(idle.length) parts.push(`owner idle · ${idle.length}`);
     if(stale.length) parts.push(`owner stale · ${stale.length}`);
-    attention.push(parts.join(" · "));
+    add("FO", parts.join(" · "), "exact session state");
   }
+  return attention;
+}
+
+function nextCockpitRecoveryAttention(group, observation, commandAttention){
+  const attention = commandAttention || nextCockpitCommandAttention(group, observation);
   if(!attention.length) return '<strong>No attention observed</strong>';
+  const row = item => `<strong>${esc(item.owner + " · " + item.label)}</strong>` +
+    `<small>${esc(String(item.evidence && item.evidence.source || "source unavailable"))} · ` +
+    `${esc(String(item.evidence && item.evidence.confidence || "confidence unavailable"))}</small>`;
   const rest = attention.slice(1);
-  return `<strong>${esc(attention[0])}</strong>` + (rest.length
-    ? `<details><summary>${rest.length} more</summary><ul>${rest.map(row => `<li>${esc(row)}</li>`).join("")}</ul></details>`
+  return row(attention[0]) + (rest.length
+    ? `<details><summary>${rest.length} more</summary><ul>${rest.map(item => `<li>${row(item)}</li>`).join("")}</ul></details>`
     : "");
 }
 
@@ -213,11 +237,11 @@ function nextCockpitRecoveryDecisions(semantic){
     .join(" · ");
 }
 
-function nextCockpitRecoveryStrip(group, observation){
+function nextCockpitRecoveryStrip(group, observation, commandAttention){
   const semantic = observation && observation.semantic || {};
   return '<section class="next-cockpit-recovery" aria-label="Recovery summary">' +
     `<div><span>OUTCOME</span><strong>${esc(nextCockpitRecoveryOutcome(group, observation))}</strong></div>` +
-    `<div><span>ATTENTION</span>${nextCockpitRecoveryAttention(group, observation)}</div>` +
+    `<div><span>ATTENTION</span>${nextCockpitRecoveryAttention(group, observation, commandAttention)}</div>` +
     `<div><span>DECISIONS</span><strong>${esc(nextCockpitRecoveryDecisions(semantic))}</strong></div>` +
     '</section>';
 }
