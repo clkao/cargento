@@ -386,3 +386,18 @@ COO/operations round 4 turns the project header into a terse recovery checkpoint
 ### Summary
 
 The final first-officer command round turns recovery Attention into one evidence-backed command queue with explicit ownership. Exact alias/title/session proof reconciles the live `9xn` result with its workflow task, while ambiguous results stay unattributed and direct authorization remains captain-owned until exact resolution. Checkpoint `2133126` is live on 8766 and work stops here for the captain's final report without advancing or integrating.
+
+## Stage Report: shaping (cycle 13)
+
+- DONE: All, Active, and Decisions keep the event text in one stable reading column; changing filters does not horizontally reflow it.
+  Commit `179a80d2d8331849172d0e1e8264ef70142de182` separates filter membership from timeline geometry: the mode-specific registry decides which rows remain, while every row and the lane legend render against the full canonical lane registry. The exact live `spacedock-v1` payload produces the same `--lane-count:2` text origin in Active, All, and Decisions while retaining four independent decision rows.
+- DONE: Decision rows show only the decision, human task label, and application disposition; stage transitions and result/evidence prose are disclosed on expansion.
+  The primary live scan lines now read `Approved Embed the stage report protocol in the dispatch artifact · pending application`, `superseded`, or `applied`. They do not contain the author, stage, arrow, source, or evidence. The existing row disclosure owns `Captain`, `validation → done`, application disposition, inclusion rationale, timestamp, and exact `Spacedock entity gate frontmatter` provenance; canonical actor/action/object/result data attributes remain intact for consumers.
+- DONE: An exact live-payload regression test proves the compact decision wording and stable filter geometry, and the focused frontend tests pass.
+  The regression uses exact live work item `workflow:633bbd4f7a6a4a1b05b1:t4rqqmmrqh`, gate fact `fact:e42c0b40b80c3555`, human task label, pending application state, and exact source. The focused project renderer, next cockpit, next page, project context, and byte-contract suite passes 144/144. Ruff, Ruff format, strict mypy over 116 files, embedded frontend lint, plugin validation, version parity, and `git diff --check` pass.
+- DONE: Serve only the verified correction and preserve prototype authority.
+  Candidate 8767 stayed isolated until the focused suite, static checks, and exact-payload DOM falsifier passed, then stopped after the controlled swap. Stable 8766 runs PID `77949` from `179a80d`, serving 356,894 bytes at SHA-256 `7d6248481941e1bc766e6cb06500f4662ed29a2f4da94e793b283af4e51d733c`. Exact root session `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` remains registered at tmux `$4/@4/%10`, 225×56, stream connected, `read-only-control-stream`, with keyboard input `not-exposed`. No code ref was pushed or integrated, no version field changed, `.spacedock/dev` was not read or mutated, and workflow status remains shaping.
+
+### Summary
+
+Shaping cycle 13 makes decision rows scannable without weakening their evidence and fixes filter-induced horizontal reflow at the registry boundary. The exact live decision set keeps one reading column across Active, All, and Decisions, while each row preserves its own expandable mechanics and provenance. Checkpoint `179a80d` is live on 8766; work stops here without advancing or integrating.
