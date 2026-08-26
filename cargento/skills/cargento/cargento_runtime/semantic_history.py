@@ -22,7 +22,7 @@ MAX_EVENTS_PER_PROJECT = 512
 HISTORY_WINDOW_SEC = 24 * 60 * 60
 STORE_NAME = "semantic-work-history.json"
 RESCAN_OVERLAP_BYTES = 64 * 1024
-BACKFILL_SCHEMA_VERSION = 2
+BACKFILL_SCHEMA_VERSION = 3
 
 _FACT_EVENT_TYPES = {
     "user_message": "operator_direction",
