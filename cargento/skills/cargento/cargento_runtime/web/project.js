@@ -889,9 +889,11 @@ function projectLaneRegistry(model, delegations, focus){
       addTask(id, node.at, node.kind === "burst" ? 1 : 2)));
   const taskIds = [...relevance].sort((a, b) => b[1].priority - a[1].priority ||
       b[1].at - a[1].at || a[0].localeCompare(b[0]))
-    .slice(0, PROJECT_VISIBLE_TASK_LANES).map(entry => entry[0]).sort();
+    .slice(0, PROJECT_VISIBLE_TASK_LANES).map(entry => entry[0]);
   const foEvents = facts.filter(fact => {
     const item = itemById.get(fact.work_item_id);
+    if(["final_output", "result"].includes(fact.type) &&
+        focus && focus.state === "working") return false;
     return item && item.kind === "session_result" ||
       (!fact.work_item_id && fact.type === "user_message") ||
       ["final_output", "observer_snapshot", "goal_shift"].includes(fact.type);
@@ -923,10 +925,12 @@ function projectLaneRegistry(model, delegations, focus){
       .sort((a, b) => String(a.worker).localeCompare(String(b.worker)));
     const topology = topologyForTask(workItemId);
     const head = headByItem.get(workItemId) || null;
+    const current = contributors.length > 0 || taskEvents.some(fact =>
+      fact.current_state === true && fact.evidence && fact.evidence.confidence === "exact");
     return {key:`task:${workItemId}`, kind:"task", workItemId,
       label:(itemById.get(workItemId) || {}).label || "Task",
       events:taskEvents, contributors, item:itemById.get(workItemId) || {},
-      head, headFact:head && factById.get(head.latest_meaningful_event) || null,
+      head, headFact:head && factById.get(head.latest_meaningful_event) || null, current,
       branch:topology.branch, merge:topology.merge};
   });
   const lanes = [foLane].concat(taskLanes);
@@ -967,22 +971,30 @@ function projectLaneHistory(lane, excludedFactId){
 }
 
 function projectFoLaneRow(d, registry, lane, focus){
-  const latest = lane.events[0] || {};
-  const steering = latest.type === "user_message";
+  const direction = lane.events.find(fact => fact.type === "user_message") || null;
+  const waiting = focus && focus.state !== "working";
+  const finalOutput = waiting
+    ? lane.events.find(fact => ["final_output", "result"].includes(fact.type)) || null : null;
+  const latest = direction || finalOutput || {};
+  const steering = Boolean(direction);
   const episode = steering ? lane.episodeByFact.get(latest.fact_id) :
     [...lane.episodeByFact.values()].find(candidate => candidate.adaptation_fact === latest.fact_id);
   const edge = episode && String(episode.confidence || "").includes("derived")
     ? "derived" : (episode ? "solid" : "none");
-  const kind = steering ? "steering" : (latest.type === "final_output" ? "result" : "work");
+  const kind = steering ? "steering" : (finalOutput ? "result" : "work");
   const contributors = lane.contributors.length ? `<details class="pc-trail-history pc-fo-context">` +
     `<summary>${lane.contributors.length} unbound contributor${lane.contributors.length === 1 ? "" : "s"}</summary>` +
     lane.contributors.map(row => `<div class="pc-trail-event"><strong>${esc(row.assignment)}</strong>` +
       `<span>${esc(row.worker)}</span><details class="pc-event-evidence"><summary>evidence</summary>` +
       `<div>${esc(row.source)}</div></details></div>`).join("") + `</details>` : "";
   const linked = episode ? `<div class="pc-trail-quiet">source-linked correction</div>` : "";
-  const role = latest.type === "observer_snapshot" ? "FO · Derived snapshot" : "FO";
-  const body = `<div class="pc-trail-top"><strong>${esc(latest.summary || "Focused session")}</strong>` +
-    `<span>${role}</span></div>${linked}${projectFactEvidence(latest)}` +
+  const needs = Boolean(focus && (focus.state === "needs_input" || focus.needs_you === true));
+  const operational = needs ? "Needs you" : (focus && focus.state === "working"
+    ? "Working" : "Waiting for you");
+  const body = `<div class="pc-trail-top"><strong>${esc(operational)}</strong><span>FO</span></div>` +
+    (direction ? `<div class="pc-trail-result">${esc(direction.summary)}</div>` : "") +
+    (finalOutput ? `<div class="pc-trail-result">${esc(finalOutput.summary)}</div>` : "") +
+    linked + (latest.fact_id ? projectFactEvidence(latest) : "") +
     `${projectLaneHistory(lane, latest.fact_id)}${contributors}`;
   return projectGraphRow(d, latest.at || focus && focus.last_activity, kind, registry, lane, body,
     steering || episode ? `data-steering-state="${episode ? "paired" : "unpaired"}" data-causal-edge="${edge}"` :
@@ -1002,6 +1014,8 @@ function projectTaskLaneRow(d, registry, lane){
   const dispatchCount = Number(head.dispatch_count) || 0;
   const attempts = dispatchCount === 1 ? "1 dispatch" : dispatchCount > 1
     ? `${dispatchCount} dispatches · ${dispatchCount - 1} retries` : "";
+  const attemptState = !lane.current && attempts && lane.merge === "none"
+    ? `${attempts} · no result observed` : attempts;
   const workers = lane.contributors.map(row => row.worker).filter(Boolean).join(" · ");
   const kind = stage || lane.item.kind === "workflow_item" ? "stage" :
     (["outcome", "decision"].includes(head.status) ? "result" : "work");
@@ -1019,12 +1033,13 @@ function projectTaskLaneRow(d, registry, lane){
     String(bindings[0].value || "").split(":")[0]) || "";
   const body = `<div class="pc-trail-top"><strong>${esc(heading)}</strong><span>${esc(status)}</span></div>` +
     `<div class="pc-trail-result">${esc(result)}</div>` +
-    (attempts ? `<div class="pc-trail-quiet" data-dispatch-count="${dispatchCount}">${esc(attempts)}</div>` : "") +
+    (attemptState ? `<div class="pc-trail-quiet" data-dispatch-count="${dispatchCount}">${esc(attemptState)}</div>` : "") +
     (workers ? `<div class="pc-trail-quiet">${esc(workers)}</div>` : "") +
     projectFactEvidence(latest) + projectLaneHistory(lane, latest.fact_id) + source;
   const at = Number(latest.at) || 0;
   const attrs = `data-assignment-lane="task-head" data-work-item="${esc(lane.workItemId)}"` +
     ` data-trail-head="${esc(head.status || "latest")}"` +
+    ` data-task-current="${lane.current ? "true" : "false"}"` +
     ` data-branch-edge="${esc(lane.branch)}" data-merge-edge="${esc(lane.merge)}"` +
     (stage ? ` data-work-stage="${esc(stage)}"` : "") +
     (workflowBinding ? ` data-workflow-binding="${esc(workflowBinding)}"` : "");
@@ -1040,19 +1055,26 @@ function projectLaneLegend(registry){
 
 function projectSemanticTimeline(d, model, workflowLanes, focus){
   const registry = projectLaneRegistry(model, workflowLanes, focus);
-  const rows = registry.lanes.map(lane => lane.kind === "fo"
-    ? {at:Number(lane.events[0] && lane.events[0].at) || Number(focus && focus.last_activity) || 0,
-      html:projectFoLaneRow(d, registry, lane, focus)}
-    : {at:Math.max(Number(lane.events[0] && lane.events[0].at) || 0,
-      ...lane.contributors.map(row => Number(row.at) || 0)),
-      html:projectTaskLaneRow(d, registry, lane)}).sort((a, b) => b.at - a.at);
-  if(!rows.length) return `<div class="pc-empty">No source-backed current work or reaction.</div>`;
+  const foLane = registry.lanes.find(lane => lane.kind === "fo");
+  const taskRows = registry.lanes.filter(lane => lane.kind === "task").map(lane => ({lane,
+    at:Number(lane.headFact && lane.headFact.at) || Number(lane.events[0] && lane.events[0].at) || 0,
+    html:projectTaskLaneRow(d, registry, lane)}));
+  const currentRows = taskRows.filter(row => row.lane.current)
+    .sort((a, b) => b.at - a.at);
+  const historyRows = taskRows.filter(row => !row.lane.current)
+    .sort((a, b) => b.at - a.at);
+  const fo = foLane ? projectFoLaneRow(d, registry, foLane, focus) : "";
   const omitted = registry.omittedTaskCount ? `<details class="pc-semantic-overflow">` +
     `<summary>${registry.omittedTaskCount} task lane${registry.omittedTaskCount === 1 ? "" : "s"} folded</summary>` +
     `Older task evidence remains under Evidence / limits.</details>` : "";
+  const current = `<section class="pc-activity-band" data-activity-band="current">` +
+    `<h4>Current</h4>${fo}${currentRows.map(row => row.html).join("")}</section>`;
+  const history = historyRows.length ? `<details class="pc-history-band" data-activity-band="24h-history">` +
+    `<summary>24h history · ${historyRows.length}</summary>` +
+    historyRows.map(row => row.html).join("") + `</details>` : "";
   return `<section class="pc-semantic-timeline" data-order="newest-first" data-model="fact-projection"` +
-    ` data-graph-layout="fo-task-lanes">${projectLaneLegend(registry)}` +
-    rows.map(row => row.html).join("") + omitted + `</section>`;
+    ` data-graph-layout="fo-task-lanes">${projectLaneLegend(registry)}${current}${history}` +
+    omitted + `</section>`;
 }
 function projectSemanticEvidence(group){
   const entry = projectContextEntry(group.label);

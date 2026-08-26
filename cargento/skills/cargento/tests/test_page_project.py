@@ -344,7 +344,7 @@ console.log(JSON.stringify({
   scoped: h.includes("Derived snapshot") && h.includes("cached observer snapshot"),
   separate: h.indexOf("<b>Focus</b>") < h.indexOf("Observed goal · stale</b> — Derived session goal"),
   noOverwrite: h.includes("Browser focus is operator-authored"),
-  once: h.split("Derived session goal").length - 1 === 3 &&
+  once: h.split("Derived session goal").length - 1 === 2 &&
     !h.includes('class="pc-observer"') && !h.includes("Goal · derived")
 }));
 """
@@ -1205,7 +1205,7 @@ console.log(JSON.stringify({
   quietPrimary: !primaryText.includes("asr-root") && !primaryText.includes("pi:") &&
     !primaryText.includes("gpt-5.6-luna") && !primaryText.includes("reasoning") &&
     !primaryText.includes("transcript message") && !primaryText.includes("source"),
-  supportedTagOnly: primaryText.includes("Correct the session grouping") &&
+  supportedTagOnly: graph.includes("Correct the session grouping") &&
     graph.includes('data-steering-state="unpaired"') &&
     !primaryText.includes("generated</span>"),
   noCausalGuess: (graph.match(/data-causal-edge="none"/g) || []).length === 1 &&
@@ -1232,6 +1232,80 @@ console.log(JSON.stringify({
         self.assertTrue(out["noCausalGuess"])
         self.assertTrue(out["noRepeatedUnpairedProse"])
         self.assertTrue(out["lifecycleSuppressed"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_current_band_requires_live_task_authority_and_folds_day_history(self) -> None:
+        checks = """
+const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1", active:true,
+  state:"working", last_activity:110});
+const cockpit = "workflow:cockpit";
+const terminal = "workflow:terminal";
+const facts = [
+  {fact_id:"direction", at:111, type:"user_message", summary:"Keep current work clear",
+    work_item_id:null, evidence:{source:"user-role record", confidence:"exact"}},
+  {fact_id:"observer", at:110, type:"observer_snapshot", summary:"Derived old goal",
+    work_item_id:null, evidence:{source:"observer", confidence:"derived"}},
+  {fact_id:"cockpit-state", at:109, type:"stage_transition", stage:"shaping",
+    summary:"Shape cockpit", work_item_id:cockpit,
+    evidence:{source:"structured assignment", confidence:"exact"}},
+  ...Array.from({length:3}, (_, i) => ({fact_id:`cockpit-dispatch-${i}`, at:106-i,
+    type:"prepared_dispatch", source_kind:"prepared_dispatch", stage:"shaping",
+    summary:"Project cockpit", work_item_id:cockpit,
+    evidence:{source:"dispatch artifact", confidence:"exact"}})),
+  {fact_id:"terminal-dispatch", at:108, type:"prepared_dispatch",
+    source_kind:"prepared_dispatch", stage:"shaping", summary:"Session interaction origin",
+    work_item_id:terminal, evidence:{source:"dispatch artifact", confidence:"exact"}}
+];
+const relations = [
+  ...Array.from({length:3}, (_, i) => ({from:"fo:codex:focus-1",
+    to:`task:${cockpit}`, type:"dispatches_to", confidence:"structural",
+    evidence_ref:`cockpit-dispatch-${i}`})),
+  {from:"fo:codex:focus-1", to:`task:${terminal}`, type:"dispatches_to",
+    confidence:"structural", evidence_ref:"terminal-dispatch"}
+];
+const model = {facts, relations, work_items:[
+  {work_item_id:cockpit, label:"Project cockpit", kind:"workflow_item", source_bindings:[]},
+  {work_item_id:terminal, label:"session-interaction-origin", kind:"workflow_item",
+    source_bindings:[]}
+], projections:{operator_intents:[], steering_episodes:[], trail_heads:[
+  {work_item_id:cockpit, status:"current stage", stage:"shaping",
+    latest_meaningful_event:"cockpit-state", dispatch_count:3},
+  {work_item_id:terminal, status:"prepared", stage:"shaping",
+    latest_meaningful_event:"terminal-dispatch", dispatch_count:1}
+], activity:{nodes:[
+  {kind:"work", at:109, work_item_ids:[cockpit], latest_event:"cockpit-state"},
+  {kind:"work", at:108, work_item_ids:[terminal], latest_event:"terminal-dispatch"}
+]}}};
+const live = [{entity:"project-cockpit", stage:"shaping", workflowBinding:"/repo/.spacedock/explore",
+  workItemId:cockpit, observerSid:"child-1", worker:"Einstein", assignment:"Shape cockpit",
+  source:"structured dispatch artifact", relation:"direct child", depth:1, at:110}];
+const html = projectSemanticTimeline({generated:112}, model, live, focus);
+const current = html.slice(html.indexOf('data-activity-band="current"'),
+  html.indexOf('data-activity-band="24h-history"'));
+const history = html.slice(html.indexOf('data-activity-band="24h-history"'));
+const withoutLive = projectLaneRegistry(model, [], focus);
+console.log(JSON.stringify({
+  currentOnly:current.includes("Working") && current.includes("Keep current work clear") &&
+    current.includes("Project cockpit · shaping") && current.includes("Einstein") &&
+    !current.includes("Session interaction origin · shaping"),
+  historyOnly:history.includes("Session interaction origin · shaping") &&
+    history.includes("1 dispatch · no result observed") &&
+    !history.includes('data-work-item="workflow:cockpit"'),
+  topology:(html.match(/data-branch-edge="solid"/g) || []).length === 2 &&
+    !html.includes('data-merge-edge="solid"'),
+  attempts:current.includes("3 dispatches · 2 retries"),
+  stageNotCurrent:withoutLive.laneByKey.get(`task:${cockpit}`).current === false &&
+    withoutLive.laneByKey.get(`task:${cockpit}`).key === `task:${cockpit}`,
+  derivedFolded:current.includes("Derived old goal") && current.includes("sourced event")
+}));
+"""
+        out = self.run_project(checks)
+        self.assertTrue(out["currentOnly"])
+        self.assertTrue(out["historyOnly"])
+        self.assertTrue(out["topology"])
+        self.assertTrue(out["attempts"])
+        self.assertTrue(out["stageNotCurrent"])
+        self.assertTrue(out["derivedFolded"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_lane_registry_keeps_fo_and_task_identity_stable(self) -> None:
@@ -1301,7 +1375,8 @@ console.log(JSON.stringify({
   stable:keys.every(key => first.laneByKey.get(key).index === second.laneByKey.get(key).index) &&
     new Set(keys).size === keys.length,
   oneFoHead:(html.match(/data-lane-key="fo:codex:focus-1"/g) || []).length === 1 &&
-    first.laneByKey.get("fo:codex:focus-1").events.length === 5,
+    first.laneByKey.get("fo:codex:focus-1").events.length === 2 &&
+    !html.includes("FO event 3"),
   oneCockpitLane:cockpit && cockpit.events.length === 4 && cockpit.contributors.length === 2 &&
     (html.match(/data-lane-key="task:workflow:cockpit"/g) || []).length === 1 &&
     html.includes("Project cockpit · shaping") && html.includes("Ampere · Einstein") &&

@@ -748,6 +748,9 @@
   .pc-activity{padding:20px;border-bottom:1px solid var(--line2)}
   .pc-semantic-graph{min-width:0}
   .pc-semantic-timeline{min-width:0;position:relative;padding:4px 0}
+  .pc-activity-band>h4{margin:4px 0 2px;font:var(--fs-2xs) var(--mono);color:var(--ink3);text-transform:uppercase;letter-spacing:.06em}
+  .pc-history-band{margin-top:8px;border-top:1px solid var(--line2);padding-top:7px}
+  .pc-history-band>summary{cursor:pointer;font:var(--fs-xs) var(--mono);color:var(--ink3)}
   .pc-lane-legend{display:grid;grid-template-columns:42px calc(var(--lane-count) * 44px) minmax(0,1fr);margin-bottom:3px}
   .pc-lane-labels{grid-column:2;display:grid;grid-template-columns:repeat(var(--lane-count),minmax(0,1fr));font:var(--fs-2xs) var(--mono);color:var(--ink3);text-align:center}
   .pc-lane-labels span{padding:0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
