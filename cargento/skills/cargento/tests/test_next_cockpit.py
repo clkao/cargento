@@ -19,7 +19,16 @@ const __dashboard = {
     {key:"claude", label:"Claude"}],
   sessions: [{sid: "focus-1", harness: "codex", project: "cargento",
     project_key: "spacedock-research/cargento", state: "working", active: true,
-    last_activity: 104, title: "Shape project cockpit", subagents: []},
+    last_activity: 104, title: "Shape project cockpit", subagent_hierarchy: [
+      {name:"Banach", observer_sid:"child-b", depth:1,
+        assignment:"Fix the completion guard", assignment_status:"structured dispatch artifact",
+        workflow_entity:"project-cockpit", workflow_stage:"shaping",
+        workflow_binding:"/repo/.spacedock/explore", work_item_id:"workflow:project-cockpit"},
+      {name:"Copernicus", observer_sid:"child-c", depth:1,
+        assignment:"Fix dispatch authority", assignment_status:"structured dispatch artifact",
+        workflow_entity:"project-cockpit", workflow_stage:"shaping",
+        workflow_binding:"/repo/.spacedock/explore", work_item_id:"workflow:project-cockpit"}
+    ], subagents: []},
     {sid:"pi-idle", harness:"pi", project:"cargento",
       project_key:"spacedock-research/cargento", state:"idle", active:true,
       last_activity:99, title:"Pi result", last_output:"Pi finished", subagents:[]},
@@ -116,6 +125,41 @@ console.log(JSON.stringify({html, query:[...nextCockpitContexts.keys()]}));
         self.assertIn("#n=project:cargento:pi%3Api-idle", html)
         self.assertTrue(any(key.endswith("\n") for key in out["query"]))
 
+    def test_all_sessions_aggregates_exact_running_workers_with_parent_and_task(self) -> None:
+        out = self.run_fixture(
+            """
+const html = __els.app.innerHTML;
+const task = (html.match(/<article[^>]*data-work-item="workflow:project-cockpit"[\\s\\S]*?<\\/article>/) || [""])[0];
+console.log(JSON.stringify({html, task}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("Banach", out["task"])
+        self.assertIn("Copernicus", out["task"])
+        self.assertIn('data-task-current="true"', out["task"])
+        self.assertIn('data-parent-session="codex:focus-1"', out["task"])
+        self.assertNotIn("No active worker · no return observed", out["task"])
+
+    def test_session_switcher_is_below_header_and_outcome_first(self) -> None:
+        out = self.run_fixture(
+            """
+const html = __els.app.innerHTML;
+console.log(JSON.stringify({
+  header:html.indexOf('class="next-project-detail-header"'),
+  nav:html.indexOf('class="next-cockpit-session-nav"'),
+  plan:html.indexOf('data-next-project-section="plan"'),
+  html
+}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertLess(out["header"], out["nav"])
+        self.assertLess(out["nav"], out["plan"])
+        self.assertIn("<strong>Shape project cockpit</strong><span>Codex · working", out["html"])
+        self.assertNotIn("<strong>Codex · focus-1", out["html"])
+
     def test_session_permalink_selects_exact_focus_and_decisions_filter_is_present(self) -> None:
         out = self.run_fixture(
             """
@@ -155,6 +199,38 @@ console.log(JSON.stringify({html, rows}));
         self.assertIn('data-object="Project cockpit"', out["rows"][0])
         self.assertIn('data-result="review → shaping"', out["rows"][0])
         self.assertIn("You</strong> approved Project cockpit · review → shaping", out["rows"][0])
+
+    def test_project_status_reports_exact_attention_and_collapses_older_captain_decisions(
+        self,
+    ) -> None:
+        out = self.run_fixture(
+            """
+const facts = [
+  {fact_id:"new",at:50,type:"gate_decision",by:"person:captain",decision:"approve",
+    stage:"ideation",target_stage:"implementation",work_item_id:"workflow:a"},
+  {fact_id:"dupe",at:49,type:"gate_decision",by:"person:captain",decision:"approve",
+    stage:"ideation",target_stage:"implementation",work_item_id:"workflow:a"},
+  {fact_id:"second",at:48,type:"gate_decision",by:"person:captain",decision:"revise",
+    stage:"review",target_stage:"shaping",work_item_id:"workflow:b"},
+  {fact_id:"third",at:47,type:"gate_decision",by:"person:captain",decision:"hold",
+    stage:"validation",target_stage:"validation",work_item_id:"workflow:c"},
+  {fact_id:"fo",at:60,type:"gate_decision",by:"agent:first-officer",decision:"approve",
+    stage:"validation",target_stage:"done",work_item_id:"workflow:d"}
+];
+const semantic = {facts, work_items:[
+  {work_item_id:"workflow:a",label:"alpha"},{work_item_id:"workflow:b",label:"beta"},
+  {work_item_id:"workflow:c",label:"gamma"},{work_item_id:"workflow:d",label:"delta"}
+]};
+console.log(JSON.stringify({html:nextCockpitProjectStatus(nextProjectGroups()[0], semantic)}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("Needs you: none observed", out["html"])
+        self.assertEqual(1, out["html"].count("Alpha · ideation → implementation"))
+        self.assertIn("Beta · review → shaping", out["html"])
+        self.assertIn("1 older decision", out["html"])
+        self.assertNotIn("Delta", out["html"])
 
     def test_focus_reads_label_alias_then_saves_only_under_the_stable_project_key(self) -> None:
         label_key = "cargento.projectGoal.v1:cargento"

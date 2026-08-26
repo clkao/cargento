@@ -211,8 +211,13 @@ function nextProjectView(project){
     return `<div class="next-project-detail-empty">Project ${esc(project)} is outside this payload window.</div>`;
   }
   const context = {group, plans: nextProjectPlans(group.sessions), harnesses: nextHarnessLabels()};
+  const focus = nextCockpitFocusedSession(group);
+  const observation = nextCockpitProjectObservation(group);
+  const status = observation && observation.semantic
+    ? nextCockpitProjectStatus(group, observation.semantic) : "";
   return `<article class="next-project-detail" data-next-project-detail="${esc(group.label)}">` +
     nextProjectDetailHeader(context) +
+    nextCockpitSessionNav(group, focus) + status +
     '<div class="next-project-detail-layout">' +
     '<main class="next-project-detail-main" data-next-project-main>' +
     `<div data-next-project-section="plan">${nextProjectPlanBlock(context)}</div>` +

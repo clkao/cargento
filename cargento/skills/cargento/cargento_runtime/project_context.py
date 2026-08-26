@@ -1318,6 +1318,8 @@ def _gate_event(
     config: RuntimeConfig,
     current: dict[str, str],
     slug: str,
+    entity_id: str,
+    entity_title: str,
     workflow: str,
     workflow_binding: str,
     _harness: str,
@@ -1334,6 +1336,7 @@ def _gate_event(
     detail = workflow
     if reason:
         detail += f" · {reason}"
+    workflow_entity = records.safe_text(entity_id, 128)[:10] if entity_id else slug
     return {
         "at": at,
         "kind": "gate",
@@ -1344,7 +1347,10 @@ def _gate_event(
         "scope": "project",
         "workflow": workflow,
         "workflow_binding": workflow_binding,
-        "entity": slug,
+        "entity": workflow_entity,
+        "entity_slug": slug,
+        "entity_title": records.safe_text(entity_title, config.observer_block_cap_chars),
+        "stage": stage,
         "decision": decision,
         "by": current.get("by", ""),
         "target_stage": current.get("target_stage", ""),
@@ -1383,12 +1389,22 @@ def gate_events(
     block = ""
     gate_stage = ""
     briefings = 0
+    entity_id = next(
+        (raw[len("id:") :].strip().strip("\"'") for raw in lines if raw.startswith("id:")),
+        "",
+    )
+    entity_title = next(
+        (raw[len("title:") :].strip().strip("\"'") for raw in lines if raw.startswith("title:")),
+        "",
+    )
 
     def flush() -> None:
         event = _gate_event(
             config,
             current,
             slug,
+            entity_id,
+            entity_title,
             workflow,
             workflow_binding or workflow,
             harness,
@@ -1584,7 +1600,11 @@ def _semantic_work_identity(
         return (
             semantic_history.workflow_work_item_id(workflow_binding, str(source_event["entity"])),
             "workflow_item",
-            str(source_event["entity"]),
+            str(
+                source_event.get("entity_title")
+                or source_event.get("entity_slug")
+                or source_event["entity"]
+            ),
             binding,
         )
     if raw_kind not in {"task_started", "task_result"} or not source_event.get("lineage"):
@@ -1640,6 +1660,8 @@ def _semantic_fact_from_event(
     for key in ("stage", "decision", "by", "target_stage", "assignment", "worker_kind"):
         if source_event.get(key) not in (None, ""):
             fact[key] = source_event[key]
+    if raw_kind == "gate" and source_event.get("entity"):
+        fact["workflow_entity"] = source_event["entity"]
     harness = records.safe_text(source_event.get("harness"), 32)
     sid = records.safe_text(source_event.get("sid"), 128)
     if raw_kind != "gate" and harness and sid:
@@ -1717,6 +1739,55 @@ def _semantic_source_binding(
         + str(source_event.get("entity") or "")
     )
     return {"source": "Spacedock entity slug", "value": value}
+
+
+def _semantic_work_label(
+    work_item: dict[str, Any],
+    source_event: dict[str, Any],
+    raw_kind: str,
+    work_item_label: str,
+    has_entity_title: bool,
+) -> bool:
+    if raw_kind == "gate" and source_event.get("entity_title"):
+        work_item["label"] = work_item_label
+        return True
+    if (
+        raw_kind in {"task_started", "task_result"}
+        and source_event.get("dispatch_artifact")
+        and not has_entity_title
+    ):
+        work_item["label"] = work_item_label
+    return has_entity_title
+
+
+def _semantic_work_item(
+    work_items: dict[str, dict[str, Any]],
+    titled_work_items: set[str],
+    work_item_id: str,
+    work_item_kind: str,
+    work_item_label: str,
+    source_event: dict[str, Any],
+    raw_kind: str,
+) -> dict[str, Any]:
+    work_item = work_items.setdefault(
+        work_item_id,
+        {
+            "work_item_id": work_item_id,
+            "label": work_item_label,
+            "kind": work_item_kind,
+            "source_bindings": [],
+            "contributor_refs": [],
+        },
+    )
+    if _semantic_work_label(
+        work_item,
+        source_event,
+        raw_kind,
+        work_item_label,
+        work_item_id in titled_work_items,
+    ):
+        titled_work_items.add(work_item_id)
+    return work_item
 
 
 def _semantic_work_relation(
@@ -2146,6 +2217,7 @@ def _semantic_model(
     )
     facts: list[dict[str, Any]] = []
     work_items: dict[str, dict[str, Any]] = {}
+    titled_work_items: set[str] = set()
     contributors: dict[str, dict[str, Any]] = {}
     relations: list[dict[str, Any]] = []
     intent_projections: list[dict[str, Any]] = []
@@ -2184,18 +2256,15 @@ def _semantic_model(
             _append_semantic_intent(fact, intent_summaries, intent_projections, relations)
         if not work_item_id:
             continue
-        work_item = work_items.setdefault(
+        work_item = _semantic_work_item(
+            work_items,
+            titled_work_items,
             work_item_id,
-            {
-                "work_item_id": work_item_id,
-                "label": work_item_label,
-                "kind": work_item_kind,
-                "source_bindings": [],
-                "contributor_refs": [],
-            },
+            work_item_kind,
+            work_item_label,
+            source_event,
+            raw_kind,
         )
-        if raw_kind in {"task_started", "task_result"} and source_event.get("dispatch_artifact"):
-            work_item["label"] = work_item_label
         source_binding = _semantic_source_binding(source_event, work_item_kind, binding)
         if source_binding not in work_item["source_bindings"]:
             work_item["source_bindings"].append(source_binding)

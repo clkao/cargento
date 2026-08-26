@@ -755,11 +755,17 @@
   .pc-lane-labels{grid-column:3;display:flex;gap:5px;flex-wrap:wrap;font:var(--fs-xs) var(--sans);color:var(--ink2)}
   .pc-lane-labels span{padding:1px 6px;border-left:2px solid var(--line2);font-weight:650;white-space:normal}
   .pc-graph-row{display:grid;grid-template-columns:42px calc(var(--lane-count) * 44px) minmax(0,1fr);align-items:start;min-height:48px}
-  .next-cockpit-session-nav{display:flex;gap:5px;overflow-x:auto;padding:3px 0 10px}
+  .next-cockpit-session-nav{display:flex;gap:5px;overflow-x:auto;padding:8px 12px 10px;border-bottom:1px solid var(--line)}
   .next-cockpit-session-nav a{display:grid;min-width:132px;padding:6px 8px;border:1px solid var(--line);color:var(--ink2);text-decoration:none}
   .next-cockpit-session-nav a[aria-current="page"]{border-color:var(--accent-ink);background:var(--panel);color:var(--ink)}
   .next-cockpit-session-nav strong,.next-cockpit-session-nav span,.next-cockpit-session-nav small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .next-cockpit-session-nav span,.next-cockpit-session-nav small{font:var(--fs-2xs) var(--mono);color:var(--ink3)}
+  .next-cockpit-project-status{display:flex;align-items:flex-start;gap:18px;padding:8px 12px;border-bottom:1px solid var(--line);font:var(--fs-xs) var(--mono)}
+  .next-cockpit-project-status>strong{white-space:nowrap;color:var(--ink)}
+  .next-cockpit-project-status>div{display:flex;align-items:flex-start;gap:8px;color:var(--ink3)}
+  .next-cockpit-project-status ul{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0;padding:0;list-style:none;color:var(--ink2)}
+  .next-cockpit-project-status details>summary{cursor:pointer;color:var(--ink3)}
+  .next-cockpit-status-empty{color:var(--ink3)}
   .pc-graph-row>time{padding-top:8px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);text-align:right}
   .pc-graph-filter{display:flex;justify-content:flex-end;gap:2px;margin-bottom:5px}
   .pc-graph-filter button{border:0;border-bottom:2px solid transparent;padding:3px 6px;background:transparent;color:var(--ink3);font:var(--fs-2xs) var(--mono);cursor:pointer}

@@ -34,12 +34,6 @@ function nextCockpitFocusedSession(group){
   return group.sessions.find(session => sessKey(session) === nextRoute.focus) || null;
 }
 
-function nextCockpitSessionLabel(session){
-  const harness = nextHarnessLabels().get(String(session.harness || "")) ||
-    String(session.harness || "Session");
-  return `${harness} · ${String(session.sid || "").slice(0, 12)}`;
-}
-
 function nextCockpitSessionResult(session){
   if(session.state === "working") return session.title || "working";
   return session.last_output || session.title || session.state || "state unavailable";
@@ -59,8 +53,61 @@ function nextCockpitSessionNav(group, focus){
     sessKey(left).localeCompare(sessKey(right)));
   return `<nav class="next-cockpit-session-nav" aria-label="Project sessions">` +
     link("all", "All sessions", `${rows.length} sessions`, "Project-wide semantic union") +
-    rows.map(session => link(sessKey(session), nextCockpitSessionLabel(session),
-      String(session.state || "unknown"), nextCockpitSessionResult(session))).join("") + `</nav>`;
+    rows.map(session => {
+      const harness = nextHarnessLabels().get(String(session.harness || "")) ||
+        String(session.harness || "Session");
+      return link(sessKey(session), nextCockpitSessionResult(session),
+        `${harness} · ${String(session.state || "unknown")}`, "");
+    }).join("") + `</nav>`;
+}
+
+function nextCockpitHumanLabel(value){
+  const words = String(value || "work").replace(/[-_]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : "Work";
+}
+
+function nextCockpitProjectNeeds(group){
+  const identities = new Set(group.sessions.map(session => sessKey(session)));
+  const asks = nextData && nextData.ask === true && Array.isArray(nextData.asks)
+    ? nextData.asks : [];
+  const waiting = asks.filter(ask => identities.has(
+    `${String(ask && ask.harness || "")}:${String(ask && ask.session_id || "")}`));
+  const blocked = group.sessions.filter(session => session.state === "needs_input");
+  return new Set([
+    ...waiting.map(ask => `${String(ask.harness || "")}:${String(ask.session_id || "")}`),
+    ...blocked.map(session => sessKey(session)),
+  ]).size;
+}
+
+function nextCockpitProjectStatus(group, semantic){
+  const needs = nextCockpitProjectNeeds(group);
+  const labels = new Map((semantic.work_items || []).map(item =>
+    [String(item.work_item_id || ""), nextCockpitHumanLabel(item.label)]));
+  const seen = new Set();
+  const decisions = (semantic.facts || []).filter(fact =>
+    fact && fact.type === "gate_decision" && fact.by === "person:captain")
+    .sort((left, right) => Number(right.at || 0) - Number(left.at || 0))
+    .filter(fact => {
+      const key = [fact.work_item_id, fact.decision, fact.stage, fact.target_stage].join("\n");
+      if(seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  const row = fact => {
+    const label = labels.get(String(fact.work_item_id || "")) || "Workflow item";
+    const transition = fact.stage && fact.target_stage
+      ? ` · ${fact.stage} → ${fact.target_stage}` : "";
+    return `<li><strong>${esc(label + transition)}</strong></li>`;
+  };
+  const latest = decisions.slice(0, 2).map(row).join("");
+  const older = decisions.slice(2);
+  const history = older.length ? `<details><summary>${older.length} older ` +
+    `${older.length === 1 ? "decision" : "decisions"}</summary><ul>${older.map(row).join("")}</ul></details>` : "";
+  const decisionList = latest ? `<ul>${latest}</ul>${history}` :
+    '<span class="next-cockpit-status-empty">No captain decisions observed</span>';
+  return '<section class="next-cockpit-project-status" aria-label="Project status">' +
+    `<strong>Needs you: ${needs ? `${needs} observed` : "none observed"}</strong>` +
+    `<div><span>Latest decisions</span>${decisionList}</div></section>`;
 }
 
 function nextCockpitContextKey(group, focus){
@@ -122,7 +169,9 @@ function nextCockpitTimeline(group, focus){
   projectQuerySession = focus ? sessKey(focus) : "";
   const cacheKey = projectContextKey(nextCockpitStableKey(group));
   projectContextByLabel[cacheKey] = {state:"ready", data:entry.data, generated:entry.revision};
-  const lanes = projectDelegationLanes(focus, {label: nextCockpitStableKey(group)});
+  const delegationGroup = {label: nextCockpitStableKey(group)};
+  const lanes = focus ? projectDelegationLanes(focus, delegationGroup) :
+    group.sessions.flatMap(session => projectDelegationLanes(session, delegationGroup));
   const semantic = entry.data.semantic || {facts:[], work_items:[], projections:{}};
   const timeline = projectSemanticTimeline(nextData, semantic, lanes, focus, group.sessions)
     .replaceAll('data-calm="project-graph-mode"', 'data-next-cockpit-action="graph-mode"');
@@ -146,8 +195,7 @@ function nextProjectCockpit(context){
   const focus = nextCockpitFocusedSession(group);
   projectQuerySession = focus ? sessKey(focus) : "";
   lastData = nextData;
-  return nextCockpitSessionNav(group, focus) + nextCockpitFocus(group) +
-    nextCockpitTimeline(group, focus) +
+  return nextCockpitFocus(group) + nextCockpitTimeline(group, focus) +
     nextCockpitTerminal(group, focus);
 }
 

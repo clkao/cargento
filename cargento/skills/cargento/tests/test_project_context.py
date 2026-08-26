@@ -1367,6 +1367,8 @@ class ProjectContextTest(unittest.TestCase):
 
     def test_gate_facts_are_project_scoped_without_invented_session_origin(self) -> None:
         lines = [
+            "id: abcdefghjkmnpqrstvwxyz23",
+            "title: Project cockpit",
             "- id: gate:review",
             "  stage: review",
             "  resolution:",
@@ -1391,9 +1393,24 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual("project", fact["scope"])
         self.assertEqual("person:captain", fact["by"])
         self.assertEqual("shaping", fact["target_stage"])
+        self.assertEqual("review", fact["stage"])
+        self.assertEqual("abcdefghjk", fact["workflow_entity"])
         self.assertNotIn("source_session", fact)
         self.assertNotIn("harness", events[0])
         self.assertNotIn("sid", events[0])
+
+        dispatch = {
+            "at": 3.0,
+            "kind": "prepared_dispatch",
+            "title": "Project cockpit",
+            "source": "structured dispatch artifact",
+            "workflow_binding": "/repo/.spacedock/explore",
+            "entity": "abcdefghjk",
+            "stage": "shaping",
+        }
+        combined = project_context._semantic_model([*events, dispatch], [])
+        self.assertEqual(1, len(combined["work_items"]))
+        self.assertEqual("Project cockpit", combined["work_items"][0]["label"])
 
     def test_focused_history_keeps_exact_session_and_project_facts_only(self) -> None:
         history = {

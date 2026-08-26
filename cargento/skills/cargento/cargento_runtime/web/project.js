@@ -514,6 +514,7 @@ function projectDelegationLanes(sess, group){
     const workflowBinding = agent.workflow_binding || fallback.workflow_binding || "";
     const workItemId = agent.work_item_id || fallback.work_item_id || "";
     return {entity, stage, workflowBinding, workItemId,
+      parentSession:sessKey(sess),
       observerSid:agent.observer_sid || fallback.observer_sid || "",
       worker:agent.name || fallback.name || "Ensign",
       assignment:agent.assignment || fallback.assignment || "assignment unavailable",
@@ -1573,6 +1574,7 @@ function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){
         ` data-causal-edge="${esc(event.causal || "none")}"` : "") :
       ` data-assignment-lane="${first ? "task-head" : "task-event"}"` +
       ` data-work-item="${esc(lane.workItemId)}" data-task-current="${lane.current ? "true" : "false"}"` +
+      (lane.contributors.length ? ` data-parent-session="${esc(lane.contributors[0].parentSession || "")}"` : "") +
       (first ? ` data-trail-head="${esc(lane.head && lane.head.status || "latest")}"` : "") +
       (stage ? ` data-work-stage="${esc(stage)}"` : "") +
       (source.binding ? ` data-workflow-binding="${esc(source.binding)}"` : ""));
