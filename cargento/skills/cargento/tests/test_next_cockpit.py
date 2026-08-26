@@ -221,7 +221,7 @@ console.log(JSON.stringify({html, focus:nextCockpitFocusedSession(nextProjectGro
         self.assertIn('aria-current="page"><strong>Pi', out["html"])
         self.assertIn('data-arg="decisions"', out["html"])
 
-    def test_decisions_view_uses_canonical_actor_action_object_result(self) -> None:
+    def test_decisions_view_preserves_canonical_metadata_and_compacts_scan_line(self) -> None:
         out = self.run_fixture(
             """
 projectGraphModeBySession.set("", "decisions");
@@ -240,7 +240,8 @@ console.log(JSON.stringify({html, rows}));
         self.assertIn('data-action="approved"', out["rows"][0])
         self.assertIn('data-object="Project cockpit"', out["rows"][0])
         self.assertIn('data-result="review → shaping"', out["rows"][0])
-        self.assertIn("You</strong> approved Project cockpit · review → shaping", out["rows"][0])
+        self.assertIn("<strong>Approved</strong> Project cockpit · applied", out["rows"][0])
+        self.assertIn("<b>Decision mechanics</b> · review → shaping · applied", out["rows"][0])
 
     def test_gate_application_state_controls_completed_transition_wording(self) -> None:
         out = self.run_fixture(

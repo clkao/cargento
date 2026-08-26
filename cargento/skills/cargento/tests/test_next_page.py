@@ -580,9 +580,9 @@ class NextPageAssetContractTest(unittest.TestCase):
         )
 
         assembled = frontend_page.load_next_page()
-        self.assertEqual(355_712, len(assembled))
+        self.assertEqual(356_894, len(assembled))
         self.assertEqual(
-            "088087f7e1fb7c938df058a48c65f754fc29f19fb14e46b022416486b40a84cf",
+            "7d6248481941e1bc766e6cb06500f4662ed29a2f4da94e793b283af4e51d733c",
             hashlib.sha256(assembled).hexdigest(),
         )
 

@@ -1470,6 +1470,14 @@ function projectGlobalEventDetails(event, lane){
     String(candidate.summary || "").trim().toLowerCase() ===
       String(event.meaning || "").trim().toLowerCase()) : [];
   const suppressed = Array.isArray(event.suppressed) ? event.suppressed : [];
+  const decisionMechanics = event.kind === "decision" ? (() => {
+    const stage = String(fact.stage || "gate");
+    const path = fact.target_stage ? `${stage} → ${fact.target_stage}` : stage;
+    const author = fact.by === "person:captain" ? "Captain" : String(fact.by || "unavailable");
+    return `<div><b>Decision author</b> · ${esc(author)}</div>` +
+      `<div><b>Decision mechanics</b> · ${esc(path)} · ` +
+      `${esc(projectGateApplicationDisposition(fact))}</div>`;
+  })() : "";
   const suppressedDetails = suppressed.length ? projectDisclosure(
     `timeline-suppressed:${event.eventId}`, `Source-only messages · ${suppressed.length}`,
     `<div class="pc-entry-source-list">${suppressed.map(row => {
@@ -1478,6 +1486,7 @@ function projectGlobalEventDetails(event, lane){
     }).join("")}</div>`, "pc-entry-suppressed") : "";
   return `<div class="pc-entry-details">` +
     `<div><b>Why included</b> · ${esc(event.rationale || "Changes understanding of the work.")}</div>` +
+    decisionMechanics +
     `<div><b>Source</b> · ${esc(evidence.source || fact.source_kind || "source unavailable")}` +
     (evidence.confidence ? ` · ${esc(evidence.confidence)}` : "") +
     (iso ? ` · <time datetime="${esc(iso)}">${esc(iso)}</time>` : "") + `</div>` +
@@ -1539,6 +1548,15 @@ function projectGateApplicationResult(fact, fallback){
   return `${stage} · decision recorded · application ${state}` || fallback || "decision recorded";
 }
 
+function projectGateApplicationDisposition(fact){
+  const state = String(fact.application_state || "").toLowerCase();
+  if(["applied", "consumed"].includes(state)) return "applied";
+  if(["pending", "unspent"].includes(state)) return "pending application";
+  if(state === "superseded") return "superseded";
+  if(!state) return "application unknown";
+  return `application ${state}`;
+}
+
 function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){
   const lane = registry.laneByKey.get(event.lane.key);
   const fact = event.fact || {};
@@ -1563,14 +1581,19 @@ function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){
   const source = lane.kind === "task" && first ? projectTaskSource(lane, fact) :
     {binding:"", html:""};
   const sentence = projectGlobalEventSentence(event, lane);
+  const scanLine = event.kind === "decision"
+    ? `<strong>${esc(projectTaskTitle(sentence.action))}</strong> ${esc(sentence.object)} · ` +
+      `${esc(projectGateApplicationDisposition(fact))}`
+    : `<strong>${esc(sentence.actor)}</strong> ${esc(sentence.action)} ` +
+      `${esc(sentence.object)} · ${esc(sentence.result)}`;
   const visible = `<div class="pc-trail-summary"><div class="pc-trail-top">` +
     (first ? `<strong class="pc-lane-title">${esc(title)}</strong>` :
       `<span class="pc-event-kind">${esc(projectTaskTitle(event.kind))}</span>`) +
     (first ? `<span>${esc(meta)}</span>` : "") +
     `</div><div class="pc-trail-result" data-actor="${esc(sentence.actor)}"` +
     ` data-action="${esc(sentence.action)}" data-object="${esc(sentence.object)}"` +
-    ` data-result="${esc(sentence.result)}"><strong>${esc(sentence.actor)}</strong> ` +
-    `${esc(sentence.action)} ${esc(sentence.object)} · ${esc(sentence.result)}</div>` +
+    ` data-result="${esc(sentence.result)}">` +
+    `${scanLine}</div>` +
     (secondary ? `<div class="pc-trail-quiet">${esc(secondary)}</div>` : "") +
     (attempts ? `<div class="pc-trail-quiet" data-dispatch-count="${dispatchCount}">${esc(attempts)}</div>` : "") +
     `</div>`;
@@ -1608,10 +1631,11 @@ function projectUnboundContext(registry){
 function projectSemanticTimeline(d, model, workflowLanes, focus, sessionOrigins){
   const fullRegistry = projectLaneRegistry(model, workflowLanes, focus, sessionOrigins);
   const mode = projectGraphModeBySession.get(String(projectQuerySession || "")) || "active";
-  const registry = projectVisibleRegistry(fullRegistry, mode);
+  const visibleRegistry = projectVisibleRegistry(fullRegistry, mode);
+  const registry = fullRegistry;
   const events = projectGlobalEvents(model, fullRegistry, focus)
     .filter(event => mode !== "decisions" || event.kind === "decision")
-    .filter(event => registry.laneByKey.has(event.lane.key));
+    .filter(event => visibleRegistry.laneByKey.has(event.lane.key));
   const flows = projectEventFlows(events);
   const firstByLane = new Set();
   const rows = events.map((event, index) =>

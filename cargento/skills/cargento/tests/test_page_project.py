@@ -2637,6 +2637,77 @@ console.log(JSON.stringify({
         self.assertTrue(out["noStructuralCompression"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_exact_live_payload_keeps_filter_origin_and_compacts_decisions(self) -> None:
+        checks = """
+const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1",
+  active:true, state:"working", last_activity:110});
+const current = "workflow:current";
+const decided = "workflow:633bbd4f7a6a4a1b05b1:t4rqqmmrqh";
+const facts = [
+  {fact_id:"direction",at:109,type:"user_message",summary:"Keep the decision readable",
+    source_session:{harness:"codex",sid:"focus-1"},
+    evidence:{source:"root transcript",confidence:"exact"}},
+  {fact_id:"progress",at:108,type:"stage_transition",stage:"shaping",
+    summary:"Current work shaping",work_item_id:current,
+    evidence:{source:"workflow state",confidence:"exact"}},
+  {fact_id:"fact:e42c0b40b80c3555",at:107,type:"gate_decision",by:"person:captain",decision:"approve",
+    stage:"validation",target_stage:"done",application_state:"pending",
+    summary:"embed-stage-report-protocol-in-dispatch · validation · approve",work_item_id:decided,
+    evidence:{source:"Spacedock entity gate frontmatter",confidence:"exact"}}
+];
+const model = {facts,work_items:[
+  {work_item_id:current,label:"Current task",kind:"workflow_item"},
+  {work_item_id:decided,label:"Embed the stage-report protocol in the dispatch artifact",
+    kind:"workflow_item"}
+],relations:[],projections:{operator_intents:[
+  {projection_id:"intent",at:109,summary:"Keep the decision readable",derived_from:"direction"}
+],steering_episodes:[],trail_heads:[
+  {work_item_id:current,status:"current stage",stage:"shaping",latest_meaningful_event:"progress"},
+  {work_item_id:decided,status:"decision",stage:"validation",
+    latest_meaning_event:"fact:e42c0b40b80c3555",
+    latest_meaningful_event:"fact:e42c0b40b80c3555"}
+],activity:{nodes:[{kind:"work",at:108,work_item_ids:[current]}]}}};
+const workers = [{workItemId:current,worker:"Einstein",assignment:"Current work",
+  source:"structured assignment",at:108}];
+projectQuerySession = "codex:focus-1";
+const renderMode = mode => {
+  projectGraphModeBySession.set(projectQuerySession, mode);
+  return projectSemanticTimeline({generated:110},model,workers,focus);
+};
+const active = renderMode("active");
+const all = renderMode("all");
+const decisions = renderMode("decisions");
+const laneCount = html => [...html.matchAll(/--lane-count:(\\d+)/g)].map(match => match[1]);
+const decisionRow = (decisions.match(/<article[^>]*data-event-id="fact:e42c0b40b80c3555"[\\s\\S]*?<\\/article>/)||[])[0]||"";
+const scan = (decisionRow.match(/<div class="pc-trail-result"[^>]*>([\\s\\S]*?)<\\/div>/)||[])[1]||"";
+console.log(JSON.stringify({
+  activeCounts:laneCount(active),allCounts:laneCount(all),decisionCounts:laneCount(decisions),
+  activeHides:!active.includes('data-event-id="fact:e42c0b40b80c3555"'),
+  allShows:all.includes('data-event-id="fact:e42c0b40b80c3555"'),
+  decisionsOnly:decisions.includes('data-event-id="fact:e42c0b40b80c3555"') &&
+    !decisions.includes('data-event-id="direction"') && !decisions.includes('data-event-id="progress"'),
+  scan,decisionRow
+}));
+"""
+        out = self.run_project(checks)
+
+        self.assertTrue(out["activeHides"])
+        self.assertTrue(out["allShows"])
+        self.assertTrue(out["decisionsOnly"])
+        self.assertEqual(["3", "3", "3"], out["activeCounts"])
+        self.assertEqual(["3", "3", "3", "3"], out["allCounts"])
+        self.assertEqual(["3", "3"], out["decisionCounts"])
+        self.assertIn(
+            "<strong>Approved</strong> Embed the stage report protocol in the dispatch artifact",
+            out["scan"],
+        )
+        self.assertIn("pending application", out["scan"])
+        self.assertNotIn("validation", out["scan"])
+        self.assertNotIn("→", out["scan"])
+        self.assertIn("validation → done", out["decisionRow"])
+        self.assertIn("Spacedock entity gate frontmatter", out["decisionRow"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_live_ledger_is_bounded_rebinds_alias_and_has_entry_owned_details(self) -> None:
         checks = """
 const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1",
