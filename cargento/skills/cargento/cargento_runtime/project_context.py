@@ -1505,6 +1505,34 @@ def _semantic_work_relation(
     }
 
 
+def _semantic_topology_relations(
+    source_event: dict[str, Any], raw_kind: str, fact_id: str, work_item_id: str
+) -> list[dict[str, Any]]:
+    """Return graph topology only when the source records the endpoint relation."""
+    harness = str(source_event.get("harness") or "")
+    sid = str(source_event.get("sid") or "")
+    if not harness or not sid:
+        return []
+    fo_id = f"fo:{harness}:{sid}"
+    task_id = f"task:{work_item_id}"
+    if raw_kind == "prepared_dispatch":
+        relation_type, source_id, target_id = "dispatches_to", fo_id, task_id
+    elif raw_kind == "task_result":
+        relation_type, source_id, target_id = "returns_to", task_id, fo_id
+    else:
+        return []
+    return [
+        {
+            "from": source_id,
+            "to": target_id,
+            "type": relation_type,
+            "confidence": "structural" if raw_kind == "prepared_dispatch" else "exact",
+            "provenance": source_event.get("source"),
+            "evidence_ref": fact_id,
+        }
+    ]
+
+
 def _semantic_observer_facts(observers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     facts: list[dict[str, Any]] = []
     for observer_row in observers:
@@ -1543,19 +1571,38 @@ def _semantic_trail_heads(
     heads: list[dict[str, Any]] = []
     for work_item_id, item_facts in fact_by_work_item.items():
         newest = max(item_facts, key=lambda fact: float(fact.get("at") or 0))
+        state_facts = [
+            fact
+            for fact in item_facts
+            if fact.get("type") == "stage_transition" and fact.get("stage")
+        ]
+        state_fact = (
+            max(state_facts, key=lambda fact: float(fact.get("at") or 0)) if state_facts else None
+        )
+        dispatches = [
+            fact
+            for fact in item_facts
+            if fact.get("type") == "prepared_dispatch"
+            and fact.get("source_kind") == "prepared_dispatch"
+        ]
         status = {
             "prepared_dispatch": "prepared",
             "work_birth": "requested",
             "work_result": "outcome",
             "gate_decision": "decision",
         }.get(str(newest.get("type")), "latest")
-        heads.append(
-            {
-                "work_item_id": work_item_id,
-                "status": status,
-                "latest_meaningful_event": newest["fact_id"],
-            }
-        )
+        head = {
+            "work_item_id": work_item_id,
+            "status": status,
+            "latest_meaningful_event": newest["fact_id"],
+            "dispatch_count": len(dispatches),
+        }
+        if state_fact is not None:
+            head["stage"] = state_fact["stage"]
+            head["state_fact"] = state_fact["fact_id"]
+            if float(state_fact.get("at") or 0) >= float(newest.get("at") or 0):
+                head["status"] = "current stage"
+        heads.append(head)
     at_by_id = {fact["fact_id"]: float(fact.get("at") or 0) for fact in facts}
     return sorted(
         heads,
@@ -1917,6 +1964,9 @@ def _semantic_model(
         work_relation = _semantic_work_relation(source_event, raw_kind, fact_id, work_item_id)
         if work_relation is not None:
             relations.append(work_relation)
+        relations.extend(
+            _semantic_topology_relations(source_event, raw_kind, fact_id, work_item_id)
+        )
         contributor_ref = str(source_event.get("contributor_ref") or "")
         if contributor_ref:
             contributor_id = _semantic_id("contributor", contributor_ref)

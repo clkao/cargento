@@ -170,7 +170,10 @@ class SemanticHistoryTest(unittest.TestCase):
             now=100,
         )
         events = result["events"]
-        self.assertEqual(["assignment", "assignment"], [event["event_type"] for event in events])
+        self.assertEqual(
+            ["stage_transition", "assignment"],
+            [event["event_type"] for event in events],
+        )
         workflow = next(
             event for event in events if event["work_binding"].endswith(":project-cockpit")
         )

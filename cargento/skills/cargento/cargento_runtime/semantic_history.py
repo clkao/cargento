@@ -22,12 +22,13 @@ MAX_EVENTS_PER_PROJECT = 512
 HISTORY_WINDOW_SEC = 24 * 60 * 60
 STORE_NAME = "semantic-work-history.json"
 RESCAN_OVERLAP_BYTES = 64 * 1024
-BACKFILL_SCHEMA_VERSION = 3
+BACKFILL_SCHEMA_VERSION = 4
 
 _FACT_EVENT_TYPES = {
     "user_message": "operator_direction",
     "observer_snapshot": "observed_goal",
     "prepared_dispatch": "assignment",
+    "stage_transition": "stage_transition",
     "work_birth": "assignment",
     "work_result": "progress_head",
     "gate_decision": "gate_decision",
@@ -155,6 +156,8 @@ def _event_from_fact(
             "assignment",
             "worker_kind",
             "batch_id",
+            "workflow_binding",
+            "workflow_entity",
         }
     }
     if isinstance(branch, dict):
@@ -251,7 +254,7 @@ def _assignment_events(
         fact: dict[str, Any] = {
             "fact_id": event_id,
             "at": observed_at,
-            "type": "prepared_dispatch",
+            "type": "stage_transition" if stage else "assignment",
             "source_kind": "child_assignment",
             "summary": summary,
             "scope": "session",
@@ -272,7 +275,7 @@ def _assignment_events(
         found.append(
             {
                 "event_id": event_id,
-                "event_type": "assignment",
+                "event_type": "stage_transition" if stage else "assignment",
                 "at": observed_at,
                 "source_identity": source_identity,
                 "source_ref": event_id,
@@ -362,15 +365,17 @@ def _attach_relations(events: list[dict[str, Any]], relations: object) -> list[d
         relation_type = records.safe_text(relation.get("type"), 64)
         if not source or not target or not relation_type:
             continue
-        by_source.setdefault(source, []).append(
-            {
-                "from": source,
-                "to": target,
-                "type": relation_type,
-                "confidence": records.safe_text(relation.get("confidence"), 64),
-                "provenance": records.safe_text(relation.get("provenance"), 240),
-            }
-        )
+        evidence_ref = records.safe_text(relation.get("evidence_ref"), 160)
+        normalized = {
+            "from": source,
+            "to": target,
+            "type": relation_type,
+            "confidence": records.safe_text(relation.get("confidence"), 64),
+            "provenance": records.safe_text(relation.get("provenance"), 240),
+        }
+        if evidence_ref:
+            normalized["evidence_ref"] = evidence_ref
+        by_source.setdefault(evidence_ref or source, []).append(normalized)
     for event in events:
         supported = by_source.get(str(event.get("source_ref") or ""))
         if supported:

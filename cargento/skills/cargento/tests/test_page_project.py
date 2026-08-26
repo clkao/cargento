@@ -344,7 +344,7 @@ console.log(JSON.stringify({
   scoped: h.includes("Derived snapshot") && h.includes("cached observer snapshot"),
   separate: h.indexOf("<b>Focus</b>") < h.indexOf("Observed goal · stale</b> — Derived session goal"),
   noOverwrite: h.includes("Browser focus is operator-authored"),
-  once: h.split("Derived session goal").length - 1 === 4 &&
+  once: h.split("Derived session goal").length - 1 === 3 &&
     !h.includes('class="pc-observer"') && !h.includes("Goal · derived")
 }));
 """
@@ -441,8 +441,10 @@ projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generat
   ],
   projections: {assignments: [], operator_intents: [], steering_episodes: [],
     candidate_goal_shifts: [], trail_heads: [
-      {work_item_id: "work-1", status: "outcome", latest_meaningful_event: "result-1"},
-      {work_item_id: "work-2", status: "prepared", latest_meaningful_event: "dispatch-2"}
+      {work_item_id: "work-1", status: "outcome", stage: "shaping",
+        latest_meaningful_event: "result-1"},
+      {work_item_id: "work-2", status: "prepared", stage: "shaping",
+        latest_meaningful_event: "dispatch-2"}
     ]}},
   sources: {gate: {}, steer: {unavailable: []}}}};
 const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
@@ -467,7 +469,7 @@ console.log(JSON.stringify({
   assignments: h.includes('data-work-item="work-1"') &&
     h.includes('data-work-item="work-2"') &&
     h.includes('data-work-stage="shaping"') &&
-    h.includes("Project cockpit") && h.includes("Project cockpit and remembered goal") &&
+    h.includes("Project cockpit") &&
     h.includes("Session interaction origin") && h.includes("structured dispatch artifact"),
   taskFirst: !h.includes("<strong>Einstein</strong>") && !h.includes("<strong>Ampere</strong>") &&
     h.indexOf("Project cockpit") < h.indexOf("Einstein") &&
@@ -671,9 +673,11 @@ console.log(JSON.stringify({
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [], events: [], child_assignments: [], semantic: {
     facts: [
-      {fact_id:"a1", at:99999, type:"prepared_dispatch", source_kind:"child_assignment",
+      {fact_id:"a1", at:99999, type:"stage_transition", source_kind:"child_assignment",
+        stage:"shaping", workflow_binding:"/repo/.spacedock/explore",
         summary:"Shape cockpit", work_item_id:"workflow:project-cockpit", evidence:{}},
-      {fact_id:"a2", at:99999, type:"prepared_dispatch", source_kind:"child_assignment",
+      {fact_id:"a2", at:99999, type:"stage_transition", source_kind:"child_assignment",
+        stage:"shaping", workflow_binding:"/repo/.spacedock/explore",
         summary:"Shape terminal", work_item_id:"workflow:session-origin", evidence:{}}
     ],
     work_items: [
@@ -684,7 +688,12 @@ projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
         work_binding:"workflow:project-cockpit"},
       {event_type:"assignment", source_identity:"codex:child-2",
         work_binding:"workflow:session-origin"}
-    ]}, projections: {operator_intents:[], trail_heads:[], steering_episodes:[],
+    ]}, projections: {operator_intents:[], trail_heads:[
+      {work_item_id:"workflow:project-cockpit", status:"current stage", stage:"shaping",
+        state_fact:"a1", latest_meaningful_event:"a1", dispatch_count:0},
+      {work_item_id:"workflow:session-origin", status:"current stage", stage:"shaping",
+        state_fact:"a2", latest_meaningful_event:"a2", dispatch_count:0}
+    ], steering_episodes:[],
       activity:{nodes:[{kind:"burst", at:99999, count:2,
         work_item_ids:["workflow:project-cockpit","workflow:session-origin"],
         latest_event:"a2"}]}}
@@ -723,9 +732,11 @@ console.log(JSON.stringify({
         checks = """
 const d = {generated:100};
 const model = {facts:[
-  {fact_id:"explore", at:99, type:"prepared_dispatch", summary:"Shape prototype",
+  {fact_id:"explore", at:99, type:"stage_transition", stage:"shaping",
+    workflow_binding:"/repo/.spacedock/explore", summary:"Shape prototype",
     work_item_id:"workflow:explore", evidence:{confidence:"exact"}},
-  {fact_id:"dev", at:98, type:"prepared_dispatch", summary:"Shape release",
+  {fact_id:"dev", at:98, type:"stage_transition", stage:"shaping",
+    workflow_binding:"/repo/.spacedock/dev", summary:"Shape release",
     work_item_id:"workflow:dev", evidence:{confidence:"exact"}}
 ], work_items:[
   {work_item_id:"workflow:explore", label:"Project cockpit", kind:"workflow_item",
@@ -733,8 +744,10 @@ const model = {facts:[
   {work_item_id:"workflow:dev", label:"Project cockpit", kind:"workflow_item",
     source_bindings:[{value:"/repo/.spacedock/dev:project-cockpit"}]}
 ], projections:{trail_heads:[
-  {work_item_id:"workflow:explore", status:"prepared", latest_meaningful_event:"explore"},
-  {work_item_id:"workflow:dev", status:"prepared", latest_meaningful_event:"dev"}
+  {work_item_id:"workflow:explore", status:"current stage", stage:"shaping",
+    state_fact:"explore", latest_meaningful_event:"explore"},
+  {work_item_id:"workflow:dev", status:"current stage", stage:"shaping",
+    state_fact:"dev", latest_meaningful_event:"dev"}
 ], activity:{nodes:[
   {kind:"work", at:99, work_item_ids:["workflow:explore"]},
   {kind:"work", at:98, work_item_ids:["workflow:dev"]}
@@ -1242,7 +1255,7 @@ const foFacts = Array.from({length:5}, (_, i) => ({fact_id:`fo-${i}`, at:100-i,
 const model = {facts: foFacts.concat([
   {fact_id:"dispatch", at:107, type:"prepared_dispatch", summary:"Cockpit dispatched",
     work_item_id:"workflow:cockpit", evidence:{source:"structured dispatch artifact", confidence:"exact"}},
-  {fact_id:"stage", at:108, type:"stage_transition", summary:"Shaping",
+  {fact_id:"stage", at:108, type:"stage_transition", stage:"shaping", summary:"Shaping",
     work_item_id:"workflow:cockpit", evidence:{source:"Explore state", confidence:"exact"}},
   {fact_id:"checkpoint", at:109, type:"checkpoint", summary:"Viewport fixed",
     work_item_id:"workflow:cockpit", evidence:{source:"bound git checkpoint", confidence:"exact"}},
@@ -1257,8 +1270,10 @@ const model = {facts: foFacts.concat([
       value:"/repo/.spacedock/explore:project-cockpit"}]},
   {work_item_id:"workflow:terminal", label:"Session origin", kind:"workflow_item"}
 ], relations:[
-  {from:"dispatch", to:"workflow:cockpit", type:"binds_to", confidence:"structural"},
-  {from:"result", to:"fo-2", type:"progresses", confidence:"exact"}
+  {from:"fo:codex:focus-1", to:"task:workflow:cockpit", type:"dispatches_to",
+    confidence:"structural"},
+  {from:"task:workflow:cockpit", to:"fo:codex:focus-1", type:"returns_to",
+    confidence:"exact"}
 ], history:{events:[
   {event_type:"assignment", source_identity:"codex:child-1", work_binding:"workflow:cockpit"},
   {event_type:"assignment", source_identity:"codex:child-2", work_binding:"workflow:cockpit"}
@@ -1266,8 +1281,10 @@ const model = {facts: foFacts.concat([
   {projection_id:"intent-unpaired", at:100, summary:"FO event 1", derived_from:"fo-0"},
   {projection_id:"intent-paired", at:99, summary:"FO event 2", derived_from:"fo-1"}
 ], trail_heads:[
-  {work_item_id:"workflow:cockpit", status:"outcome", latest_meaningful_event:"result"},
-  {work_item_id:"workflow:terminal", status:"prepared", latest_meaningful_event:"other"}
+  {work_item_id:"workflow:cockpit", status:"current stage", stage:"shaping",
+    state_fact:"stage", latest_meaningful_event:"result", dispatch_count:1},
+  {work_item_id:"workflow:terminal", status:"prepared", latest_meaningful_event:"other",
+    dispatch_count:0}
 ], activity:{nodes:[
   {kind:"work", at:110, status:"outcome", work_item_ids:["workflow:cockpit"], latest_event:"result"},
   {kind:"work", at:106, status:"prepared", work_item_ids:["workflow:terminal"], latest_event:"other"}
@@ -1287,7 +1304,9 @@ console.log(JSON.stringify({
     first.laneByKey.get("fo:codex:focus-1").events.length === 5,
   oneCockpitLane:cockpit && cockpit.events.length === 4 && cockpit.contributors.length === 2 &&
     (html.match(/data-lane-key="task:workflow:cockpit"/g) || []).length === 1 &&
-    html.includes("Project cockpit · shaping") && html.includes("Ampere · Einstein"),
+    html.includes("Project cockpit · shaping") && html.includes("Ampere · Einstein") &&
+    html.includes("1 dispatch") && html.includes("3 sourced events") &&
+    !html.includes("<span>Cockpit ready</span>"),
   godelFolded:first.lanes.filter(lane => lane.kind === "task").length === 2 &&
     first.unboundContributors.length === 1 && html.includes("Godel") &&
     !html.includes('data-lane-key="task:Godel"'),
@@ -1349,18 +1368,20 @@ const noRelation = projectSemanticTimeline({generated:112}, base, delegations, f
 console.log(JSON.stringify({
   none:edge([]) === "none/none" &&
     noRelation.includes('data-branch-edge="none" data-merge-edge="none"'),
-  exactBranch:edge([{from:"dispatch", to:"workflow:cockpit", type:"binds_to",
+  exactBranch:edge([{from:"fo:codex:focus-1", to:"task:workflow:cockpit", type:"dispatches_to",
     confidence:"structural"}]) === "solid/none",
-  derivedBranch:edge([{from:"dispatch", to:"workflow:cockpit", type:"binds_to",
+  derivedBranch:edge([{from:"fo:codex:focus-1", to:"task:workflow:cockpit", type:"dispatches_to",
     confidence:"derived-semantic"}]) === "derived/none",
   noOutcomeGuess:edge([]) === "none/none",
-  exactMerge:edge([{from:"outcome", to:"fo-result", type:"progresses",
+  exactMerge:edge([{from:"task:workflow:cockpit", to:"fo:codex:focus-1", type:"returns_to",
     confidence:"exact"}]) === "none/solid",
-  shuffleStable:edge([{from:"dispatch", to:"workflow:cockpit", type:"binds_to",
-    confidence:"structural"}, {from:"outcome", to:"fo-result", type:"progresses",
+  shuffleStable:edge([{from:"fo:codex:focus-1", to:"task:workflow:cockpit", type:"dispatches_to",
+    confidence:"structural"}, {from:"task:workflow:cockpit", to:"fo:codex:focus-1", type:"returns_to",
     confidence:"exact"}], true) === "solid/solid",
   unrelated:edge([{from:"dispatch", to:"outcome", type:"derived_from",
-    confidence:"exact"}]) === "none/none"
+    confidence:"exact"}]) === "none/none" &&
+    edge([{from:"dispatch", to:"workflow:cockpit", type:"binds_to",
+      confidence:"structural"}]) === "none/none"
 }));
 """
         out = self.run_project(checks)
@@ -1402,7 +1423,7 @@ const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits
 console.log(JSON.stringify({
   visible: graph.includes("Show current intents") && graph.includes("Keep the lane grammar"),
   diamonds: (graph.match(/data-steering-state="unpaired"/g) || []).length === 1 &&
-    graph.includes("2 sourced events"),
+    graph.includes("1 sourced event"),
   noEdges: (graph.match(/data-causal-edge="none"/g) || []).length === 1 &&
     !graph.includes('data-causal-edge="solid"') && !graph.includes('data-causal-edge="derived"')
 }));
@@ -1925,7 +1946,7 @@ console.log(JSON.stringify({
     !afterStale.includes("Show stale direction"),
   updated: graph.includes("Show newest direction") &&
     (graph.match(/data-steering-state="unpaired"/g) || []).length === 1 &&
-    graph.includes("4 sourced events"),
+    graph.includes("3 sourced events"),
   automatic: pending.every(call => !String(call.url).includes("refresh=1")),
   settled: projectContextByLabel[key].dashboard_revision === 100001
 }));

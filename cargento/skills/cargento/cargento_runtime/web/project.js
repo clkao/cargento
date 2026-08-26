@@ -906,32 +906,12 @@ function projectLaneRegistry(model, delegations, focus){
   const relations = Array.isArray(model.relations) ? model.relations : [];
   const relationEdge = relation => String(relation.confidence || "").includes("derived")
     ? "derived" : "solid";
-  const taskEndpoint = value => {
-    const item = itemById.get(value);
-    if(item && item.kind !== "session_result") return value;
-    const fact = factById.get(value);
-    const factItem = fact && itemById.get(fact.work_item_id);
-    return factItem && factItem.kind !== "session_result" ? fact.work_item_id : "";
-  };
-  const foEndpoint = value => {
-    if(value === foKey) return true;
-    const item = itemById.get(value);
-    if(item && item.kind === "session_result") return true;
-    const fact = factById.get(value);
-    if(!fact) return false;
-    const factItem = itemById.get(fact.work_item_id);
-    return Boolean(factItem && factItem.kind === "session_result") ||
-      (!fact.work_item_id && ["user_message", "final_output", "observer_snapshot", "goal_shift"]
-        .includes(fact.type));
-  };
-  const branchTypes = new Set(["binds_to", "dispatches_to", "assigns_to"]);
-  const mergeTypes = new Set(["progresses", "decides", "results_in", "returns_to"]);
   const topologyForTask = workItemId => {
-    const branches = relations.filter(relation => branchTypes.has(relation.type) &&
-      taskEndpoint(relation.to) === workItemId &&
-      (foEndpoint(relation.from) || taskEndpoint(relation.from) === workItemId));
-    const merges = relations.filter(relation => mergeTypes.has(relation.type) &&
-      taskEndpoint(relation.from) === workItemId && foEndpoint(relation.to));
+    const taskKey = `task:${workItemId}`;
+    const branches = relations.filter(relation => relation.type === "dispatches_to" &&
+      relation.from === foKey && relation.to === taskKey);
+    const merges = relations.filter(relation => relation.type === "returns_to" &&
+      relation.from === taskKey && relation.to === foKey);
     const strongest = selected => selected.some(relation => relationEdge(relation) === "solid")
       ? "solid" : (selected.length ? "derived" : "none");
     return {branch:strongest(branches), merge:strongest(merges)};
@@ -942,10 +922,11 @@ function projectLaneRegistry(model, delegations, focus){
     const contributors = (contributorByTask.get(workItemId) || [])
       .sort((a, b) => String(a.worker).localeCompare(String(b.worker)));
     const topology = topologyForTask(workItemId);
+    const head = headByItem.get(workItemId) || null;
     return {key:`task:${workItemId}`, kind:"task", workItemId,
       label:(itemById.get(workItemId) || {}).label || "Task",
       events:taskEvents, contributors, item:itemById.get(workItemId) || {},
-      head:headByItem.get(workItemId) || null,
+      head, headFact:head && factById.get(head.latest_meaningful_event) || null,
       branch:topology.branch, merge:topology.merge};
   });
   const lanes = [foLane].concat(taskLanes);
@@ -972,10 +953,11 @@ function projectGraphRow(d, at, kind, registry, lane, body, attributes, tip){
     `</span><div class="pc-trail-body">${body}</div></article>`;
 }
 
-function projectLaneHistory(lane){
-  if(!lane.events.length) return "";
-  return `<details class="pc-trail-history"><summary>${lane.events.length} sourced event` +
-    `${lane.events.length === 1 ? "" : "s"}</summary>` + lane.events.map(fact => {
+function projectLaneHistory(lane, excludedFactId){
+  const events = lane.events.filter(fact => fact.fact_id !== excludedFactId);
+  if(!events.length) return "";
+  return `<details class="pc-trail-history"><summary>${events.length} sourced event` +
+    `${events.length === 1 ? "" : "s"}</summary>` + events.map(fact => {
     const prefix = fact.type === "user_message" ? "Operator intent" :
       (fact.type === "observer_snapshot" ? "Derived snapshot" : "");
     return `<div class="pc-trail-event">` + (prefix ? `<strong>${prefix}:</strong> ` : "") +
@@ -998,42 +980,53 @@ function projectFoLaneRow(d, registry, lane, focus){
       `<span>${esc(row.worker)}</span><details class="pc-event-evidence"><summary>evidence</summary>` +
       `<div>${esc(row.source)}</div></details></div>`).join("") + `</details>` : "";
   const linked = episode ? `<div class="pc-trail-quiet">source-linked correction</div>` : "";
+  const role = latest.type === "observer_snapshot" ? "FO · Derived snapshot" : "FO";
   const body = `<div class="pc-trail-top"><strong>${esc(latest.summary || "Focused session")}</strong>` +
-    `<span>FO</span></div>${linked}${projectLaneHistory(lane)}${contributors}`;
+    `<span>${role}</span></div>${linked}${projectFactEvidence(latest)}` +
+    `${projectLaneHistory(lane, latest.fact_id)}${contributors}`;
   return projectGraphRow(d, latest.at || focus && focus.last_activity, kind, registry, lane, body,
     steering || episode ? `data-steering-state="${episode ? "paired" : "unpaired"}" data-causal-edge="${edge}"` :
       `data-trail-head="fo"`, latest.summary || "Focused session");
 }
 
 function projectTaskLaneRow(d, registry, lane){
-  const current = lane.contributors[0] || null;
-  const latest = lane.events[0] || {};
-  const workflow = current && current.entity && current.stage;
-  const title = current && current.entity
-    ? String(current.entity).replace(/-/g, " ").replace(/^./, first => first.toUpperCase())
-    : lane.label;
-  const heading = workflow ? `${title} · ${current.stage}` : title;
-  const status = workflow ? "current stage" : (lane.head && lane.head.status === "requested"
-    ? "recently dispatched · current state not confirmed" : lane.head && lane.head.status || "current task");
-  const result = current && current.assignment ? current.assignment : latest.summary || "Latest state";
+  const head = lane.head || {};
+  const latest = lane.headFact || lane.events[0] || {};
+  const stage = head.stage || "";
+  const title = lane.label;
+  const heading = stage ? `${title} · ${stage}` : title;
+  const status = head.status === "requested" ? "recently dispatched · current state not confirmed" :
+    head.status || "current task";
+  const result = latest.summary || "Latest state";
+  const dispatchCount = Number(head.dispatch_count) || 0;
+  const attempts = dispatchCount === 1 ? "1 dispatch" : dispatchCount > 1
+    ? `${dispatchCount} dispatches · ${dispatchCount - 1} retries` : "";
   const workers = lane.contributors.map(row => row.worker).filter(Boolean).join(" · ");
-  const kind = workflow || lane.item.kind === "workflow_item" ? "stage" :
-    (["outcome", "decision"].includes(lane.head && lane.head.status) ? "result" : "work");
-  const source = current ? `<details class="pc-trail-history"><summary>source</summary>` +
-    `${esc(current.source)}` + (current.workflowBinding ? ` · workflow ` +
-      `${esc(String(current.workflowBinding).split("/").filter(Boolean).pop() || current.workflowBinding)}` +
-      `<code>${esc(current.workflowBinding)}</code>` : "") + `</details>` : "";
+  const kind = stage || lane.item.kind === "workflow_item" ? "stage" :
+    (["outcome", "decision"].includes(head.status) ? "result" : "work");
+  const bindings = Array.isArray(lane.item.source_bindings) && lane.item.source_bindings.length
+    ? lane.item.source_bindings : (latest.workflow_binding ? [{source:"task state",
+      value:`${latest.workflow_binding}:${latest.workflow_entity || ""}`}] : []);
+  const source = bindings.length ? `<details class="pc-trail-history"><summary>source</summary>` +
+    bindings.map(binding => {
+      const workflow = String(binding.value || "").split(":")[0].split("/").filter(Boolean).pop();
+      return `${esc(binding.source)}${workflow ? ` · workflow ${esc(workflow)}` : ""}` +
+        ` · <code>${esc(binding.value)}</code>`;
+    }).join("<br>") +
+    `</details>` : "";
+  const workflowBinding = latest.workflow_binding || (bindings[0] &&
+    String(bindings[0].value || "").split(":")[0]) || "";
   const body = `<div class="pc-trail-top"><strong>${esc(heading)}</strong><span>${esc(status)}</span></div>` +
     `<div class="pc-trail-result">${esc(result)}</div>` +
+    (attempts ? `<div class="pc-trail-quiet" data-dispatch-count="${dispatchCount}">${esc(attempts)}</div>` : "") +
     (workers ? `<div class="pc-trail-quiet">${esc(workers)}</div>` : "") +
-    projectLaneHistory(lane) + source;
-  const at = Math.max(Number(latest.at) || 0,
-    ...lane.contributors.map(row => Number(row.at) || 0));
+    projectFactEvidence(latest) + projectLaneHistory(lane, latest.fact_id) + source;
+  const at = Number(latest.at) || 0;
   const attrs = `data-assignment-lane="task-head" data-work-item="${esc(lane.workItemId)}"` +
-    ` data-trail-head="${esc(lane.head && lane.head.status || "latest")}"` +
+    ` data-trail-head="${esc(head.status || "latest")}"` +
     ` data-branch-edge="${esc(lane.branch)}" data-merge-edge="${esc(lane.merge)}"` +
-    (current && current.stage ? ` data-work-stage="${esc(current.stage)}"` : "") +
-    (current && current.workflowBinding ? ` data-workflow-binding="${esc(current.workflowBinding)}"` : "");
+    (stage ? ` data-work-stage="${esc(stage)}"` : "") +
+    (workflowBinding ? ` data-workflow-binding="${esc(workflowBinding)}"` : "");
   return projectGraphRow(d, at, kind, registry, lane, body, attrs, heading);
 }
 

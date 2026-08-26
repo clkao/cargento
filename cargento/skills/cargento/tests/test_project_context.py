@@ -455,6 +455,62 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual([], model["projections"]["steering_episodes"])
         self.assertEqual([], model["projections"]["candidate_goal_shifts"])
 
+    def test_dispatch_topology_is_separate_from_membership_and_counts_attempts(self) -> None:
+        common = {
+            "kind": "prepared_dispatch",
+            "title": "project-cockpit → shaping",
+            "source": "exact dispatch artifact",
+            "harness": "codex",
+            "sid": self.SID,
+            "entity": "project-cockpit",
+            "stage": "shaping",
+            "workflow_binding": "/repo/.spacedock/explore",
+        }
+        events = [{**common, "at": float(at)} for at in (1, 2, 3)]
+
+        model = project_context._semantic_model(events, [])
+        work_item = model["work_items"][0]
+        work_item_id = work_item["work_item_id"]
+        relations = model["relations"]
+        branches = [row for row in relations if row["type"] == "dispatches_to"]
+        memberships = [row for row in relations if row["type"] == "binds_to"]
+
+        self.assertEqual(3, len(memberships))
+        self.assertEqual(3, len(branches))
+        self.assertEqual({f"fo:codex:{self.SID}"}, {row["from"] for row in branches})
+        self.assertEqual({f"task:{work_item_id}"}, {row["to"] for row in branches})
+        self.assertTrue(all(row.get("evidence_ref") for row in branches))
+        head = model["projections"]["trail_heads"][0]
+        self.assertEqual(3, head["dispatch_count"])
+
+    def test_task_state_fact_not_contributor_supplies_stage(self) -> None:
+        task_id = "workflow:task"
+        heads = project_context._semantic_trail_heads(
+            {
+                task_id: [
+                    {
+                        "fact_id": "dispatch",
+                        "at": 1,
+                        "type": "prepared_dispatch",
+                        "source_kind": "prepared_dispatch",
+                    },
+                    {
+                        "fact_id": "state",
+                        "at": 2,
+                        "type": "stage_transition",
+                        "source_kind": "child_assignment",
+                        "stage": "shaping",
+                    },
+                ]
+            },
+            [],
+        )
+
+        self.assertEqual("shaping", heads[0]["stage"])
+        self.assertEqual("state", heads[0]["state_fact"])
+        self.assertEqual("current stage", heads[0]["status"])
+        self.assertEqual(1, heads[0]["dispatch_count"])
+
     def test_birth_only_is_requested_history_not_demonstrated_current_work(self) -> None:
         model = project_context._semantic_model(
             [
