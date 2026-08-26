@@ -41,23 +41,23 @@ function nextCockpitSessionResult(session){
 
 function nextCockpitSessionNav(group, focus){
   const selected = focus ? sessKey(focus) : "all";
-  const link = (key, label, state, result) => {
+  const link = (key, label, subtitle) => {
     const route = {view:"project", project:group.label, focus:key === "all" ? null : key};
     return `<a href="${esc(nextFragmentForRoute(route))}" data-next-cockpit-session="${esc(key)}"` +
       (selected === key ? ` aria-current="page"` : "") + `>` +
-      `<strong>${esc(label)}</strong><span>${esc(state)}</span>` +
-      `<small>${esc(String(result || "").replace(/\s+/g, " ").slice(0, 90))}</small></a>`;
+      `<strong>${esc(label)}</strong>` +
+      `<small>${esc(String(subtitle || "").replace(/\s+/g, " ").slice(0, 90))}</small></a>`;
   };
   const rows = [...group.sessions].sort((left, right) =>
     String(left.harness || "").localeCompare(String(right.harness || "")) ||
     sessKey(left).localeCompare(sessKey(right)));
   return `<nav class="next-cockpit-session-nav" aria-label="Project sessions">` +
-    link("all", "All sessions", `${rows.length} sessions`, "Project-wide semantic union") +
+    link("all", "All sessions", `${rows.length} sessions · project-wide evidence`) +
     rows.map(session => {
       const harness = nextHarnessLabels().get(String(session.harness || "")) ||
         String(session.harness || "Session");
-      return link(sessKey(session), nextCockpitSessionResult(session),
-        `${harness} · ${String(session.state || "unknown")}`, "");
+      return link(sessKey(session), `${harness} · ${String(session.state || "unknown")}`,
+        nextCockpitSessionResult(session));
     }).join("") + `</nav>`;
 }
 
@@ -115,9 +115,19 @@ function nextCockpitContextKey(group, focus){
 }
 
 function nextCockpitProjectObservation(group){
-  const focus = nextCockpitFocusedSession(group);
-  const entry = nextCockpitContexts.get(nextCockpitContextKey(group, focus));
+  const entry = nextCockpitContexts.get(nextCockpitContextKey(group, null));
   return entry && entry.data || null;
+}
+
+function nextCockpitCanonicalSemantic(group, semantic){
+  const observation = nextCockpitProjectObservation(group);
+  const projectSemantic = observation && observation.semantic || {};
+  const labels = new Map((projectSemantic.work_items || []).map(item =>
+    [String(item.work_item_id || ""), String(item.label || "")]));
+  return Object.assign({}, semantic, {work_items:(semantic.work_items || []).map(item => {
+    const label = labels.get(String(item.work_item_id || ""));
+    return label ? Object.assign({}, item, {label}) : item;
+  })});
 }
 
 function nextCockpitLoadContext(group, focus){
@@ -157,12 +167,28 @@ function nextCockpitFocus(group){
     '<button type="button" data-next-cockpit-action="focus-clear">clear</button></div></section>';
 }
 
+function nextCockpitProjectScope(){
+  return '<section class="next-cockpit-scope next-cockpit-scope--project">' +
+    '<strong>PROJECT OVERVIEW</strong>' +
+    '<span>Session selection filters Timeline and Terminal; project overview remains project-wide.</span>' +
+    '</section>';
+}
+
+function nextCockpitEvidenceScope(focus){
+  const selected = focus ? `${nextHarnessLabels().get(String(focus.harness || "")) ||
+    String(focus.harness || "Session")} · ${String(focus.state || "unknown")}` : "All sessions";
+  return '<header class="next-cockpit-scope next-cockpit-scope--evidence">' +
+    `<strong>SESSION EVIDENCE</strong><span>${esc(selected)}</span></header>`;
+}
+
 function nextCockpitTimeline(group, focus){
   const key = nextCockpitContextKey(group, focus);
   const entry = nextCockpitContexts.get(key);
+  const projectEntry = nextCockpitContexts.get(nextCockpitContextKey(group, null));
   nextCockpitLoadContext(group, focus);
-  if(!entry || !entry.data){
-    const label = entry && entry.error ? "Semantic context unavailable." : "Loading semantic context…";
+  if(!entry || !entry.data || focus && (!projectEntry || !projectEntry.data)){
+    const failed = entry && entry.error || focus && projectEntry && projectEntry.error;
+    const label = failed ? "Semantic context unavailable." : "Loading semantic context…";
     return `<section class="next-cockpit-semantic" data-next-cockpit-semantic><h2>SEMANTIC TIMELINE</h2>` +
       `<p class="next-cockpit-empty">${label}</p></section>`;
   }
@@ -172,7 +198,10 @@ function nextCockpitTimeline(group, focus){
   const delegationGroup = {label: nextCockpitStableKey(group)};
   const lanes = focus ? projectDelegationLanes(focus, delegationGroup) :
     group.sessions.flatMap(session => projectDelegationLanes(session, delegationGroup));
-  const semantic = entry.data.semantic || {facts:[], work_items:[], projections:{}};
+  const semantic = nextCockpitCanonicalSemantic(
+    group,
+    entry.data.semantic || {facts:[], work_items:[], projections:{}},
+  );
   const timeline = projectSemanticTimeline(nextData, semantic, lanes, focus, group.sessions)
     .replaceAll('data-calm="project-graph-mode"', 'data-next-cockpit-action="graph-mode"');
   return '<section class="next-cockpit-semantic" data-next-cockpit-semantic>' +
@@ -195,7 +224,8 @@ function nextProjectCockpit(context){
   const focus = nextCockpitFocusedSession(group);
   projectQuerySession = focus ? sessKey(focus) : "";
   lastData = nextData;
-  return nextCockpitFocus(group) + nextCockpitTimeline(group, focus) +
+  return nextCockpitFocus(group) + nextCockpitEvidenceScope(focus) +
+    nextCockpitTimeline(group, focus) +
     nextCockpitTerminal(group, focus);
 }
 

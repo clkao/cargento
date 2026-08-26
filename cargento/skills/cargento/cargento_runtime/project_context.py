@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import subprocess
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from . import claude_data, observer, records, semantic_history, spacedock, transcripts
@@ -17,7 +18,7 @@ from . import sessions as runtime_sessions
 from . import state as runtime_state
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Iterator, Sequence
 
     from .config import RuntimeConfig
     from .state import RuntimeState
@@ -1535,9 +1536,48 @@ def _artifact_bindings(
     return bindings
 
 
+def _exact_gate_aliases(
+    events: list[dict[str, Any]],
+) -> tuple[dict[tuple[str, str], tuple[str, str]], dict[str, set[tuple[str, str]]]]:
+    by_workflow: dict[tuple[str, str], tuple[str, str]] = {}
+    by_entity: dict[str, set[tuple[str, str]]] = {}
+    for event in events:
+        if event.get("kind") != "gate":
+            continue
+        workflow = str(event.get("workflow_binding") or "")
+        entity = str(event.get("entity") or "")
+        if not workflow or not entity:
+            continue
+        canonical = (workflow, entity)
+        for alias in {entity, str(event.get("entity_slug") or "")} - {""}:
+            by_workflow[(workflow, alias)] = canonical
+            by_entity.setdefault(alias, set()).add(canonical)
+    return by_workflow, by_entity
+
+
+def _bind_exact_gate_alias(
+    event: dict[str, Any],
+    by_workflow: dict[tuple[str, str], tuple[str, str]],
+    by_entity: dict[str, set[tuple[str, str]]],
+) -> None:
+    if event.get("kind") == "gate":
+        return
+    workflow = str(event.get("workflow_binding") or "")
+    entity = str(event.get("entity") or "")
+    canonical = by_workflow.get((workflow, entity)) if workflow and entity else None
+    if canonical is None and not workflow and entity:
+        candidates = by_entity.get(entity, set())
+        canonical = next(iter(candidates)) if len(candidates) == 1 else None
+    if canonical is None:
+        return
+    event["workflow_binding"], event["entity"] = canonical
+    event["source"] = str(event.get("source") or "") + " and exact gate entity alias"
+
+
 def _bind_dispatch_artifacts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Bind a consumed dispatch file only to its exact prepared artifact."""
     prepared = _prepared_dispatches(events)
+    gate_aliases, gate_entities = _exact_gate_aliases(events)
 
     normalized: list[dict[str, Any]] = []
     for source_event in events:
@@ -1575,8 +1615,85 @@ def _bind_dispatch_artifacts(events: list[dict[str, Any]]) -> list[dict[str, Any
                     "source": str(event.get("source") or "") + " and exact prepared-dispatch match",
                 }
             )
+        _bind_exact_gate_alias(event, gate_aliases, gate_entities)
         normalized.append(event)
     return normalized
+
+
+def _project_plan_entities(sessions: Sequence[Mapping[str, Any]]) -> set[tuple[str, str]]:
+    entities: set[tuple[str, str]] = set()
+    for session in sessions:
+        attachment = session.get("spacedock")
+        if not isinstance(attachment, Mapping):
+            continue
+        workflows = attachment.get("workflows")
+        if not isinstance(workflows, list):
+            continue
+        for workflow in workflows:
+            if not isinstance(workflow, Mapping):
+                continue
+            name = str(workflow.get("workflow") or "")
+            rows = workflow.get("entities")
+            if not name or not isinstance(rows, list):
+                continue
+            for entity in rows:
+                if isinstance(entity, Mapping) and entity.get("slug"):
+                    entities.add((name, str(entity["slug"])))
+    return entities
+
+
+def _focused_gate_events(
+    transcript_events: list[dict[str, Any]],
+    gate_events: list[dict[str, Any]],
+    child_assignments: list[dict[str, Any]],
+    sessions: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], set[str]]:
+    normalized = _bind_dispatch_artifacts([*transcript_events, *gate_events])
+    allowed = {
+        work_item_id
+        for event in normalized
+        if event.get("kind") != "gate"
+        for work_item_id, _kind, _label, _binding in [
+            _semantic_work_identity(event, str(event.get("kind") or ""))
+        ]
+        if work_item_id
+    }
+    allowed.update(
+        str(row.get("work_item_id") or "") for row in child_assignments if row.get("work_item_id")
+    )
+    plan_entities = _project_plan_entities(sessions)
+    kept: list[dict[str, Any]] = []
+    for event in normalized:
+        if event.get("kind") != "gate":
+            continue
+        work_item_id, _kind, _label, _binding = _semantic_work_identity(event, "gate")
+        plan_alias = (str(event.get("workflow") or ""), str(event.get("entity_slug") or ""))
+        if plan_alias in plan_entities:
+            allowed.add(work_item_id)
+        if work_item_id in allowed:
+            kept.append(event)
+    return kept, allowed
+
+
+def _scope_gate_events(
+    events: list[dict[str, Any]],
+    history_events: list[dict[str, Any]],
+    gate_events: list[dict[str, Any]],
+    focus: tuple[str, str] | None,
+    child_assignments: list[dict[str, Any]],
+    sessions: Sequence[Mapping[str, Any]],
+) -> set[str]:
+    allowed: set[str] = set()
+    if focus is not None:
+        gate_events, allowed = _focused_gate_events(
+            events,
+            gate_events,
+            child_assignments,
+            sessions,
+        )
+    events.extend(gate_events)
+    history_events.extend(gate_events)
+    return allowed
 
 
 def _semantic_work_identity(
@@ -2515,7 +2632,11 @@ def _merge_semantic_history(
     return semantic
 
 
-def _focused_semantic_history(history: dict[str, Any], focus: tuple[str, str]) -> dict[str, Any]:
+def _focused_semantic_history(
+    history: dict[str, Any],
+    focus: tuple[str, str],
+    allowed_gate_work_items: set[str],
+) -> dict[str, Any]:
     """Project facts cross session boundaries; transcript facts do not."""
     focused_events: list[dict[str, Any]] = []
     wanted = {"harness": focus[0], "sid": focus[1]}
@@ -2524,6 +2645,11 @@ def _focused_semantic_history(history: dict[str, Any], focus: tuple[str, str]) -
             continue
         fact = event.get("fact")
         if not isinstance(fact, dict):
+            continue
+        if (
+            fact.get("type") == "gate_decision"
+            and fact.get("work_item_id") not in allowed_gate_work_items
+        ):
             continue
         if fact.get("scope") in {"project", "workflow"}:
             focused_events.append(event)
@@ -2663,6 +2789,7 @@ def collect(
     observers: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
     history_events: list[dict[str, Any]] = []
+    gate_events: list[dict[str, Any]] = []
     history_source_scans: dict[str, dict[str, int]] = {}
     unavailable: list[dict[str, str]] = []
     briefings = 0
@@ -2730,16 +2857,23 @@ def collect(
             history_source_scans[source_identity] = signature
         _merge_support_counts(support_totals, work_support)
         gate_rows, prepared = _gate_context(config, state, transcript_path, harness, sid)
-        events.extend(gate_rows)
-        history_events.extend(gate_rows)
+        gate_events.extend(gate_rows)
         briefings += prepared
 
     project_gate_rows, prepared = _project_peer_gate_context(
         config, state, sessions, project, focus
     )
-    events.extend(project_gate_rows)
-    history_events.extend(project_gate_rows)
+    gate_events.extend(project_gate_rows)
     briefings += prepared
+
+    allowed_gate_work_items = _scope_gate_events(
+        events,
+        history_events,
+        gate_events,
+        focus,
+        child_assignments,
+        sessions,
+    )
 
     timeline = _dedupe_project_events(events, limit=MAX_PROJECT_EVENTS)
     history_timeline = _dedupe_project_events(history_events)
@@ -2757,7 +2891,7 @@ def collect(
         source_scans=history_source_scans,
     )
     if focus is not None:
-        history = _focused_semantic_history(history, focus)
+        history = _focused_semantic_history(history, focus, allowed_gate_work_items)
     semantic = _merge_semantic_history(semantic, history, now=now)
     return {
         "project": project,

@@ -239,6 +239,10 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
 .next-cockpit-project-status ul{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0;padding:0;list-style:none;color:var(--ink2)}
 .next-cockpit-project-status details>summary{cursor:pointer;color:var(--ink3)}
 .next-cockpit-status-empty{color:var(--ink3)}
+.next-cockpit-scope{display:flex;align-items:baseline;gap:12px;padding:7px 12px;font:var(--fs-xs) var(--mono);color:var(--ink3)}
+.next-cockpit-scope strong{font-size:var(--fs-2xs);letter-spacing:.08em;color:var(--ink)}
+.next-cockpit-scope--project{border-bottom:1px solid var(--line)}
+.next-cockpit-scope--evidence{margin-top:12px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .pc-graph-row>time{padding-top:8px;color:var(--ink3);font-family:var(--mono);font-size:var(--fs-2xs);text-align:right}
 .pc-graph-filter{display:flex;justify-content:flex-end;gap:2px;margin-bottom:5px}
 .pc-graph-filter button{padding:3px 6px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--ink3);font:var(--fs-2xs) var(--mono);cursor:pointer}

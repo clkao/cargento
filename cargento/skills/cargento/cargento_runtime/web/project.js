@@ -1625,7 +1625,7 @@ function projectSemanticTimeline(d, model, workflowLanes, focus, sessionOrigins)
     ["active", "all", "decisions"].map(value => `<button type="button" data-calm="project-graph-mode"` +
       ` data-arg="${value}" class="${mode === value ? "selected" : ""}"` +
       ` aria-pressed="${mode === value}">${value === "active" ? "Active" :
-        (value === "all" ? "All" : "Decisions")}</button>`).join("") +
+        (value === "all" ? "All events" : "Decisions")}</button>`).join("") +
     `</div>`;
   return `<section class="pc-semantic-timeline" data-order="newest-first" data-model="fact-projection"` +
     ` data-graph-layout="fo-task-lanes" data-graph-mode="${mode}">${controls}` +

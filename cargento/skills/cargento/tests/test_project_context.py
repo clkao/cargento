@@ -121,6 +121,15 @@ class ProjectContextTest(unittest.TestCase):
                 "sid": self.SID,
                 "last_activity": self.NOW,
                 "active": True,
+                "spacedock": {
+                    "role": "first-officer",
+                    "workflows": [
+                        {
+                            "workflow": "workflow",
+                            "entities": [{"slug": "project-cockpit"}],
+                        }
+                    ],
+                },
             }
         ]
         return project_context.collect(
@@ -1412,6 +1421,40 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual(1, len(combined["work_items"]))
         self.assertEqual("Project cockpit", combined["work_items"][0]["label"])
 
+    def test_exact_gate_entity_binds_artifact_only_start_to_canonical_title(self) -> None:
+        gate = {
+            "at": 1.0,
+            "kind": "gate",
+            "title": "task-slug · ideation · approve",
+            "source": "entity gate",
+            "workflow_binding": "/repo/docs/dev",
+            "entity": "abcdefghjk",
+            "entity_slug": "task-slug",
+            "entity_title": "Human task title",
+            "stage": "ideation",
+            "decision": "approve",
+            "by": "person:captain",
+            "target_stage": "implementation",
+        }
+        started = {
+            "at": 2.0,
+            "kind": "task_started",
+            "title": "started",
+            "source": "subagent call",
+            "harness": "pi",
+            "sid": self.SID,
+            "dispatch_artifact": "/tmp/spacedock-dispatch/spacedock-ensign-abcdefghjk-implementation.md",
+        }
+
+        model = project_context._semantic_model([gate, started], [])
+
+        self.assertEqual(1, len(model["work_items"]))
+        self.assertEqual("Human task title", model["work_items"][0]["label"])
+        self.assertEqual(
+            {model["work_items"][0]["work_item_id"]},
+            {fact["work_item_id"] for fact in model["facts"]},
+        )
+
     def test_focused_history_keeps_exact_session_and_project_facts_only(self) -> None:
         history = {
             "events": [
@@ -1439,10 +1482,96 @@ class ProjectContextTest(unittest.TestCase):
             "cursors": {"codex:root": {}, "pi:other": {}},
         }
 
-        focused = project_context._focused_semantic_history(history, ("codex", "root"))
+        focused = project_context._focused_semantic_history(
+            history,
+            ("codex", "root"),
+            {"workflow:kept"},
+        )
 
         self.assertEqual(["codex", "gate"], [row["event_id"] for row in focused["events"]])
         self.assertEqual(history["cursors"], focused["cursors"])
+
+    def test_focused_history_excludes_unrelated_project_gate(self) -> None:
+        history = {
+            "events": [
+                {
+                    "event_id": "kept",
+                    "fact": {
+                        "fact_id": "kept",
+                        "scope": "project",
+                        "type": "gate_decision",
+                        "work_item_id": "workflow:kept",
+                    },
+                },
+                {
+                    "event_id": "peer",
+                    "fact": {
+                        "fact_id": "peer",
+                        "scope": "project",
+                        "type": "gate_decision",
+                        "work_item_id": "workflow:peer",
+                    },
+                },
+            ]
+        }
+
+        focused = project_context._focused_semantic_history(
+            history,
+            ("codex", "root"),
+            {"workflow:kept"},
+        )
+
+        self.assertEqual(["kept"], [row["event_id"] for row in focused["events"]])
+
+    def test_focused_gates_require_exact_session_child_or_plan_identity(self) -> None:
+        workflow = "/repo/docs/dev"
+
+        def gate(entity: str, slug: str) -> dict[str, str]:
+            return {
+                "kind": "gate",
+                "workflow": "dev",
+                "workflow_binding": workflow,
+                "entity": entity,
+                "entity_slug": slug,
+            }
+
+        transcript = [
+            {
+                "kind": "prepared_dispatch",
+                "workflow_binding": workflow,
+                "entity": "session-id",
+            }
+        ]
+        children = [{"work_item_id": semantic_history.workflow_work_item_id(workflow, "child-id")}]
+        sessions = [
+            {
+                "spacedock": {
+                    "workflows": [{"workflow": "dev", "entities": [{"slug": "planned-slug"}]}]
+                }
+            }
+        ]
+        gates = [
+            gate("session-id", "session-slug"),
+            gate("child-id", "child-slug"),
+            gate("planned-id", "planned-slug"),
+            gate("peer-id", "peer-slug"),
+        ]
+
+        kept, work_items = project_context._focused_gate_events(
+            transcript,
+            gates,
+            children,
+            sessions,
+        )
+
+        self.assertEqual(
+            ["session-id", "child-id", "planned-id"],
+            [row["entity"] for row in kept],
+        )
+        self.assertNotIn(
+            semantic_history.workflow_work_item_id(workflow, "peer-id"),
+            work_items,
+        )
 
     def test_focused_gate_context_reads_project_peer_without_foreign_transcript_facts(self) -> None:
         focused = {

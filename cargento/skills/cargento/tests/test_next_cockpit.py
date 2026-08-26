@@ -145,11 +145,12 @@ console.log(JSON.stringify({html, task}));
         out = self.run_fixture(
             """
 const html = __els.app.innerHTML;
+const nav = (html.match(/<nav class="next-cockpit-session-nav"[\\s\\S]*?<\\/nav>/) || [""])[0];
 console.log(JSON.stringify({
   header:html.indexOf('class="next-project-detail-header"'),
   nav:html.indexOf('class="next-cockpit-session-nav"'),
   plan:html.indexOf('data-next-project-section="plan"'),
-  html
+  html, sessionNav:nav
 }));
 """
         )
@@ -157,8 +158,48 @@ console.log(JSON.stringify({
 
         self.assertLess(out["header"], out["nav"])
         self.assertLess(out["nav"], out["plan"])
-        self.assertIn("<strong>Shape project cockpit</strong><span>Codex · working", out["html"])
-        self.assertNotIn("<strong>Codex · focus-1", out["html"])
+        self.assertIn("<strong>Codex · working</strong>", out["sessionNav"])
+        self.assertIn("<small>Shape project cockpit</small>", out["sessionNav"])
+        self.assertNotIn("<strong>Shape project cockpit", out["sessionNav"])
+
+    def test_focus_keeps_project_status_and_canonical_labels_from_all_context(self) -> None:
+        out = self.run_fixture(
+            """
+nextCockpitContexts.clear();
+const focused = {facts:[
+  {fact_id:"task-focus",at:110,type:"prepared_dispatch",summary:"Opaque dispatch",
+    source_session:{harness:"pi",sid:"pi-idle"},work_item_id:__task,
+    evidence:{source:"dispatch artifact",confidence:"exact"}}
+],work_items:[{work_item_id:__task,label:"opaque-id",kind:"workflow_item"}],
+relations:[],projections:{operator_intents:[],steering_episodes:[],trail_heads:[
+  {work_item_id:__task,status:"prepared",latest_meaningful_event:"task-focus"}],
+activity:{nodes:[{kind:"work",at:110,work_item_ids:[__task]}]}}};
+__fetchImpl = async url => ({ok:true,json:async() => ({
+  semantic:String(url).includes("session=") ? focused : __semantic,
+  child_assignments:[],observers:[]
+})});
+nextRoute = nextRouteFromFragment("#n=project:cargento:pi%3Api-idle");
+projectGraphModeBySession.set("pi:pi-idle", "all");
+renderNext();
+await __settle();await __settle();await __settle();
+const html=__els.app.innerHTML;
+console.log(JSON.stringify({html,requests:[...nextCockpitContexts.keys()]}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertTrue(any(key.endswith("\n") for key in out["requests"]))
+        self.assertTrue(any(key.endswith("\npi:pi-idle") for key in out["requests"]))
+        self.assertIn("Project cockpit · review → shaping", out["html"])
+        self.assertIn('data-object="Project cockpit"', out["html"])
+        self.assertNotIn('data-object="Opaque id"', out["html"])
+        self.assertIn("PROJECT OVERVIEW", out["html"])
+        self.assertIn("SESSION EVIDENCE", out["html"])
+        self.assertIn(
+            "Session selection filters Timeline and Terminal; project overview remains project-wide.",
+            out["html"],
+        )
+        self.assertIn(">All events</button>", out["html"])
 
     def test_session_permalink_selects_exact_focus_and_decisions_filter_is_present(self) -> None:
         out = self.run_fixture(

@@ -126,9 +126,14 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         busy repo, each row captioned "awaiting your message"."""
         html = self.render()
         assert isinstance(html, str)
+        going_on = re.search(
+            r'<section class="next-project-activity" data-next-project-activity="going-on">[\s\S]*?</section>',
+            html,
+        )
+        assert going_on is not None
 
         self.assertNotIn('data-next-going-on="idle-fresh"', html)
-        self.assertNotIn("Idle but still in the window", html)
+        self.assertNotIn("Idle but still in the window", going_on.group(0))
         self.assertIn('data-next-going-on="work-a"', html)
 
     def test_cards_render_payload_clock_metrics_registry_labels_and_activity(self) -> None:
