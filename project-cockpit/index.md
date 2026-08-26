@@ -270,3 +270,30 @@ Rebased the accepted cockpit onto Cargento 0.16 and composed it inside the upstr
 ### Summary
 
 The rejected empty state now observes workflow truth at the project boundary instead of treating a session's absent attachment strip as a declaration about the repository. Cargento resolves the selected session to the canonical checkout, asks Spacedock for commissioned workflow directories, renders `dev` and `explore` as separate definition-only sections, and keeps live session plans plus semantic activity as distinct sources. The correction is committed at `dae3ed0`, live on 8766 with the accepted Focus/timeline/terminal composition intact, and ready for captain interaction.
+
+## Stage Report: shaping (cycle 7)
+
+- DONE: Bind every transcript-derived fact to its exact source session without relying on an optional branch record.
+  Commit `f0806ecb9e20804dd54a32bae76f9349114fe401` adds `source_session` to normalized transcript facts, observer snapshots, final outputs, and persisted history. Structured child assignments additionally retain their exact child source, verified contributor label, canonical work item, and proven parent session. The live all-project union contains exact Codex, Pi, and Claude source identities; no session-scoped fact is unattributed.
+- DONE: Make focused semantics a source boundary while retaining honest project truth.
+  A focused response now keeps only that session's transcript facts, structurally proven children whose `parent_session` is the focus, and project-scoped facts. A bounded peer read imports only canonical gate/entity state when the focused transcript does not expose that workflow; it never imports the peer transcript. On live `spacedock-v1`, Codex focus contains 17 own/child session facts plus 49 gates, Pi contains 24 own facts plus 49 gates, and Claude contains 96 own facts plus 49 gates. Each has zero foreign transcript facts.
+- DONE: Keep gate decisions project/task scoped and reject time-proximity inference.
+  Gate facts retain exact `person:captain`, decision, stage, target stage, workflow, and work item, but no originating session because the entity record does not prove one. The live union has 49 canonical gates and 4 separate raw `approve` messages with zero relations between them. Decisions therefore stand on their own source identity rather than being folded by nearby timestamps.
+- DONE: Default the project cockpit to the complete session scope and make every peer directly reachable.
+  `All sessions` is the default route. Compact project-local navigation lists Codex, Pi, and Claude, including both idle sessions, with harness/session label, state, last meaningful result, selected state, and a copyable hash permalink. A focused permalink fetches that exact `harness:sid`; the all-project route fetches the deduplicated union.
+- DONE: Render one global newest-first timeline with stable session and current-task lanes.
+  The all-project registry creates one human-labelled FO lane per project session and one lane per relevant current task. Historical task lanes remain behind All unless selected by Decisions. Same-lane vertical continuity is preserved; no horizontal dispatch/return line returns to the default view.
+- DONE: Make every visible row answer actor, action, object, and result.
+  Rows expose exact `data-actor`, `data-action`, `data-object`, and `data-result` fields and render the same concise sentence. Canonical captain gates read like `You approved <task> · review → shaping`; dispatch/start/result rows distinguish FO and verified worker identity. The Decisions filter renders canonical gate rows only.
+- DONE: Distinguish an unmatched task start from observed active work.
+  A child assignment or historical start no longer sets `working`. Only a current exact-state fact or currently observed contributor does. The five live work births without return evidence remain unresolved and explicitly say `return not observed`; they do not appear as five active workers.
+- DONE: Falsify the correction at source, model, route, DOM, asset, and live three-session seams.
+  The 145-test focused set covering project context, semantic history, next cockpit/page/project/chrome, and shared project rendering passes. Ruff, Ruff format, embedded JS/CSS/DOM lint, byte oracles, and `git diff --check` pass. The next composition is 342,130 bytes at SHA-256 `92ce5c6d97844a84492bfe9fa23c1405970bd046d2c1a9a622c0ff7f2a33f05e`.
+- DONE: Swap the verified candidate onto stable 8766 and restore exact read-only terminal authority.
+  Candidate 8767 was verified first while PID 18029 kept the accepted page stable, then stopped after the single swap. Stable 8766 now runs PID `38979` from `f0806ec` and serves the pinned next composition above. Exact collected root session `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` is re-registered to current tmux `$4/@4/%10` (`Cargento:1.1`, 174×42), stream connected, read-only, with keyboard input `not-exposed`.
+- DONE: Preserve prototype scope.
+  No code ref was pushed or integrated, no version field changed, and `.spacedock/dev` was not read or mutated. This is the round-zero implementation checkpoint; visual judgment and the first expert UX correction remain captain-owned round 1.
+
+### Summary
+
+The project cockpit now defaults to a three-session project union without leaking one session's transcript into another. Exact session, parent, contributor, task, and captain-decision identities survive normalization; canonical gates remain project truth; unmatched starts remain unresolved. The live 8766 page exposes direct idle-peer navigation, stable FO/task lanes, concise actor-to-result rows, a canonical Decisions filter, and the accepted Focus plus exact read-only terminal, ready for the first captain UX review.
