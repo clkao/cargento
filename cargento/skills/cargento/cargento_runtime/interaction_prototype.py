@@ -50,6 +50,17 @@ ORIGIN_FIELDS: Final = (
     "pane_index",
     "pane_tty",
 )
+# A live bootstrap measured `window_name` changing from `spacedock` to `[tmux]`
+# under tmux automatic rename while the IDs and TTY stayed fixed. Names and
+# indexes remain display metadata; this tuple alone decides attachment identity.
+STABLE_ORIGIN_FIELDS: Final = (
+    "server_socket",
+    "server_pid",
+    "session_id",
+    "window_id",
+    "pane_id",
+    "pane_tty",
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -80,8 +91,12 @@ class TmuxOrigin:
         return cls(**fields)
 
     def as_dict(self) -> dict[str, str]:
-        """Return the stable JSON representation used by the client."""
+        """Return the closed JSON representation used by the client."""
         return dataclasses.asdict(self)
+
+    def same_identity(self, other: TmuxOrigin) -> bool:
+        """Compare server generation and stable tmux IDs, not mutable labels."""
+        return all(getattr(self, field) == getattr(other, field) for field in STABLE_ORIGIN_FIELDS)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -277,10 +292,10 @@ class TmuxAdapter:
     def bind_origin(self, origin: TmuxOrigin) -> None:
         """Adopt one external origin, or verify the disposable origin already prepared."""
         if self._owns_server:
-            if origin != self._origin:
+            if self._origin is None or not origin.same_identity(self._origin):
                 raise OriginUnavailableError("prepared tmux origin changed before registration")
             return
-        if self._origin is not None and origin != self._origin:
+        if self._origin is not None and not origin.same_identity(self._origin):
             raise OriginUnavailableError("external tmux origin is already bound")
         self._socket = origin.server_socket
         self._origin = origin
@@ -362,8 +377,8 @@ class TmuxAdapter:
         return self._inspect(origin.pane_id)
 
     def capture(self, origin: TmuxOrigin) -> str:
-        """Return bounded pane text after re-validating every registered coordinate."""
-        if self.inspect(origin) != origin:
+        """Return bounded pane text after re-validating the registered identity."""
+        if not self.inspect(origin).same_identity(origin):
             message = "registered tmux origin no longer identifies the same pane"
             raise OriginUnavailableError(message)
         output = self._run("capture-pane", "-p", "-S", "-100", "-t", origin.pane_id)
@@ -372,7 +387,7 @@ class TmuxAdapter:
     def connected(self, origin: TmuxOrigin) -> bool:
         """Check exact-origin continuity without mutating the tmux server."""
         try:
-            return self.inspect(origin) == origin
+            return self.inspect(origin).same_identity(origin)
         except OriginUnavailableError:
             return False
 
@@ -496,13 +511,13 @@ class InteractionPrototype:
                 inspected = self._adapter.inspect(origin)
             except OriginUnavailableError:
                 return {"state": "refused", "reason": "origin-disconnected"}
-            if inspected != origin:
+            if not inspected.same_identity(origin):
                 return {"state": "refused", "reason": "origin-mismatch"}
-            self._expected_origin = origin
+            self._expected_origin = inspected
             if self._external_session_id is not None:
                 try:
                     self._adapter.start_read_only_stream(
-                        origin,
+                        inspected,
                         self._on_stream_output,
                         self._on_stream_disconnect,
                     )
@@ -513,7 +528,7 @@ class InteractionPrototype:
                 origin_id=secrets.token_urlsafe(16),
                 lease_token=secrets.token_urlsafe(24),
                 cargento_session_id=cargento_session_id,
-                origin=origin,
+                origin=inspected,
                 expires_at=now + self._lease_sec,
                 renewal_count=0,
             )
@@ -534,10 +549,8 @@ class InteractionPrototype:
         origin: TmuxOrigin | None,
     ) -> dict[str, str] | None:
         reason = ""
-        origin_mismatch = (
-            origin is None
-            or (self._expected_origin is not None and origin != self._expected_origin)
-            or (self._external_session_id is None and origin != self._expected_origin)
+        origin_mismatch = origin is None or (
+            self._expected_origin is not None and not origin.same_identity(self._expected_origin)
         )
         if not secrets.compare_digest(registration_token, self._registration_token):
             reason = "invalid-registration-token"
@@ -565,13 +578,19 @@ class InteractionPrototype:
                 return {"state": "refused", "reason": "invalid-lease-token"}
             if not self._renewals_enabled or now >= lease.expires_at:
                 return {"state": "refused", "reason": "stale-registration"}
-            if not self._adapter.connected(lease.origin):
+            try:
+                inspected = self._adapter.inspect(lease.origin)
+            except OriginUnavailableError:
+                return {"state": "refused", "reason": "origin-disconnected"}
+            if not inspected.same_identity(lease.origin):
                 return {"state": "refused", "reason": "origin-disconnected"}
             self._lease = dataclasses.replace(
                 lease,
+                origin=inspected,
                 expires_at=now + self._lease_sec,
                 renewal_count=lease.renewal_count + 1,
             )
+            self._expected_origin = inspected
             self._condition.notify_all()
             return {
                 "state": "renewed",
@@ -646,8 +665,9 @@ class InteractionPrototype:
             inspected = self._adapter.inspect(lease.origin)
         except OriginUnavailableError:
             return {"state": "unknown", "reason": "origin-disconnected"}
-        if inspected != lease.origin:
+        if not inspected.same_identity(lease.origin):
             return {"state": "unknown", "reason": "origin-changed"}
+        lease = self._refresh_origin_metadata(lease, inspected)
         with self._condition:
             if not self._stream_connected:
                 return {"state": "unknown", "reason": "control-mode-disconnected"}
@@ -740,8 +760,9 @@ class InteractionPrototype:
             inspected = self._adapter.inspect(lease.origin)
         except OriginUnavailableError:
             return {"state": "unknown", "reason": "origin-disconnected"}
-        if inspected != lease.origin:
+        if not inspected.same_identity(lease.origin):
             return {"state": "unknown", "reason": "origin-changed"}
+        lease = self._refresh_origin_metadata(lease, inspected)
         return {
             "state": "registered",
             "reason": "exact-collected-session-origin",
@@ -902,6 +923,21 @@ class InteractionPrototype:
         if not self._renewals_enabled or now >= lease.expires_at:
             return None, {"state": "refused", "reason": "stale-registration"}
         return lease, None
+
+    def _refresh_origin_metadata(
+        self,
+        lease: OriginLease,
+        inspected: TmuxOrigin,
+    ) -> OriginLease:
+        """Publish current labels and indexes while preserving stable identity and consent."""
+        with self._condition:
+            current = self._lease
+            if current is None or current.origin_id != lease.origin_id:
+                return dataclasses.replace(lease, origin=inspected)
+            refreshed = dataclasses.replace(current, origin=inspected)
+            self._lease = refreshed
+            self._expected_origin = inspected
+            return refreshed
 
 
 def _discover_origin() -> TmuxOrigin:

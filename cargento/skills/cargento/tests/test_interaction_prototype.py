@@ -533,6 +533,33 @@ class CollectedSessionOriginHTTPTest(unittest.TestCase):
         self.assertEqual(self.origin.as_dict(), resolved["origin"])
         self.assertEqual("read-only-control-stream", resolved["terminal_power"])
 
+        renamed = dataclasses.replace(
+            self.origin,
+            session_name="renamed-session",
+            window_index="9",
+            window_name="automatic-rename",
+            pane_index="4",
+        )
+        self.adapter.inspected_origin = renamed
+        _status, renewed = self._request(
+            "POST",
+            "/api/interaction/renew",
+            {
+                "origin_id": registered["origin_id"],
+                "lease_token": registered["lease_token"],
+            },
+        )
+        self.assertEqual("renewed", renewed["state"])
+        _status, renamed_result = self._request(
+            "GET",
+            f"/api/interaction/origin?harness={harness}&sid={sid}",
+        )
+        self.assertEqual("registered", renamed_result["state"])
+        self.assertEqual(renamed.as_dict(), renamed_result["origin"])
+        _status, renamed_state = self._request("GET", "/api/interaction/state")
+        self.assertEqual(renamed.as_dict(), renamed_state["origin"])
+        self.adapter.inspected_origin = None
+
         _status, wrong_session = self._request(
             "GET",
             "/api/interaction/origin?harness=codex&sid=altered",
@@ -564,6 +591,16 @@ class CollectedSessionOriginHTTPTest(unittest.TestCase):
         self._request("POST", "/api/interaction/register", body)
         harness, sid = self.session_id.split(":", 1)
         route = f"/api/interaction/origin?harness={harness}&sid={sid}"
+
+        self.adapter.inspected_origin = dataclasses.replace(
+            self.origin,
+            server_pid="replacement-server-pid",
+        )
+        _status, replaced_server = self._request("GET", route)
+        self.assertEqual(
+            {"state": "unknown", "reason": "origin-changed"},
+            replaced_server,
+        )
 
         self.adapter.inspected_origin = dataclasses.replace(
             self.origin,
