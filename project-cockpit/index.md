@@ -318,3 +318,22 @@ The project cockpit now defaults to a three-session project union without leakin
 ### Summary
 
 UX round 1 turns the project header into a compact recovery surface: outcome-first session navigation, exact attention state, and the latest unique captain decisions precede the existing project sections. All now exposes workers observed in any exact project session, while focus remains an exact-session source boundary. Gate stage, opaque entity identity, and human task title survive together, so the live decision and dispatch occupy one truthful lane. Checkpoint `3968a78` is live on 8766 with the exact read-only terminal restored; work stops here for the fresh information-architecture review.
+
+## Stage Report: shaping (cycle 9)
+
+- DONE: The page explicitly distinguishes project-wide overview/status from session-filtered evidence, and session selection states exactly which surfaces change.
+  Commit `d042adc0e94761e5be14c879c9117bb370d6af00` adds compact `PROJECT OVERVIEW` and `SESSION EVIDENCE` ownership markers plus the single sentence `Session selection filters Timeline and Terminal; project overview remains project-wide.` The DOM falsifier requires both labels and that exact boundary statement; removing or moving either scope request fails it.
+- DONE: A focused session retains canonical project gate decisions for work items evidenced in that session, so approval → dispatch/progress consequence remains traceable without importing peer transcript facts.
+  Focus now admits a project gate only when its canonical work item occurs in the selected transcript, an exact child assignment, or an exact `(workflow, slug)` current-plan attachment. Live All contains 50 gates across 20 items and Codex/Pi/Claude facts; live Pi focus contains 8 gates across only 4 evidenced/plan items and only Pi transcript facts. The source test inserts an unrelated peer gate and fails if it survives.
+- DONE: Project and focused views use one canonical human task label map; session navigation leads with concise harness/state identity, prompt text is secondary, and the timeline filter says `All events`.
+  A focus waits for all-project context, then maps labels by exact canonical work-item ID only. Exact gate entity aliases also bind artifact-only starts without fuzzy text or timestamp matching. The live Pi lane is `Embed the stage-report protocol in the dispatch artifact`, never `t4rqqmmrqh`; navigation leads with `Codex · working`, `Pi · idle`, and `Claude · idle`, and the control text is `All events`.
+- DONE: Keep Project status stable across session selection without expanding session evidence.
+  Project status always reads the all-session context while Timeline reads the focused context. The exact live DOM renders byte-identical status across Pi and Codex focus, retains `Needs you: none observed` plus the newest unique captain decisions, and issues separate all-project and focused requests; substituting focused semantic data for status fails the DOM test.
+- DONE: Exercise and serve the round-2 checkpoint without widening prototype authority.
+  Strict mypy passes over 116 source files; Ruff, Ruff format, embedded frontend lint, and byte oracles pass. The 153-test next suite and 112-test project-context/semantic/shared-page suite pass. Candidate 8767 was stopped after the controlled swap; no code ref was pushed or integrated, no version field changed, and `.spacedock/dev` was not read or mutated.
+- DONE: Preserve the exact live terminal and report the served checkpoint.
+  Stable 8766 runs PID `57200` from `d042adc`, serving 443,870 bytes at SHA-256 `80a57347ff1e4d747880634deababb1b55a77ffb60e85fa2540520981cdf3782`. Exact collected root session `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` remains registered at tmux `$4/@4/%10`, 174×42, stream connected, read-only, keyboard input `not-exposed`, after 18 renewals beyond a full lease interval.
+
+### Summary
+
+IA round 2 makes the project/session boundary visible and enforces it in the source model: overview, status, plan, activity, Focus, and delegation remain project-wide, while only Timeline and Terminal follow session selection. Canonical gate identity now scopes focused evidence and supplies one human label map across views. Checkpoint `d042adc` is live on 8766 and work stops here for the fresh AI/data-semantics review.
