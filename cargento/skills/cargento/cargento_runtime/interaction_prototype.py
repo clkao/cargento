@@ -49,6 +49,8 @@ ORIGIN_FIELDS: Final = (
     "pane_id",
     "pane_index",
     "pane_tty",
+    "pane_cols",
+    "pane_rows",
 )
 # A live bootstrap measured `window_name` changing from `spacedock` to `[tmux]`
 # under tmux automatic rename while the IDs and TTY stayed fixed. Names and
@@ -77,6 +79,8 @@ class TmuxOrigin:
     pane_id: str
     pane_index: str
     pane_tty: str
+    pane_cols: str
+    pane_rows: str
 
     @classmethod
     def from_dict(cls, value: object) -> TmuxOrigin | None:
@@ -87,6 +91,11 @@ class TmuxOrigin:
             return None
         fields = {field: value[field] for field in ORIGIN_FIELDS}
         if not all(fields.values()):
+            return None
+        if not all(
+            fields[field].isdigit() and int(fields[field]) > 0
+            for field in ("pane_cols", "pane_rows")
+        ):
             return None
         return cls(**fields)
 
@@ -212,7 +221,7 @@ class TmuxAdapter:
 
     _FORMAT: Final = (
         "#{pid}\t#{session_id}\t#{session_name}\t#{window_id}\t#{window_index}\t"
-        "#{window_name}\t#{pane_id}\t#{pane_index}\t#{pane_tty}"
+        "#{window_name}\t#{pane_id}\t#{pane_index}\t#{pane_tty}\t#{pane_width}\t#{pane_height}"
     )
 
     def __init__(self, executable: str | None = None, *, owns_server: bool = True) -> None:
@@ -476,7 +485,7 @@ class InteractionPrototype:
         self._generation = 0
         self._capture_sequence = 0
         self._stream_text = ""
-        self._stream_frames: deque[tuple[int, str]] = deque(maxlen=MAX_STREAM_FRAMES)
+        self._stream_frames: deque[tuple[int, str, int, int]] = deque(maxlen=MAX_STREAM_FRAMES)
         self._stream_connected = False
         self._registration_consumed = False
         self._renewals_enabled = True
@@ -717,15 +726,38 @@ class InteractionPrototype:
                 reset = True
             if reset:
                 data = self._stream_text
+                cols = int(frames[-1][2]) if frames else int(lease.origin.pane_cols)
+                rows = int(frames[-1][3]) if frames else int(lease.origin.pane_rows)
+                chunks = [
+                    {
+                        "sequence": sequence,
+                        "data": data,
+                        "cols": cols,
+                        "rows": rows,
+                    }
+                ]
             else:
-                data = "".join(
-                    text for frame_sequence, text in frames if frame_sequence > after_sequence
-                )
+                selected = [frame for frame in frames if frame[0] > after_sequence]
+                data = "".join(frame[1] for frame in selected)
+                chunks = [
+                    {
+                        "sequence": frame_sequence,
+                        "data": text,
+                        "cols": cols,
+                        "rows": rows,
+                    }
+                    for frame_sequence, text, cols, rows in selected
+                ]
+                cols = int(selected[-1][2]) if selected else int(lease.origin.pane_cols)
+                rows = int(selected[-1][3]) if selected else int(lease.origin.pane_rows)
             return {
                 "state": "streamed",
                 "sequence": sequence,
                 "reset": reset,
                 "data": data,
+                "cols": cols,
+                "rows": rows,
+                "chunks": chunks,
                 "origin_id_hint": lease.origin_id[:8],
             }
 
@@ -900,11 +932,31 @@ class InteractionPrototype:
     def _on_stream_output(self, pane_id: str, text: str) -> None:
         with self._condition:
             origin = self._expected_origin
-            if origin is None or pane_id != origin.pane_id:
+        if origin is None or pane_id != origin.pane_id:
+            return
+        try:
+            inspected = self._adapter.inspect(origin)
+        except OriginUnavailableError:
+            return
+        if not inspected.same_identity(origin):
+            return
+        with self._condition:
+            origin = self._expected_origin
+            if origin is None or pane_id != origin.pane_id or not inspected.same_identity(origin):
                 return
+            self._expected_origin = inspected
+            if self._lease is not None:
+                self._lease = dataclasses.replace(self._lease, origin=inspected)
             self._stream_text = (self._stream_text + text)[-MAX_CAPTURE_CHARS:]
             self._capture_sequence += 1
-            self._stream_frames.append((self._capture_sequence, text))
+            self._stream_frames.append(
+                (
+                    self._capture_sequence,
+                    text,
+                    int(inspected.pane_cols),
+                    int(inspected.pane_rows),
+                )
+            )
             self._stream_connected = True
             self._condition.notify_all()
 

@@ -697,7 +697,7 @@
   .pc-terminal-bar strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pc-terminal-bar span{margin-left:auto;color:#95a0ae}
   .pc-terminal-bar button{color:#dbe5ee;border-color:#4b5565}
-  .pc-terminal-screen{height:260px;padding:6px;overflow:hidden}
+  .pc-terminal-screen{height:340px;padding:6px;overflow:auto;overscroll-behavior:contain}
   .pc-last-output>summary{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink2)}
   .pc-last-output>pre{max-height:240px;margin:7px 0 3px;padding:9px 10px;overflow:auto;border:1px solid var(--line2);background:var(--panel);color:var(--ink2);font:inherit;white-space:pre-wrap;overflow-wrap:anywhere}
   .pc-operator-detail{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0 3px}

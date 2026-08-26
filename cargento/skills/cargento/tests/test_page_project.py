@@ -783,8 +783,9 @@ location.protocol = "http:"; location.host = "127.0.0.1:8766";
 const operations = [];
 let terminalCount = 0;
 window.Terminal = class {
-  constructor(){ terminalCount += 1; }
+  constructor(){ terminalCount += 1; this.cols = 80; this.rows = 14; }
   open(node){ operations.push(`open:${node.name}`); }
+  resize(cols, rows){ this.cols = cols; this.rows = rows; operations.push(`resize:${cols}x${rows}`); }
   reset(){ operations.push("reset"); }
   write(data){ operations.push(`write:${data}`); }
   writeln(data){ operations.push(`writeln:${data}`); }
@@ -801,15 +802,16 @@ projectTerminalOpenKey = key;
 projectTerminalMount(key, "origin01");
 await __settle(); await __settle();
 projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:5,
-  reset:true, data:"snapshot", origin_id_hint:"origin01"})});
+  reset:true, data:"\\u001b[58;115Hvisible", cols:202, rows:58,
+  origin_id_hint:"origin01"})});
 projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:5,
-  reset:true, data:"duplicate", origin_id_hint:"origin01"})});
+  reset:true, data:"duplicate", cols:202, rows:58, origin_id_hint:"origin01"})});
 projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:4,
-  reset:false, data:"old", origin_id_hint:"origin01"})});
+  reset:false, data:"old", cols:202, rows:58, origin_id_hint:"origin01"})});
 projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:6,
-  reset:false, data:"delta", origin_id_hint:"origin01"})});
+  reset:false, data:"delta", cols:202, rows:58, origin_id_hint:"origin01"})});
 projectTerminalSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:6,
-  reset:false, data:"duplicate-delta", origin_id_hint:"origin01"})});
+  reset:false, data:"duplicate-delta", cols:202, rows:58, origin_id_hint:"origin01"})});
 const preserved = projectTerminalBeforeRender();
 let replacedWith = null;
 __els["pc-terminal-screen"] = {name:"replacement", replaceWith(node){ replacedWith = node; }};
@@ -821,9 +823,9 @@ firstSocket.onclose({code:1006});
 __timers[__timers.length - 1]();
 const secondSocket = projectTerminalSocket;
 secondSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:8,
-  reset:true, data:"reconnected", origin_id_hint:"origin01"})});
+  reset:true, data:"reconnected", cols:202, rows:58, origin_id_hint:"origin01"})});
 firstSocket.onmessage({data:JSON.stringify({state:"streamed", sequence:9,
-  reset:false, data:"orphan", origin_id_hint:"origin01"})});
+  reset:false, data:"orphan", cols:202, rows:58, origin_id_hint:"origin01"})});
 firstSocket.onclose({code:1006});
 __els["pc-terminal-screen"] = firstScreen;
 let settleOrigin = null;
@@ -867,8 +869,9 @@ console.log(JSON.stringify({
         self.assertEqual(
             [
                 "open:first",
+                "resize:202x58",
                 "reset",
-                "write:snapshot",
+                "write:\u001b[58;115Hvisible",
                 "write:delta",
                 "reset",
                 "write:reconnected",

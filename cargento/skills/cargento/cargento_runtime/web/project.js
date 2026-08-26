@@ -554,11 +554,19 @@ function projectTerminalConnect(key, originHint, terminal){
       return;
     }
     if(originHint && frame.origin_id_hint !== originHint){ socket.close(); return; }
-    const sequence = Number(frame.sequence);
-    if(!Number.isInteger(sequence) || sequence <= projectTerminalSequence) return;
-    if(frame.reset) terminal.reset();
-    if(frame.data) terminal.write(frame.data);
-    projectTerminalSequence = sequence;
+    const chunks = Array.isArray(frame.chunks) && frame.chunks.length ? frame.chunks : [frame];
+    let resetPending = !!frame.reset;
+    chunks.forEach(chunk => {
+      const sequence = Number(chunk.sequence);
+      if(!Number.isInteger(sequence) || sequence <= projectTerminalSequence) return;
+      const cols = Number(chunk.cols);
+      const rows = Number(chunk.rows);
+      if(!Number.isInteger(cols) || cols < 1 || !Number.isInteger(rows) || rows < 1) return;
+      if(terminal.cols !== cols || terminal.rows !== rows) terminal.resize(cols, rows);
+      if(resetPending){ terminal.reset(); resetPending = false; }
+      if(chunk.data) terminal.write(chunk.data);
+      projectTerminalSequence = sequence;
+    });
   };
   socket.onclose = event => {
     if(projectTerminalSocket !== socket) return;
@@ -580,7 +588,7 @@ function projectTerminalMount(key, originHint){
   projectTerminalLoadXterm().then(() => {
     if(!document.getElementById("pc-terminal-screen") || projectTerminalOpenKey !== key) return;
     if(projectTerminal && projectTerminalKey === key) return;
-    const terminal = new window.Terminal({disableStdin:true, cursorBlink:false, rows:14,
+    const terminal = new window.Terminal({disableStdin:true, cursorBlink:false,
       scrollback:500, fontSize:12, fontFamily:"'SFMono-Regular', Consolas, monospace",
       theme:{background:"#11141a", foreground:"#dbe5ee", cursor:"#11141a"}});
     projectTerminal = terminal;

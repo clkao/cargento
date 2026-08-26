@@ -53,6 +53,8 @@ class FakeTmuxAdapter:
             pane_id=f"%{suffix}",
             pane_index="0",
             pane_tty=f"/dev/pts/{suffix}",
+            pane_cols="202",
+            pane_rows="58",
         )
 
     def start_client(
@@ -244,6 +246,8 @@ class InteractionPrototypeHTTPTest(unittest.TestCase):
                 "pane_id",
                 "pane_index",
                 "pane_tty",
+                "pane_cols",
+                "pane_rows",
             },
             set(initial["origin"]),
         )
@@ -379,6 +383,27 @@ class InteractionPrototypeHTTPTest(unittest.TestCase):
             self.assertEqual("streamed", frame["state"])
             self.assertTrue(frame["reset"])
             self.assertIn("stream frame 1", frame["data"])
+            self.assertEqual((202, 58), (frame["cols"], frame["rows"]))
+            self.assertEqual(
+                [{"sequence": 1, "data": "stream frame 1\n", "cols": 202, "rows": 58}],
+                frame["chunks"],
+            )
+
+            self.adapter.inspected_origin = dataclasses.replace(
+                self.adapter.origin,
+                pane_cols="210",
+                pane_rows="60",
+            )
+            self.adapter.emit_frame()
+            opcode, payload = self._read_stream_frame(client)
+            delta = json.loads(payload)
+            self.assertEqual(1, opcode)
+            self.assertFalse(delta["reset"])
+            self.assertEqual((210, 60), (delta["cols"], delta["rows"]))
+            self.assertEqual(
+                [{"sequence": 2, "data": "stream frame 2\n", "cols": 210, "rows": 60}],
+                delta["chunks"],
+            )
 
             mask = b"deny"
             text = b"send-keys"
@@ -539,6 +564,8 @@ class CollectedSessionOriginHTTPTest(unittest.TestCase):
             window_index="9",
             window_name="automatic-rename",
             pane_index="4",
+            pane_cols="210",
+            pane_rows="60",
         )
         self.adapter.inspected_origin = renamed
         _status, renewed = self._request(
