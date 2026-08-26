@@ -2037,7 +2037,15 @@ def collect(
         if event["kind"] in {"prepared_dispatch", "task_started", "task_result", "outcome"}
     )
     semantic = _semantic_model(timeline, observers, now=now)
-    history = semantic_history.update(config, state, project, semantic, analysis_sessions)
+    history = semantic_history.update(
+        config,
+        state,
+        project,
+        semantic,
+        analysis_sessions,
+        child_assignments,
+        now=now,
+    )
     semantic = _merge_semantic_history(semantic, history, now=now)
     return {
         "project": project,

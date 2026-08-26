@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 from typing import TYPE_CHECKING, Any
@@ -187,6 +188,67 @@ def _final_output_events(sessions: Iterable[Mapping[str, Any]]) -> list[dict[str
     return found
 
 
+def _assignment_events(
+    assignments: Iterable[Mapping[str, Any]], *, observed_at: float
+) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    for assignment in assignments:
+        summary = records.safe_text(assignment.get("assignment"), 240)
+        if assignment.get("confidence") != "exact" or not summary:
+            continue
+        observer_sid = records.safe_text(assignment.get("observer_sid"), 128)
+        worker = records.safe_text(assignment.get("name"), 70) or "subagent"
+        entity = records.safe_text(assignment.get("workflow_entity"), 112)
+        stage = records.safe_text(assignment.get("workflow_stage"), 70)
+        identity = f"{observer_sid}\0{worker}\0{entity}\0{stage}\0{summary}"
+        digest = hashlib.blake2b(identity.encode(), digest_size=12).hexdigest()
+        event_id = f"assignment:{digest}"
+        work_item_id = f"workflow:{entity}" if entity else f"assignment:{digest}"
+        fact: dict[str, Any] = {
+            "fact_id": event_id,
+            "at": observed_at,
+            "type": "prepared_dispatch",
+            "source_kind": "child_assignment",
+            "summary": summary,
+            "scope": "session",
+            "actor_claim": "current structured child assignment",
+            "work_item_id": work_item_id,
+            "assignment": summary,
+            "evidence": {
+                "source": records.safe_text(assignment.get("source"), 160),
+                "confidence": "exact",
+            },
+        }
+        if stage:
+            fact["stage"] = stage
+        source_identity = f"codex:{observer_sid}" if observer_sid else f"worker:{worker}"
+        found.append(
+            {
+                "event_id": event_id,
+                "event_type": "assignment",
+                "at": observed_at,
+                "source_identity": source_identity,
+                "source_ref": event_id,
+                "work_binding": work_item_id,
+                "summary": summary,
+                "fact": fact,
+                "work_item": {
+                    "work_item_id": work_item_id,
+                    "label": entity.replace("-", " ").capitalize() if entity else summary,
+                    "kind": "workflow_item" if entity else "one_off",
+                    "source_bindings": [
+                        {
+                            "source": "structured child assignment",
+                            "value": entity or summary,
+                        }
+                    ],
+                    "contributor_refs": [],
+                },
+            }
+        )
+    return found
+
+
 def _merge(existing: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_id = {
         str(event.get("event_id")): event
@@ -231,6 +293,9 @@ def update(
     project: str,
     semantic: Mapping[str, Any],
     sessions: Iterable[Mapping[str, Any]],
+    assignments: Iterable[Mapping[str, Any]] = (),
+    *,
+    now: float | None = None,
 ) -> dict[str, Any]:
     """Merge current source-backed meaning into the durable bounded history."""
     facts = semantic.get("facts")
@@ -256,6 +321,8 @@ def update(
         else []
     )
     incoming.extend(_final_output_events(sessions))
+    if isinstance(now, (int, float)):
+        incoming.extend(_assignment_events(assignments, observed_at=float(now)))
     with state.semantic_history_lock:
         payload = _read(config)
         projects = payload["projects"]

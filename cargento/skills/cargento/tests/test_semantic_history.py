@@ -140,3 +140,40 @@ class SemanticHistoryTest(unittest.TestCase):
             [event["event_type"] for event in changed["events"]],
         )
         self.assertTrue(all(len(event["summary"]) <= 240 for event in changed["events"]))
+
+    def test_current_workflow_and_generic_children_share_assignment_vocabulary(self) -> None:
+        result = semantic_history.update(
+            self.config,
+            build_runtime_state(self.config, started=1),
+            "git:project",
+            {"facts": [], "work_items": []},
+            [],
+            [
+                {
+                    "name": "Einstein",
+                    "observer_sid": "child-one",
+                    "assignment": "Shape cockpit",
+                    "confidence": "exact",
+                    "source": "structured dispatch artifact",
+                    "workflow_entity": "project-cockpit",
+                    "workflow_stage": "shaping",
+                },
+                {
+                    "name": "James",
+                    "observer_sid": "child-two",
+                    "assignment": "Review navigation",
+                    "confidence": "exact",
+                    "source": "exact parent dispatch",
+                },
+            ],
+            now=100,
+        )
+        events = result["events"]
+        self.assertEqual(["assignment", "assignment"], [event["event_type"] for event in events])
+        workflow = next(
+            event for event in events if event["work_binding"] == "workflow:project-cockpit"
+        )
+        generic = next(event for event in events if event is not workflow)
+        self.assertEqual("shaping", workflow["fact"]["stage"])
+        self.assertNotIn("stage", generic["fact"])
+        self.assertEqual("one_off", generic["work_item"]["kind"])
