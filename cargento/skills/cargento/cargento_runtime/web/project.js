@@ -993,7 +993,8 @@ function projectTaskLaneRow(d, registry, lane){
   const head = lane.head || {};
   const latest = lane.headFact || lane.events[0] || {};
   const stage = head.stage || "";
-  const title = lane.label;
+  const title = String(lane.label || "Task").replace(/-/g, " ")
+    .replace(/^./, first => first.toUpperCase());
   const heading = stage ? `${title} · ${stage}` : title;
   const status = head.status === "requested" ? "recently dispatched · current state not confirmed" :
     head.status || "current task";
