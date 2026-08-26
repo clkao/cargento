@@ -1315,6 +1315,31 @@ def _context_sessions(
     return analysis, [], "focused session", len(selected) - len(analysis)
 
 
+def _analysis_context_sessions(
+    sessions: Sequence[Mapping[str, Any]], project: str, focus: tuple[str, str] | None
+) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]], str, int]:
+    analysis, omitted, _, _ = _context_sessions(sessions, project, None)
+    focused, _, scope, surrounding_active = _context_sessions(sessions, project, focus)
+    if focus is None:
+        return analysis, omitted, scope, surrounding_active
+    known = {
+        (str(session.get("harness") or ""), str(session.get("sid") or "")) for session in analysis
+    }
+    return (
+        [
+            *analysis,
+            *(
+                session
+                for session in focused
+                if (str(session.get("harness") or ""), str(session.get("sid") or "")) not in known
+            ),
+        ],
+        [],
+        scope,
+        surrounding_active,
+    )
+
+
 def _gate_event(
     config: RuntimeConfig,
     current: dict[str, str],
@@ -2672,6 +2697,165 @@ def _focused_semantic_history(
     return {**history, "events": focused_events}
 
 
+def _focused_graph_scope(
+    focus: tuple[str, str], child_assignments: list[dict[str, Any]]
+) -> tuple[set[tuple[str, str]], set[str]]:
+    wanted = {"harness": focus[0], "sid": focus[1]}
+    allowed_sessions = {(focus[0], focus[1])}
+    allowed_work_items: set[str] = set()
+    for assignment in child_assignments:
+        if not isinstance(assignment, dict) or assignment.get("parent_session") != wanted:
+            continue
+        observer_sid = records.safe_text(assignment.get("observer_sid"), 128)
+        if observer_sid:
+            allowed_sessions.add((focus[0], observer_sid))
+        work_item_id = records.safe_text(assignment.get("work_item_id"), 256)
+        if work_item_id:
+            allowed_work_items.add(work_item_id)
+    return allowed_sessions, allowed_work_items
+
+
+def _fact_session_identity(fact: Mapping[str, Any], key: str) -> tuple[str, str]:
+    value = fact.get(key)
+    if not isinstance(value, dict):
+        return "", ""
+    return str(value.get("harness") or ""), str(value.get("sid") or "")
+
+
+def _focused_graph_facts(
+    semantic: Mapping[str, Any],
+    allowed_sessions: set[tuple[str, str]],
+    allowed_work_items: set[str],
+) -> list[dict[str, Any]]:
+    session_facts: list[dict[str, Any]] = []
+    for fact in semantic.get("facts", []):
+        if not isinstance(fact, dict):
+            continue
+        if (
+            _fact_session_identity(fact, "source_session") not in allowed_sessions
+            and _fact_session_identity(fact, "parent_session") not in allowed_sessions
+        ):
+            continue
+        session_facts.append(copy.deepcopy(fact))
+        work_item_id = str(fact.get("work_item_id") or "")
+        if work_item_id:
+            allowed_work_items.add(work_item_id)
+    project_facts = [
+        copy.deepcopy(fact)
+        for fact in semantic.get("facts", [])
+        if isinstance(fact, dict)
+        and fact.get("scope") in {"project", "workflow"}
+        and str(fact.get("work_item_id") or "") in allowed_work_items
+    ]
+    facts_by_id = {
+        str(fact["fact_id"]): fact
+        for fact in [*session_facts, *project_facts]
+        if fact.get("fact_id")
+    }
+    return sorted(facts_by_id.values(), key=lambda fact: float(fact.get("at") or 0), reverse=True)
+
+
+def _focused_semantic_graph(
+    semantic: dict[str, Any],
+    focus: tuple[str, str],
+    child_assignments: list[dict[str, Any]],
+    *,
+    now: float,
+) -> dict[str, Any]:
+    """Filter the project graph by exact provenance instead of rebuilding it."""
+    allowed_sessions, allowed_work_items = _focused_graph_scope(focus, child_assignments)
+    facts = _focused_graph_facts(semantic, allowed_sessions, allowed_work_items)
+    facts_by_id = {str(fact["fact_id"]): fact for fact in facts}
+    work_items = {
+        str(item["work_item_id"]): copy.deepcopy(item)
+        for item in semantic.get("work_items", [])
+        if isinstance(item, dict) and str(item.get("work_item_id") or "") in allowed_work_items
+    }
+    contributor_ids = {
+        str(contributor_id)
+        for item in work_items.values()
+        for contributor_id in item.get("contributor_refs", [])
+        if contributor_id
+    }
+    contributors = [
+        copy.deepcopy(contributor)
+        for contributor in semantic.get("contributors", [])
+        if isinstance(contributor, dict)
+        and str(contributor.get("contributor_id") or "") in contributor_ids
+    ]
+    original_projections = semantic.get("projections")
+    if not isinstance(original_projections, dict):
+        original_projections = {}
+    intents = [
+        copy.deepcopy(intent)
+        for intent in original_projections.get("operator_intents", [])
+        if isinstance(intent, dict) and str(intent.get("derived_from") or "") in facts_by_id
+    ]
+    projection_ids = {
+        str(intent.get("projection_id") or "") for intent in intents if intent.get("projection_id")
+    }
+    node_ids = set(facts_by_id) | set(work_items) | contributor_ids | projection_ids
+    relations = [
+        copy.deepcopy(relation)
+        for relation in semantic.get("relations", [])
+        if isinstance(relation, dict)
+        and (
+            str(relation.get("evidence_ref") or "") in facts_by_id
+            or (
+                str(relation.get("from") or "") in node_ids
+                and str(relation.get("to") or "") in node_ids
+            )
+        )
+    ]
+    fact_by_work_item: dict[str, list[dict[str, Any]]] = {}
+    for fact in facts:
+        work_item_id = str(fact.get("work_item_id") or "")
+        if work_item_id and work_item_id in work_items:
+            fact_by_work_item.setdefault(work_item_id, []).append(fact)
+    trails = _semantic_trail_heads(fact_by_work_item, facts)
+    assignments = _semantic_assignments(fact_by_work_item, work_items)
+    episodes = _structural_steering_episodes(intents, facts, relations)
+    paired = {str(episode["intent_id"]) for episode in episodes}
+    activity = _semantic_activity_projection(work_items, trails, facts, now=now)
+    activity["steering"] = _recent_steering_nodes(intents, paired)
+    history = semantic.get("history")
+    if not isinstance(history, dict):
+        history = {}
+    history_events = [
+        copy.deepcopy(event)
+        for event in history.get("events", [])
+        if isinstance(event, dict) and str(event.get("source_ref") or "") in facts_by_id
+    ]
+    return {
+        **copy.deepcopy(semantic),
+        "facts": facts,
+        "work_items": list(work_items.values()),
+        "contributors": contributors,
+        "relations": relations,
+        "projections": {
+            **copy.deepcopy(original_projections),
+            "operator_intents": intents,
+            "trail_heads": trails,
+            "assignments": assignments,
+            "activity": activity,
+            "steering_episodes": episodes,
+        },
+        "history": {**copy.deepcopy(history), "events": history_events},
+    }
+
+
+def _semantic_for_focus(
+    semantic: dict[str, Any],
+    focus: tuple[str, str] | None,
+    child_assignments: list[dict[str, Any]],
+    *,
+    now: float,
+) -> dict[str, Any]:
+    if focus is None:
+        return semantic
+    return _focused_semantic_graph(semantic, focus, child_assignments, now=now)
+
+
 def _active_child_assignments(
     config: RuntimeConfig,
     state: RuntimeState,
@@ -2788,7 +2972,7 @@ def collect(
     focus: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """Observer results and a real project event log for exact-label sessions."""
-    analysis_sessions, omitted, scope, surrounding_active = _context_sessions(
+    analysis_sessions, omitted, scope, surrounding_active = _analysis_context_sessions(
         sessions, project, focus
     )
     workflow_discovery = _project_workflow_discovery(
@@ -2827,7 +3011,8 @@ def collect(
         harness = str(session.get("harness") or "")
         sid = str(session.get("sid") or "")
         identity = {"harness": harness, "sid": sid}
-        if focus is not None and harness == "codex":
+        is_focused = focus is not None and (harness, sid) == focus
+        if is_focused and harness == "codex":
             child_assignments = _active_child_assignments(
                 config,
                 state,
@@ -2846,7 +3031,7 @@ def collect(
             harness,
             sid,
             now=now,
-            refresh=refresh and focus is not None,
+            refresh=refresh and is_focused,
         )
         if result is not None:
             observers.append(
@@ -2873,16 +3058,14 @@ def collect(
         gate_events.extend(gate_rows)
         briefings += prepared
 
-    project_gate_rows, prepared = _project_peer_gate_context(
-        config, state, sessions, project, focus
-    )
+    project_gate_rows, prepared = _project_peer_gate_context(config, state, sessions, project, None)
     gate_events.extend(project_gate_rows)
     briefings += prepared
-    allowed_gate_work_items = _scope_gate_events(
+    _scope_gate_events(
         events,
         history_events,
         gate_events,
-        focus,
+        None,
         child_assignments,
         semantic_history.read(config, state, project),
     )
@@ -2902,9 +3085,12 @@ def collect(
         now=now,
         source_scans=history_source_scans,
     )
-    if focus is not None:
-        history = _focused_semantic_history(history, focus, allowed_gate_work_items)
-    semantic = _merge_semantic_history(semantic, history, now=now)
+    semantic = _semantic_for_focus(
+        _merge_semantic_history(semantic, history, now=now),
+        focus,
+        child_assignments,
+        now=now,
+    )
     return {
         "project": project,
         "focus": {

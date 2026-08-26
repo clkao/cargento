@@ -327,12 +327,77 @@ console.log(JSON.stringify({html:nextCockpitProjectStatus(nextProjectGroups()[0]
         )
         assert isinstance(out, dict)
 
-        self.assertIn("Needs you: none observed", out["html"])
+        self.assertIn("No gate or ask observed", out["html"])
         self.assertEqual(1, out["html"].count("Alpha · ideation → implementation"))
         self.assertIn("Beta · review · decision recorded · pending application", out["html"])
         self.assertIn("1 older decision", out["html"])
         self.assertIn("Gamma · validation · decision superseded", out["html"])
         self.assertNotIn("Delta", out["html"])
+
+    def test_recovery_strip_precedes_plan_and_uses_focus_then_discovered_goal(self) -> None:
+        focus_key = "cargento.projectGoal.v1:spacedock-research%2Fcargento"
+        out = self.run_fixture(
+            """
+const group = nextProjectGroups()[0];
+const observation = {semantic:__semantic, workflow_discovery:{state:"observed",workflows:[
+  {workflow:"dev",goal:"Discovered workflow outcome",stages:["build"]}
+]}};
+nextCockpitContexts.set(nextCockpitContextKey(group, null), {data:observation, revision:105});
+renderNext();
+const focused = __els.app.innerHTML;
+nextCockpitFocusDrafts.set(nextCockpitStableKey(group), "");
+renderNext();
+const discovered = __els.app.innerHTML;
+nextCockpitContexts.set(nextCockpitContextKey(group, null), {
+  data:{semantic:__semantic,workflow_discovery:{state:"none",workflows:[]}}, revision:105});
+renderNext();
+console.log(JSON.stringify({focused,discovered,absent:__els.app.innerHTML}));
+""",
+            storage={focus_key: "Browser-local outcome"},
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("Browser-local outcome", out["focused"])
+        self.assertLess(
+            out["focused"].index("OUTCOME"),
+            out["focused"].index('data-next-project-section="plan"'),
+        )
+        self.assertIn("Discovered workflow outcome", out["discovered"])
+        self.assertIn("Outcome not recorded", out["absent"])
+
+    def test_recovery_attention_orders_actionable_conditions_and_decision_counts(self) -> None:
+        out = self.run_fixture(
+            """
+const group = nextProjectGroups()[0];
+group.sessions[0].state = "needs_input";
+const semantic = JSON.parse(JSON.stringify(__semantic));
+semantic.facts.push(
+  {fact_id:"pending",at:106,type:"gate_decision",by:"person:captain",
+    application_state:"pending",work_item_id:__task},
+  {fact_id:"unknown",at:105,type:"gate_decision",by:"person:captain",
+    work_item_id:__task},
+  {fact_id:"retry",at:104,type:"prepared_dispatch",source_kind:"prepared_dispatch",
+    work_item_id:"workflow:retry"},
+  {fact_id:"retry-again",at:103,type:"prepared_dispatch",source_kind:"prepared_dispatch",
+    work_item_id:"workflow:retry"}
+);
+semantic.projections.trail_heads.push({work_item_id:"workflow:retry",status:"prepared",
+  dispatch_count:2,latest_meaningful_event:"retry"});
+const observation = {semantic,workflow_discovery:{state:"error",reason:"timed out"},
+  sources:{observer:{unavailable:[]}}};
+console.log(JSON.stringify({html:nextCockpitRecoveryStrip(group, observation)}));
+""",
+        )
+        assert isinstance(out, dict)
+        html = out["html"]
+
+        self.assertLess(html.index("gate or ask"), html.index("workflow discovery failed"))
+        self.assertLess(html.index("workflow discovery failed"), html.index("decision application"))
+        self.assertLess(html.index("decision application"), html.index("assignment return"))
+        self.assertLess(html.index("assignment return"), html.index("owner idle"))
+        self.assertLess(html.index("pending 1"), html.index("unknown 1"))
+        self.assertIn("consumed/applied 1", html)
+        self.assertNotIn("blocker", html.casefold())
 
     def test_focus_reads_label_alias_then_saves_only_under_the_stable_project_key(self) -> None:
         label_key = "cargento.projectGoal.v1:cargento"

@@ -105,8 +105,121 @@ function nextCockpitProjectStatus(group, semantic){
   const decisionList = latest ? `<ul>${latest}</ul>${history}` :
     '<span class="next-cockpit-status-empty">No captain decisions observed</span>';
   return '<section class="next-cockpit-project-status" aria-label="Project status">' +
-    `<strong>Needs you: ${needs ? `${needs} observed` : "none observed"}</strong>` +
+    `<strong>${needs ? `Gate or ask observed · ${needs}` : "No gate or ask observed"}</strong>` +
     `<div><span>Latest decisions</span>${decisionList}</div></section>`;
+}
+
+function nextCockpitCaptainDecisionCounts(semantic){
+  const counts = {pending:0, unknown:0, superseded:0, applied:0};
+  for(const fact of semantic && Array.isArray(semantic.facts) ? semantic.facts : []){
+    if(!fact || fact.type !== "gate_decision" || fact.by !== "person:captain") continue;
+    const state = String(fact.application_state || "unknown").toLowerCase();
+    if(state === "pending" || state === "unspent") counts.pending += 1;
+    else if(state === "consumed" || state === "applied") counts.applied += 1;
+    else if(state === "superseded") counts.superseded += 1;
+    else counts.unknown += 1;
+  }
+  return counts;
+}
+
+function nextCockpitRecoveryOutcome(group, observation){
+  const local = nextCockpitReadFocus(group).trim();
+  if(local) return local;
+  const discovery = observation && observation.workflow_discovery || {};
+  const workflows = Array.isArray(discovery.workflows) ? discovery.workflows : [];
+  if(discovery.state === "observed"){
+    const workflow = workflows.find(row => String(row && row.goal || "").trim());
+    if(workflow) return String(workflow.goal).trim();
+  }
+  return "Outcome not recorded";
+}
+
+function nextCockpitSourceFailures(observation){
+  const failures = [];
+  const sources = observation && observation.sources || {};
+  for(const channel of Object.values(sources)){
+    if(!channel || !Array.isArray(channel.unavailable)) continue;
+    for(const row of channel.unavailable){
+      const reason = String(row && row.reason || "source unavailable").trim();
+      if(reason && !failures.includes(reason)) failures.push(reason);
+    }
+  }
+  return failures;
+}
+
+function nextCockpitRecoveryAttention(group, observation){
+  const attention = [];
+  const needs = nextCockpitProjectNeeds(group);
+  if(needs) attention.push(`${needs} gate or ask ${needs === 1 ? "needs" : "need"} attention`);
+
+  const discovery = observation && observation.workflow_discovery || {};
+  if(discovery.state === "error"){
+    const reason = String(discovery.reason || "source error").trim();
+    attention.push(`workflow discovery failed${reason ? ` · ${reason}` : ""}`);
+  }else if(discovery.state === "unavailable"){
+    const reason = String(discovery.reason || "source unavailable").trim();
+    attention.push(`workflow discovery unavailable${reason ? ` · ${reason}` : ""}`);
+  }
+  const failures = nextCockpitSourceFailures(observation);
+  if(failures.length) attention.push(`source unavailable · ${failures[0]}` +
+    (failures.length > 1 ? ` · ${failures.length - 1} more` : ""));
+
+  const semantic = observation && observation.semantic || {};
+  const decisions = nextCockpitCaptainDecisionCounts(semantic);
+  const unresolvedDecisions = decisions.pending + decisions.unknown;
+  if(unresolvedDecisions){
+    const parts = [];
+    if(decisions.pending) parts.push(`${decisions.pending} pending`);
+    if(decisions.unknown) parts.push(`${decisions.unknown} unknown`);
+    attention.push(`decision application · ${parts.join(" · ")}`);
+  }
+
+  const trails = semantic.projections && Array.isArray(semantic.projections.trail_heads)
+    ? semantic.projections.trail_heads : [];
+  const unreturned = trails.filter(row => row && ["prepared", "requested"].includes(row.status));
+  if(unreturned.length){
+    const retried = unreturned.filter(row => Number(row.dispatch_count || 0) > 1).length;
+    attention.push(`assignment return not observed · ${unreturned.length}` +
+      (retried ? ` · ${retried} retried` : ""));
+  }
+
+  const idle = group.sessions.filter(session => session.state === "idle");
+  const stale = group.sessions.filter(session => {
+    const age = nextAgeSeconds(session.last_activity);
+    return session.state !== "idle" && age != null && age >= NEXT_PROJECT_STALLED_SEC;
+  });
+  if(idle.length || stale.length){
+    const parts = [];
+    if(idle.length) parts.push(`owner idle · ${idle.length}`);
+    if(stale.length) parts.push(`owner stale · ${stale.length}`);
+    attention.push(parts.join(" · "));
+  }
+  if(!attention.length) return '<strong>No attention observed</strong>';
+  const rest = attention.slice(1);
+  return `<strong>${esc(attention[0])}</strong>` + (rest.length
+    ? `<details><summary>${rest.length} more</summary><ul>${rest.map(row => `<li>${esc(row)}</li>`).join("")}</ul></details>`
+    : "");
+}
+
+function nextCockpitRecoveryDecisions(semantic){
+  const counts = nextCockpitCaptainDecisionCounts(semantic);
+  const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
+  if(!total) return "No captain decisions observed";
+  const labels = {pending:"pending", unknown:"unknown", superseded:"superseded",
+    applied:"consumed/applied"};
+  return ["pending", "unknown", "superseded", "applied"]
+    .filter(key => counts[key])
+    .map(key => `${labels[key]} ${counts[key]}`)
+    .join(" · ");
+}
+
+function nextCockpitRecoveryStrip(group, observation){
+  const semantic = observation && observation.semantic || {};
+  return '<section class="next-cockpit-recovery" aria-label="Recovery summary">' +
+    `<div><span>OUTCOME</span><strong>${esc(nextCockpitRecoveryOutcome(group, observation))}</strong></div>` +
+    `<div><span>ATTENTION</span>${nextCockpitRecoveryAttention(group, observation)}</div>` +
+    `<div><span>DECISIONS</span><strong>${esc(nextCockpitRecoveryDecisions(semantic))}</strong></div>` +
+    '</section>';
 }
 
 function nextCockpitContextKey(group, focus){

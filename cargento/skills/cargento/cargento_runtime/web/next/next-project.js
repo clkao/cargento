@@ -219,6 +219,7 @@ function nextProjectView(project){
   return `<article class="next-project-detail" data-next-project-detail="${esc(group.label)}">` +
     nextProjectDetailHeader(context) +
     nextCockpitSessionNav(group, focus) + nextCockpitProjectScope() + status +
+    nextCockpitRecoveryStrip(group, observation) +
     '<div class="next-project-detail-layout">' +
     '<main class="next-project-detail-main" data-next-project-main>' +
     `<div data-next-project-section="plan">${nextProjectPlanBlock(context)}</div>` +

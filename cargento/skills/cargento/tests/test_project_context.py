@@ -1585,6 +1585,98 @@ class ProjectContextTest(unittest.TestCase):
 
         self.assertEqual(["kept"], [row["event_id"] for row in focused["events"]])
 
+    def test_focused_semantic_graph_keeps_exact_owner_children_and_bound_project_facts(
+        self,
+    ) -> None:
+        root = {"harness": "codex", "sid": self.SID}
+        child = {"harness": "codex", "sid": "child-thread"}
+        peer = {"harness": "pi", "sid": "peer-thread"}
+        root_work = "workflow:root"
+        peer_work = "workflow:peer"
+        semantic = {
+            "facts": [
+                {
+                    "fact_id": "root-direction",
+                    "type": "user_message",
+                    "scope": "session",
+                    "source_session": root,
+                    "work_item_id": None,
+                    "at": 5.0,
+                },
+                {
+                    "fact_id": "child-result",
+                    "type": "work_result",
+                    "scope": "session",
+                    "source_session": child,
+                    "work_item_id": root_work,
+                    "at": 4.0,
+                },
+                {
+                    "fact_id": "root-gate",
+                    "type": "gate_decision",
+                    "scope": "project",
+                    "work_item_id": root_work,
+                    "at": 3.0,
+                },
+                {
+                    "fact_id": "peer-direction",
+                    "type": "user_message",
+                    "scope": "session",
+                    "source_session": peer,
+                    "work_item_id": peer_work,
+                    "at": 2.0,
+                },
+                {
+                    "fact_id": "peer-gate",
+                    "type": "gate_decision",
+                    "scope": "project",
+                    "work_item_id": peer_work,
+                    "at": 1.0,
+                },
+            ],
+            "work_items": [
+                {"work_item_id": root_work, "label": "root"},
+                {"work_item_id": peer_work, "label": "peer"},
+            ],
+            "contributors": [],
+            "relations": [],
+            "projections": {
+                "operator_intents": [
+                    {"projection_id": "intent-root", "derived_from": "root-direction"},
+                    {"projection_id": "intent-peer", "derived_from": "peer-direction"},
+                ],
+                "trail_heads": [],
+                "assignments": [],
+                "activity": {"nodes": [], "history_nodes": [], "steering": []},
+                "steering_episodes": [],
+            },
+            "history": {"events": []},
+        }
+
+        focused = project_context._focused_semantic_graph(
+            semantic,
+            ("codex", self.SID),
+            [
+                {
+                    "observer_sid": "child-thread",
+                    "confidence": "exact",
+                    "work_item_id": root_work,
+                    "parent_session": root,
+                }
+            ],
+            now=6.0,
+        )
+
+        self.assertEqual(
+            {"root-direction", "child-result", "root-gate"},
+            {row["fact_id"] for row in focused["facts"]},
+        )
+        self.assertEqual([root_work], [row["work_item_id"] for row in focused["work_items"]])
+        self.assertEqual(
+            ["intent-root"],
+            [row["projection_id"] for row in focused["projections"]["operator_intents"]],
+        )
+
     def test_focused_gates_require_exact_current_child_or_persisted_identity(self) -> None:
         workflow = "/repo/docs/dev"
 
