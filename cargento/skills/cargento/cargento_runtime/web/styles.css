@@ -757,18 +757,23 @@
   .pc-graph-row{display:grid;grid-template-columns:42px calc(var(--lane-count) * 44px) minmax(0,1fr);align-items:start;min-height:48px}
   .pc-graph-row>time{padding-top:8px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);text-align:right}
   .pc-graph-rail{position:relative;align-self:stretch;display:grid;grid-template-columns:repeat(var(--lane-count),minmax(0,1fr));min-height:48px}
-  .pc-rail-cell{position:relative;border-left:1px solid var(--line2)}
-  .pc-rail-cell:last-child{border-right:1px solid var(--line2)}
-  .pc-graph-mark{position:absolute;z-index:1;left:-5px;top:9px;width:9px;height:9px;border-radius:50%;background:var(--panel);border:2px solid var(--ink2);box-shadow:0 0 0 3px var(--panel)}
-  .pc-graph-mark.stage{border-radius:1px;background:var(--accent);border-color:var(--accent)}
-  .pc-graph-mark.result{background:var(--ink2)}
+  .pc-rail-cell{position:relative}
+  .pc-graph-mark{position:absolute;z-index:1;left:calc(50% - 5px);top:9px;width:9px;height:9px;border-radius:50%;background:var(--panel);border:2px solid var(--ink2);box-shadow:0 0 0 3px var(--panel)}
+  .pc-graph-row[data-lane-connect="next"] .pc-rail-cell.active::after{content:"";position:absolute;left:50%;top:18px;bottom:-9px;border-left:1px solid var(--line2)}
   .pc-graph-mark.burst{left:calc(var(--lane-x) - 5px);top:10px;width:11px;height:7px;border-radius:2px;background:var(--ink3);border:0}
-  .pc-graph-mark.steering{top:10px;width:7px;height:7px;border-radius:1px;background:var(--accent-ink);border:0;transform:rotate(45deg)}
+  .pc-graph-mark.steering{left:calc(50% - 4px);top:10px;width:7px;height:7px;border-radius:1px;background:var(--accent-ink);border:0;transform:rotate(45deg)}
   .pc-graph-row[data-branch-edge="solid"] .pc-graph-rail::after,.pc-graph-row[data-branch-edge="derived"] .pc-graph-rail::after,.pc-graph-row[data-merge-edge="solid"] .pc-graph-rail::before,.pc-graph-row[data-merge-edge="derived"] .pc-graph-rail::before{content:"";position:absolute;left:calc((100% / var(--lane-count)) / 2);width:calc((100% / var(--lane-count)) * var(--lane-index));border-top:1px solid var(--accent-ink)}
   .pc-graph-row[data-branch-edge="solid"] .pc-graph-rail::after,.pc-graph-row[data-branch-edge="derived"] .pc-graph-rail::after{top:12px}
   .pc-graph-row[data-merge-edge="solid"] .pc-graph-rail::before,.pc-graph-row[data-merge-edge="derived"] .pc-graph-rail::before{top:18px;border-color:var(--ink3)}
   .pc-graph-row[data-branch-edge="derived"] .pc-graph-rail::after,.pc-graph-row[data-merge-edge="derived"] .pc-graph-rail::before{border-top-style:dashed;opacity:.55}
   .pc-graph-row>.pc-trail-body{padding:5px 0 13px}
+  .pc-direction-history{margin:2px 0 8px 42px;color:var(--ink3);font:var(--fs-xs) var(--mono)}
+  .pc-direction-scroll{max-height:340px;overflow:auto;margin-top:5px}
+  .pc-event-chain{margin-top:6px}
+  .pc-trail-event[data-semantic-event]{display:grid;grid-template-columns:18px minmax(0,1fr);gap:5px;position:relative;padding-left:0;border-left:0}
+  .pc-trail-event-node{position:relative;display:block}
+  .pc-trail-event-node::before{content:"";position:absolute;left:6px;top:6px;width:6px;height:6px;border:1px solid var(--ink3);border-radius:50%;background:var(--panel)}
+  .pc-trail-event[data-lane-connect="next"] .pc-trail-event-node::after{content:"";position:absolute;left:9px;top:13px;bottom:-7px;border-left:1px solid var(--line2)}
   .pc-semantic-lane{min-width:0}
   .pc-semantic-lane h4{margin:0 0 9px;font-size:var(--fs-sm);color:var(--ink2)}
   .pc-semantic-node{border:1px solid var(--line2);border-radius:9px;padding:11px 12px;background:var(--panel)}

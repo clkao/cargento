@@ -341,10 +341,11 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   operator: h.includes("<b>Focus</b> — Operator-owned goal"),
   observed: h.includes("Derived session goal"),
-  scoped: h.includes("Derived snapshot") && h.includes("cached observer snapshot"),
+  scoped: h.includes("Observed goal") && h.includes("cached observer snapshot") &&
+    h.includes('data-semantic-kind="observed_goal"'),
   separate: h.indexOf("<b>Focus</b>") < h.indexOf("Observed goal · stale</b> — Derived session goal"),
   noOverwrite: h.includes("Browser focus is operator-authored"),
-  once: h.split("Derived session goal").length - 1 === 2 &&
+  once: h.split("Derived session goal").length - 1 === 1 &&
     !h.includes('class="pc-observer"') && !h.includes("Goal · derived")
 }));
 """
@@ -583,9 +584,9 @@ console.log(JSON.stringify({
     h.indexOf("Observed goal</b> — Shape the focused mirror") < h.indexOf('class="pc-operator"'),
   motion: h.includes("Working</strong><span>1 task active</span>") &&
     !h.includes("running exec") && !h.includes("no request"),
-  purpose: h.includes("Derived snapshot") && h.includes("Shape the focused mirror") &&
+  purpose: h.includes("Observed goal") && h.includes("Shape the focused mirror") &&
     !h.includes("reasoning max") &&
-    h.split("Shape the focused mirror").length - 1 === 2,
+    h.split("Shape the focused mirror").length - 1 === 1,
   workflowBoundary: !h.includes("workflow stage unavailable") &&
     !h.includes("open-block reading unavailable") &&
     h.includes("Stage and block are omitted when absent"),
@@ -595,7 +596,7 @@ console.log(JSON.stringify({
   identity: h.includes("codex:focus-1"),
   operatorPrecedence: h.includes("Browser focus is operator-authored"),
   noDuplicateObserver: !h.includes('class="pc-observer"') &&
-    h.split("Derived snapshot").length - 1 === 1
+    !h.includes("Derived snapshot")
 }));
 """
         out = self.run_project(
@@ -1376,7 +1377,7 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   linked: h.includes('data-steering-state="paired"') &&
     h.includes('data-causal-edge="solid"') &&
-    h.includes("source-linked correction") && h.includes("Checkpoint recorded"),
+    h.includes("Checkpoint recorded"),
   interval: !h.includes("Work interval") && h.includes("Prepare checkpoint") &&
     h.includes("Checkpoint recorded"),
   newest: h.indexOf("Prepare checkpoint") < h.indexOf("Earlier instruction") &&
@@ -1473,7 +1474,7 @@ const primaryText = Array.from(visibleText.matchAll(
   /<div class="pc-trail-top">([\\s\\S]*?)<\\/div>/g
 )).map(match => match[1]).join("");
 console.log(JSON.stringify({
-  bounded: (visibleText.match(/<article class="pc-graph-row/g) || []).length === 4 &&
+  bounded: (visibleText.match(/<article class="pc-graph-row/g) || []).length === 5 &&
     graph.includes("4 task lanes folded") &&
     graph.includes('data-graph-layout="fo-task-lanes"'),
   separated: graph.includes('data-model="fact-projection"') &&
@@ -1485,7 +1486,7 @@ console.log(JSON.stringify({
   supportedTagOnly: graph.includes("Correct the session grouping") &&
     graph.includes('data-steering-state="unpaired"') &&
     !primaryText.includes("generated</span>"),
-  noCausalGuess: (graph.match(/data-causal-edge="none"/g) || []).length === 1 &&
+  noCausalGuess: (graph.match(/data-causal-edge="none"/g) || []).length === 2 &&
     !graph.includes('data-causal-edge="solid"') &&
     !graph.includes('data-causal-edge="derived"'),
   noRepeatedUnpairedProse: !primaryText.includes("unpaired") &&
@@ -1578,7 +1579,7 @@ console.log(JSON.stringify({
     withoutLiveHtml.includes("No active worker · no return observed") &&
     withoutLiveHtml.includes('class="pc-lane-title">Project cockpit') &&
     !withoutLiveHtml.includes("Working · shaping"),
-  derivedFolded:current.includes("Derived old goal") && current.includes("sourced event")
+  derivedFolded:!current.includes("Derived old goal")
 }));
 """
         out = self.run_project(checks)
@@ -1727,11 +1728,12 @@ const cockpit = first.laneByKey.get("task:workflow:cockpit");
 console.log(JSON.stringify({
   stable:keys.every(key => first.laneByKey.get(key).index === second.laneByKey.get(key).index) &&
     new Set(keys).size === keys.length,
-  oneFoHead:(html.match(/data-lane-key="fo:codex:focus-1"/g) || []).length === 1 &&
+  multipleFoEvents:(html.match(/data-lane-key="fo:codex:focus-1"/g) || []).length === 2 &&
     first.laneByKey.get("fo:codex:focus-1").events.length === 2 &&
-    !html.includes("FO event 3"),
+    html.includes('data-semantic-kind="direction"') &&
+    html.includes('data-lane-connect="next"') && !html.includes("FO event 3"),
   oneCockpitLane:cockpit && cockpit.events.length === 4 && cockpit.contributors.length === 2 &&
-    (html.match(/data-lane-key="task:workflow:cockpit"/g) || []).length === 1 &&
+    (html.match(/data-assignment-lane="task-head"/g) || []).length === 2 &&
     html.includes('class="pc-lane-title">Project cockpit') &&
     html.includes("Working · shaping") && html.includes("Ampere · Einstein") &&
     html.includes("1 dispatch") && html.includes("3 sourced events") &&
@@ -1751,7 +1753,7 @@ console.log(JSON.stringify({
 """
         out = self.run_project(checks)
         self.assertTrue(out["stable"])
-        self.assertTrue(out["oneFoHead"])
+        self.assertTrue(out["multipleFoEvents"])
         self.assertTrue(out["oneCockpitLane"])
         self.assertTrue(out["godelFolded"])
         self.assertTrue(out["relations"])
@@ -1857,6 +1859,11 @@ const edge = (relations, reverse=false) => {
   return `${lane.branch}/${lane.merge}`;
 };
 const noRelation = projectSemanticTimeline({generated:112}, base, delegations, focus);
+const oneState = Object.assign({}, base, {facts:base.facts.filter(fact => fact.fact_id !== "dispatch")});
+const oneStateHtml = projectSemanticTimeline({generated:112}, oneState, delegations, focus);
+const exactBranchHtml = projectSemanticTimeline({generated:112}, Object.assign({}, base,
+  {relations:[{from:"fo:codex:focus-1", to:"task:workflow:cockpit", type:"dispatches_to",
+    confidence:"structural"}]}), delegations, focus);
 console.log(JSON.stringify({
   none:edge([]) === "none/none" &&
     noRelation.includes('data-branch-edge="none" data-merge-edge="none"'),
@@ -1873,7 +1880,11 @@ console.log(JSON.stringify({
   unrelated:edge([{from:"dispatch", to:"outcome", type:"derived_from",
     confidence:"exact"}]) === "none/none" &&
     edge([{from:"dispatch", to:"workflow:cockpit", type:"binds_to",
-      confidence:"structural"}]) === "none/none"
+      confidence:"structural"}]) === "none/none",
+  eventGrammar:!oneStateHtml.includes('data-lane-connect="next"') &&
+    noRelation.includes('data-lane-connect="next"') &&
+    exactBranchHtml.includes('data-branch-edge="solid"') &&
+    !exactBranchHtml.includes('data-merge-edge="solid"')
 }));
 """
         out = self.run_project(checks)
@@ -1884,6 +1895,9 @@ console.log(JSON.stringify({
         self.assertTrue(out["exactMerge"])
         self.assertTrue(out["shuffleStable"])
         self.assertTrue(out["unrelated"])
+        self.assertTrue(out["eventGrammar"])
+        self.assertIn(".pc-rail-cell{position:relative}", STYLES)
+        self.assertNotIn(".pc-rail-cell{position:relative;border-left", STYLES)
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_recent_intent_selection_enters_graph(self) -> None:
@@ -1893,12 +1907,23 @@ projectContextByLabel[projectContextKey("repo/proj")] = {state: "ready", generat
     {fact_id: "intent-1", at: 99997, type: "user_message", summary: "Show current intents",
       work_item_id: null, evidence: {source: "user-role record", confidence: "exact"}},
     {fact_id: "intent-2", at: 99998, type: "user_message", summary: "Keep the lane grammar",
+      work_item_id: null, evidence: {source: "user-role record", confidence: "exact"}},
+    {fact_id: "intent-3", at: 99996, type: "user_message", summary: "Keep the lane grammar please",
+      work_item_id: null, evidence: {source: "user-role record", confidence: "exact"}},
+    {fact_id: "ack", at: 99999, type: "user_message", summary: "ok.",
+      work_item_id: null, evidence: {source: "user-role record", confidence: "exact"}},
+    {fact_id: "transport", at: 99995, type: "user_message", summary: "env | grep TMUX",
       work_item_id: null, evidence: {source: "user-role record", confidence: "exact"}}
   ], work_items: [], contributors: [], relations: [], projections: {operator_intents: [
     {projection_id: "projection-1", at: 99997, summary: "Show current intents",
       derived_from: "intent-1"},
     {projection_id: "projection-2", at: 99998, summary: "Keep the lane grammar",
-      derived_from: "intent-2"}
+      derived_from: "intent-2"},
+    {projection_id: "projection-3", at: 99996, summary: "Keep the lane grammar please",
+      derived_from: "intent-3"},
+    {projection_id: "projection-ack", at: 99999, summary: "ok.", derived_from: "ack"},
+    {projection_id: "projection-transport", at: 99995, summary: "env | grep TMUX",
+      derived_from: "transport"}
   ], trail_heads: [], activity: {nodes: [], steering: [
     {projection_id: "projection-2", at: 99998, summary: "Keep the lane grammar",
       derived_from: "intent-2"},
@@ -1914,9 +1939,11 @@ const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
   visible: graph.includes("Show current intents") && graph.includes("Keep the lane grammar"),
-  diamonds: (graph.match(/data-steering-state="unpaired"/g) || []).length === 1 &&
-    graph.includes("1 sourced event"),
-  noEdges: (graph.match(/data-causal-edge="none"/g) || []).length === 1 &&
+  diamonds: (graph.match(/data-steering-state="unpaired"/g) || []).length === 2 &&
+    (graph.match(/data-lane-connect="next"/g) || []).length === 1 &&
+    !graph.includes("Keep the lane grammar please") && !graph.includes(">ok.<") &&
+    !graph.includes("env | grep TMUX"),
+  noEdges: (graph.match(/data-causal-edge="none"/g) || []).length === 2 &&
     !graph.includes('data-causal-edge="solid"') && !graph.includes('data-causal-edge="derived"')
 }));
 """
@@ -2438,8 +2465,8 @@ console.log(JSON.stringify({
   staleRejected: afterStale.includes("Keep the old direction visible") &&
     !afterStale.includes("Show stale direction"),
   updated: graph.includes("Show newest direction") &&
-    (graph.match(/data-steering-state="unpaired"/g) || []).length === 1 &&
-    graph.includes("3 sourced events"),
+    (graph.match(/data-steering-state="unpaired"/g) || []).length === 4 &&
+    (graph.match(/data-lane-connect="next"/g) || []).length === 3,
   automatic: pending.every(call => !String(call.url).includes("refresh=1")),
   settled: projectContextByLabel[key].dashboard_revision === 100001
 }));
