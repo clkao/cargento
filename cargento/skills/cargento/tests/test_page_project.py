@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 from . import test_page_calm
-from .page_harness import PageJsHarness
+from .page_harness import STYLES, PageJsHarness
 
 
 class ProjectCockpitTest(PageJsHarness):
@@ -712,7 +712,8 @@ Object.assign(d, {ask:true, asks:[]});
 render(d);
 const h = __els.app.innerHTML;
 console.log(JSON.stringify({
-  lanes:h.includes("Project cockpit · shaping") && h.includes("Session origin · shaping"),
+  lanes:h.includes('class="pc-lane-title">Project cockpit</strong><span>Working · shaping') &&
+    h.includes('class="pc-lane-title">Session origin</strong><span>Working · shaping'),
   explore:h.includes('data-workflow-binding="/repo/.spacedock/explore"') &&
     h.includes("workflow explore") && !h.includes("workflow dev"),
   noDuplicate:!h.includes('data-semantic-burst="2"') && !h.includes("2 entities touched")
@@ -763,7 +764,8 @@ const delegationRows = [
 const html = projectSemanticTimeline(d, model, delegationRows,
   {harness:"codex", sid:"focus-1", last_activity:99});
 console.log(JSON.stringify({
-  sameHeading:(html.match(/Project cockpit · shaping/g) || []).length === 4,
+  sameHeading:(html.match(/class="pc-lane-title">Project cockpit/g) || []).length === 2 &&
+    (html.match(/Working · shaping/g) || []).length === 2,
   distinct:html.includes('data-lane-key="task:workflow:explore"') &&
     html.includes('data-lane-key="task:workflow:dev"') &&
     html.includes('data-workflow-binding="/repo/.spacedock/explore"') &&
@@ -1109,6 +1111,118 @@ console.log(JSON.stringify({firstOpen, explicitClose, secondClosed, firstRestore
         self.assertTrue(out["firstRestored"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_nested_past_work_click_survives_same_click_outer_render(self) -> None:
+        checks = """
+let rendered = __els.app.innerHTML;
+let details = [];
+const attr = (source, name) => {
+  const match = source.match(new RegExp(`${name}="([^"]*)"`));
+  return match ? match[1] : null;
+};
+Object.defineProperty(__els.app, "innerHTML", {configurable:true,
+  get(){ return rendered; },
+  set(value){
+    rendered = String(value);
+    details = [...rendered.matchAll(/<details([^>]*)>/g)].map(match => ({
+      tagName:"DETAILS", open:/(?:^|\\s)open(?:\\s|$)/.test(match[1]),
+      getAttribute(name){ return attr(match[1], name); }
+    }));
+  }
+});
+__els.app.querySelectorAll = selector => selector === "details[data-pc-disclosure]"
+  ? details : __controls();
+const task = "workflow:returned";
+const context = {observers:[], events:[], semantic:{facts:[
+  {fact_id:"dispatch", at:99990, type:"prepared_dispatch", source_kind:"prepared_dispatch",
+    summary:"Dispatch task", work_item_id:task,
+    evidence:{source:"dispatch artifact", confidence:"exact"}},
+  {fact_id:"result", at:99991, type:"work_result", summary:"Task returned",
+    work_item_id:task, evidence:{source:"exact result", confidence:"exact"}}
+], work_items:[{work_item_id:task, label:"Returned task", kind:"workflow_item",
+  source_bindings:[]}], relations:[
+  {type:"dispatches_to", from:"fo:codex:focus-1", to:`task:${task}`,
+    evidence_ref:"dispatch", confidence:"exact"},
+  {type:"returns_to", from:`task:${task}`, to:"fo:codex:focus-1",
+    evidence_ref:"result", confidence:"exact"}
+], history:{event_count:2, persisted:true, events:[]}, projections:{operator_intents:[],
+  steering_episodes:[], trail_heads:[{work_item_id:task, status:"outcome",
+    latest_meaningful_event:"result", dispatch_count:1}],
+  activity:{nodes:[{kind:"work", at:99991, work_item_ids:[task]}]}}},
+  sources:{gate:{}, steer:{unavailable:[]}, work:{}, observer:{}}};
+projectContextByLabel[projectContextKey("repo/proj")] = {
+  state:"ready", generated:100000, dashboard_revision:100000, data:context};
+const d = payload([mk({project:"repo/proj", harness:"codex", sid:"focus-1",
+  state:"idle", active:true, last_activity:99999})]);
+Object.assign(d, {ask:true, asks:[]});
+render(d);
+const before = details.find(row => row.getAttribute("data-pc-disclosure") === "past-work");
+usageCfgOpen = true;
+const summary = {parentElement:before, closest(selector){
+  return selector === "summary" ? this : null;
+}};
+__fire("click", {target:summary});
+const pastOpen = () => {
+  const row = details.find(item => item.getAttribute("data-pc-disclosure") === "past-work");
+  return row === undefined ? null : row.open;
+};
+const sameClick = pastOpen();
+let contextFetches = 0;
+let dashboardRevision = 100001;
+__fetchImpl = url => {
+  if(String(url).startsWith("/api/project-context")){
+    contextFetches++;
+    return Promise.resolve({ok:true, json:() => Promise.resolve(context)});
+  }
+  return Promise.resolve({ok:true, json:() => Promise.resolve(
+    Object.assign({}, d, {generated:dashboardRevision++}))});
+};
+projectLoadContext(Object.assign({}, d, {generated:100001}), true);
+const loading = pastOpen();
+await __settle(); await __settle();
+const settled = pastOpen();
+render(Object.assign({}, d, {generated:100002}));
+const outer = pastOpen();
+await __settle(); await __settle();
+const afterOuterContext = pastOpen();
+await refresh();
+const refreshed = pastOpen();
+await __settle(); await __settle();
+const afterRefreshContext = pastOpen();
+const current = details.find(row => row.getAttribute("data-pc-disclosure") === "past-work");
+usageCfgOpen = true;
+const closeSummary = {parentElement:current, closest(selector){
+  return selector === "summary" ? this : null;
+}};
+__fire("click", {target:closeSummary});
+const explicitlyClosed = pastOpen() === false;
+render(Object.assign({}, d, {generated:100004}));
+await __settle(); await __settle();
+const stayedClosed = pastOpen() === false;
+console.log(JSON.stringify({before:before.open, sameClick, loading, settled, outer,
+  afterOuterContext, refreshed, afterRefreshContext, explicitlyClosed, stayedClosed,
+  contextFetches}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertFalse(out["before"])
+        for path in (
+            "sameClick",
+            "loading",
+            "settled",
+            "outer",
+            "afterOuterContext",
+            "refreshed",
+            "afterRefreshContext",
+        ):
+            self.assertTrue(out[path], path)
+        self.assertTrue(out["explicitlyClosed"])
+        self.assertTrue(out["stayedClosed"])
+        self.assertGreaterEqual(out["contextFetches"], 3)
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_full_retained_history_is_distinct_from_primary_work_projection(self) -> None:
         checks = """
 const span = 23 * 3600 + 48 * 60;
@@ -1127,7 +1241,8 @@ const semantic = {facts, work_items:[], relations:[], history:{event_count:69,
     steering:Array.from({length:3}, (_, i) => ({projection_id:`steer-${i}`})), nodes:[]}}};
 projectContextByLabel[projectContextKey("repo/proj")] = {state:"ready", generated:100000,
   data:{observers:[], events:[], semantic,
-    sources:{gate:{}, steer:{unavailable:[]}, work:{}, observer:{}}}};
+    sources:{gate:{status_history:"unavailable"}, steer:{unavailable:[]},
+      work:{}, observer:{}}}};
 const d = payload([mk({project:"repo/proj", harness:"codex", sid:"focus-1",
   state:"idle", active:true, last_activity:99999})]);
 Object.assign(d, {ask:true, asks:[]});
@@ -1144,7 +1259,11 @@ console.log(JSON.stringify({
     /data-pc-disclosure="fact:source-history:fo:event-/g) || []).length === 69 &&
     evidence.includes("Source event 1") && evidence.includes("Source event 69"),
   projectionBounded:semantic.projections.activity.history_nodes.length === 5 &&
-    semantic.projections.activity.steering.length === 3
+    semantic.projections.activity.steering.length === 3,
+  inventory:evidence.includes("Retained</b> · 63 directions · 6 assignments") &&
+    evidence.includes("Primary</b> · 5 heads · 3 directions") &&
+    evidence.includes("Absent</b> · task returns · checkpoints · progress") &&
+    evidence.includes("Unavailable</b> · gate history")
 }));
 """
         out = self.run_project(
@@ -1156,6 +1275,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["retained"])
         self.assertTrue(out["allDiscoverable"])
         self.assertTrue(out["projectionBounded"])
+        self.assertTrue(out["inventory"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_what_changed_separates_real_steering_from_demonstrated_outcomes(self) -> None:
@@ -1444,7 +1564,8 @@ const withoutLive = projectLaneRegistry(model, [], focus);
 const withoutLiveHtml = projectSemanticTimeline({generated:112}, model, [], focus);
 console.log(JSON.stringify({
   currentOnly:current.includes("Working") && current.includes("Keep current work clear") &&
-    current.includes("Project cockpit · shaping") && current.includes("Einstein") &&
+    current.includes('class="pc-lane-title">Project cockpit') &&
+    current.includes("Working · shaping") && current.includes("Einstein") &&
     current.includes("Session interaction origin") &&
     current.includes("No active worker · no return observed"),
   noHistory:!html.includes('data-activity-band="past-work"'),
@@ -1455,7 +1576,8 @@ console.log(JSON.stringify({
     withoutLive.laneByKey.get(`task:${cockpit}`).working === false &&
     withoutLive.laneByKey.get(`task:${cockpit}`).key === `task:${cockpit}` &&
     withoutLiveHtml.includes("No active worker · no return observed") &&
-    !withoutLiveHtml.includes("Project cockpit · shaping"),
+    withoutLiveHtml.includes('class="pc-lane-title">Project cockpit') &&
+    !withoutLiveHtml.includes("Working · shaping"),
   derivedFolded:current.includes("Derived old goal") && current.includes("sourced event")
 }));
 """
@@ -1610,7 +1732,8 @@ console.log(JSON.stringify({
     !html.includes("FO event 3"),
   oneCockpitLane:cockpit && cockpit.events.length === 4 && cockpit.contributors.length === 2 &&
     (html.match(/data-lane-key="task:workflow:cockpit"/g) || []).length === 1 &&
-    html.includes("Project cockpit · shaping") && html.includes("Ampere · Einstein") &&
+    html.includes('class="pc-lane-title">Project cockpit') &&
+    html.includes("Working · shaping") && html.includes("Ampere · Einstein") &&
     html.includes("1 dispatch") && html.includes("3 sourced events") &&
     !html.includes("<span>Cockpit ready</span>"),
   godelFolded:first.lanes.filter(lane => lane.kind === "task").length === 2 &&
@@ -1633,6 +1756,69 @@ console.log(JSON.stringify({
         self.assertTrue(out["godelFolded"])
         self.assertTrue(out["relations"])
         self.assertTrue(out["distinctRails"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_lane_titles_are_dominant_normalized_and_narrow_safe(self) -> None:
+        checks = """
+const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1",
+  state:"working", last_activity:100});
+const cockpit = "workflow:opaque-cockpit-id";
+const terminal = "workflow:opaque-terminal-id";
+const model = {facts:[
+  {fact_id:"direction", at:100, type:"user_message", summary:"Keep lanes readable",
+    evidence:{source:"root transcript", confidence:"exact"}},
+  {fact_id:"cockpit", at:99, type:"stage_transition", stage:"shaping",
+    summary:"Shape cockpit", work_item_id:cockpit,
+    evidence:{source:"assignment", confidence:"exact"}},
+  {fact_id:"terminal", at:98, type:"stage_transition", stage:"shaping",
+    summary:"Shape terminal", work_item_id:terminal,
+    evidence:{source:"assignment", confidence:"exact"}}
+], work_items:[
+  {work_item_id:cockpit, label:"project-cockpit", kind:"workflow_item"},
+  {work_item_id:terminal, label:"session-interaction-origin", kind:"workflow_item"}
+], relations:[], projections:{operator_intents:[], steering_episodes:[], trail_heads:[
+  {work_item_id:cockpit, stage:"shaping", latest_meaningful_event:"cockpit"},
+  {work_item_id:terminal, stage:"shaping", latest_meaningful_event:"terminal"}
+], activity:{nodes:[
+  {kind:"work", at:99, work_item_ids:[cockpit]},
+  {kind:"work", at:98, work_item_ids:[terminal]}
+]}}};
+const workers = [
+  {workItemId:cockpit, worker:"Einstein", assignment:"Shape cockpit",
+    source:"structured assignment", at:99},
+  {workItemId:terminal, worker:"Ampere", assignment:"Shape terminal",
+    source:"structured assignment", at:98}
+];
+const html = projectSemanticTimeline({generated:101}, model, workers, focus);
+const titles = [...html.matchAll(/class="pc-lane-title">([^<]*)/g)].map(match => match[1]);
+const legend = html.slice(html.indexOf('class="pc-lane-labels"'),
+  html.indexOf("</div>", html.indexOf('class="pc-lane-labels"')));
+console.log(JSON.stringify({
+  titles,
+  exact:JSON.stringify(titles) === JSON.stringify(
+    ["First Officer", "Project cockpit", "Session interaction origin"]),
+  secondary:html.includes("Project cockpit</strong><span>Working · shaping") &&
+    html.includes("Session interaction origin</strong><span>Working · shaping"),
+  legend:legend.includes("First Officer") && legend.includes("Project cockpit") &&
+    legend.includes("Session interaction origin") && !legend.includes("workflow:")
+}));
+"""
+        out = self.run_project(checks)
+        self.assertTrue(out["exact"])
+        self.assertTrue(out["secondary"])
+        self.assertTrue(out["legend"])
+        self.assertIn(
+            ".pc-trail-top .pc-lane-title{font-size:var(--fs-md);line-height:1.3;"
+            "color:var(--ink);overflow-wrap:anywhere}",
+            STYLES,
+        )
+        self.assertIn(
+            ".pc-lane-labels{grid-column:3;display:flex;gap:5px;flex-wrap:wrap;",
+            STYLES,
+        )
+        narrow = STYLES[STYLES.index("@media(max-width:520px)") :]
+        self.assertIn(".pc-trail-top{display:grid;grid-template-columns:minmax(0,1fr)}", narrow)
+        self.assertIn(".pc-trail-top span{text-align:left}", narrow)
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_lane_topology_comes_only_from_explicit_relations(self) -> None:

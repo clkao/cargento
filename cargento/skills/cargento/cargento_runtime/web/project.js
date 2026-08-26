@@ -19,6 +19,7 @@ const projectContextByLabel = {};
 const projectContextRequests = {};
 let projectContextRequestSequence = 0;
 const projectDisclosureOpenBySession = new Map();
+const projectDisclosurePendingBySession = new Set();
 let projectUsageCounts = null;
 let projectTabOrder = null;
 let projectOpenedKey = null;
@@ -59,19 +60,50 @@ function projectDisclosure(control, summary, body, className, attributes){
     `<summary>${summary}</summary>${body}</details>`;
 }
 
+function projectDisclosureElementKey(details){
+  if(!details || typeof details.getAttribute !== "function") return "";
+  const encodedSession = String(details.getAttribute("data-disclosure-session") || "");
+  let session = "";
+  try{ session = decodeURIComponent(encodedSession); }catch(_error){ session = ""; }
+  const control = String(details.getAttribute("data-pc-disclosure") || "");
+  return session && control ? `${session}\n${control}` : "";
+}
+
 function projectCaptureDisclosureStates(){
   const app = document.getElementById("app");
   if(!app || typeof app.querySelectorAll !== "function") return;
   for(const details of app.querySelectorAll("details[data-pc-disclosure]")){
-    const encodedSession = String(details.getAttribute("data-disclosure-session") || "");
-    let session = "";
-    try{ session = decodeURIComponent(encodedSession); }catch(_error){ session = ""; }
-    const control = String(details.getAttribute("data-pc-disclosure") || "");
-    if(session && control) projectDisclosureOpenBySession.set(
-      `${session}\n${control}`, details.open === true
-    );
+    const key = projectDisclosureElementKey(details);
+    if(!key) continue;
+    const open = details.open === true;
+    /* A document click handler can synchronously render before the browser
+       applies a summary's default toggle. In that one turn, the click intent
+       is newer than the outgoing DOM property and must win. */
+    if(projectDisclosurePendingBySession.has(key) &&
+        projectDisclosureOpenBySession.get(key) !== open) continue;
+    projectDisclosurePendingBySession.delete(key);
+    projectDisclosureOpenBySession.set(key, open);
   }
 }
+
+document.addEventListener("click", event => {
+  const summary = event.target && event.target.closest
+    ? event.target.closest("summary") : null;
+  const details = summary && summary.parentElement;
+  if(!details || String(details.tagName || "").toLowerCase() !== "details") return;
+  const key = projectDisclosureElementKey(details);
+  if(!key) return;
+  projectDisclosureOpenBySession.set(key, details.open !== true);
+  projectDisclosurePendingBySession.add(key);
+}, true);
+
+document.addEventListener("toggle", event => {
+  const details = event.target;
+  const key = projectDisclosureElementKey(details);
+  if(!key) return;
+  projectDisclosureOpenBySession.set(key, details.open === true);
+  projectDisclosurePendingBySession.delete(key);
+}, true);
 
 function projectTabId(label){
   return "pc-project-tab-" + encodeURIComponent(label).replaceAll("%", "_");
@@ -930,7 +962,7 @@ function projectLaneRegistry(model, delegations, focus){
   const intentFactById = new Map(intents.map(intent => [intent.projection_id, intent.derived_from]));
   const episodeByFact = new Map(episodes.map(episode =>
     [intentFactById.get(episode.intent_id), episode]).filter(entry => entry[0]));
-  const foLane = {key:foKey, kind:"fo", label:"FO", index:0, events:foEvents,
+  const foLane = {key:foKey, kind:"fo", label:"First Officer", index:0, events:foEvents,
     contributors:unboundContributors, item:null, head:null, branch:"none", merge:"none",
     episodeByFact};
   const relations = Array.isArray(model.relations) ? model.relations : [];
@@ -1045,7 +1077,8 @@ function projectFoLaneRow(d, registry, lane, focus){
   const needs = Boolean(focus && (focus.state === "needs_input" || focus.needs_you === true));
   const operational = needs ? "Needs you" : (focus && focus.state === "working"
     ? "Working" : "Waiting for you");
-  const body = `<div class="pc-trail-top"><strong>${esc(operational)}</strong><span>FO</span></div>` +
+  const body = `<div class="pc-trail-top"><strong class="pc-lane-title">First Officer</strong>` +
+    `<span>${esc(operational)}</span></div>` +
     (direction ? `<div class="pc-trail-result">${esc(direction.summary)}</div>` : "") +
     (finalOutput ? `<div class="pc-trail-result">${esc(finalOutput.summary)}</div>` : "") +
     linked + (latest.fact_id ? projectFactEvidence(latest, "fo-head") : "") +
@@ -1055,13 +1088,16 @@ function projectFoLaneRow(d, registry, lane, focus){
       `data-trail-head="fo"`, latest.summary || "Focused session");
 }
 
+function projectTaskTitle(label){
+  return String(label || "Task").replace(/-/g, " ")
+    .replace(/^./, first => first.toUpperCase());
+}
+
 function projectTaskLaneRow(d, registry, lane){
   const head = lane.head || {};
   const latest = lane.headFact || lane.events[0] || {};
   const stage = lane.working ? head.stage || "" : "";
-  const title = String(lane.label || "Task").replace(/-/g, " ")
-    .replace(/^./, first => first.toUpperCase());
-  const heading = stage ? `${title} · ${stage}` : title;
+  const title = projectTaskTitle(lane.label);
   const status = lane.working ? "Working" : (lane.unreturned
     ? "No active worker · no return observed" : (lane.returned ? "Returned" : "History"));
   const result = latest.summary || "Latest state";
@@ -1085,7 +1121,9 @@ function projectTaskLaneRow(d, registry, lane){
     }).join("<br>"), "pc-trail-history") : "";
   const workflowBinding = latest.workflow_binding || (bindings[0] &&
     String(bindings[0].value || "").split(":")[0]) || "";
-  const body = `<div class="pc-trail-top"><strong>${esc(heading)}</strong><span>${esc(status)}</span></div>` +
+  const meta = [status, stage].filter(Boolean).join(" · ");
+  const body = `<div class="pc-trail-top"><strong class="pc-lane-title">${esc(title)}</strong>` +
+    `<span>${esc(meta)}</span></div>` +
     `<div class="pc-trail-result">${esc(result)}</div>` +
     (attempts ? `<div class="pc-trail-quiet" data-dispatch-count="${dispatchCount}">${esc(attempts)}</div>` : "") +
     (workers ? `<div class="pc-trail-quiet">${esc(workers)}</div>` : "") +
@@ -1098,13 +1136,14 @@ function projectTaskLaneRow(d, registry, lane){
     ` data-branch-edge="${esc(lane.branch)}" data-merge-edge="${esc(lane.merge)}"` +
     (stage ? ` data-work-stage="${esc(stage)}"` : "") +
     (workflowBinding ? ` data-workflow-binding="${esc(workflowBinding)}"` : "");
-  return projectGraphRow(d, at, kind, registry, lane, body, attrs, heading);
+  return projectGraphRow(d, at, kind, registry, lane, body, attrs, title);
 }
 
 function projectLaneLegend(registry){
   return `<div class="pc-lane-legend" style="--lane-count:${registry.lanes.length}">` +
     `<span></span><span class="pc-lane-labels">` + registry.lanes.map(lane =>
-      `<span title="${esc(lane.label)}">${esc(lane.label)}</span>`).join("") +
+      `<span title="${esc(lane.label)}">${esc(lane.kind === "fo" ? "First Officer" :
+        projectTaskTitle(lane.label))}</span>`).join("") +
     `</span></div>`;
 }
 
@@ -1162,6 +1201,37 @@ function projectSemanticEvidence(group){
     ["result", "decision"].includes(fact.type));
   const historyCount = Number(history.event_count) || 0;
   const historyEvents = Array.isArray(history.events) ? history.events : [];
+  const eventTypeLabels = new Map([
+    ["operator_direction", ["direction", "directions"]],
+    ["assignment", ["assignment", "assignments"]],
+    ["stage_transition", ["stage", "stages"]],
+    ["progress_head", ["progress", "progress"]],
+    ["checkpoint", ["checkpoint", "checkpoints"]],
+    ["gate_decision", ["gate", "gates"]],
+    ["result", ["result", "results"]],
+    ["final_output", ["final output", "final outputs"]],
+    ["observed_goal", ["observed goal", "observed goals"]],
+    ["goal_shift", ["goal shift", "goal shifts"]]
+  ]);
+  const eventTypeCounts = new Map();
+  historyEvents.forEach(event => eventTypeCounts.set(event.event_type,
+    (eventTypeCounts.get(event.event_type) || 0) + 1));
+  const knownInventory = [...eventTypeLabels].filter(([type]) => eventTypeCounts.has(type))
+    .map(([type, labels]) => {
+      const count = eventTypeCounts.get(type);
+      return `${count} ${labels[count === 1 ? 0 : 1]}`;
+    });
+  const unknownInventory = [...eventTypeCounts].filter(([type]) => !eventTypeLabels.has(type))
+    .map(([type, count]) => `${count} ${String(type).replace(/_/g, " ")}`);
+  const retainedInventory = knownInventory.concat(unknownInventory).join(" · ");
+  const primaryHeads = Array.isArray(activity.history_nodes) ? activity.history_nodes.length : 0;
+  const primaryDirections = Array.isArray(activity.steering) ? activity.steering.length : 0;
+  const absentTypes = [["returns_to", "task returns"], ["checkpoint", "checkpoints"],
+    ["progress_head", "progress"]].filter(([type]) => type === "returns_to"
+      ? !(model.relations || []).some(relation => relation.type === type)
+      : !eventTypeCounts.has(type)).map(([, label]) => label);
+  const gateUnavailable = entry && entry.data && entry.data.sources &&
+    entry.data.sources.gate && entry.data.sources.gate.status_history === "unavailable";
   const workItems = new Map((model.work_items || []).map(item => [item.work_item_id, item]));
   const historyLanes = new Map();
   historyEvents.forEach(event => {
@@ -1170,6 +1240,11 @@ function projectSemanticEvidence(group){
     historyLanes.get(key).push(event);
   });
   const historySpan = projectHistorySpan(historyEvents);
+  const inventory = historyCount ? `<div class="pc-history-inventory">` +
+    `<span><b>Retained</b> · ${esc(retainedInventory || "no semantic events")}</span>` +
+    `<span><b>Primary</b> · ${primaryHeads} heads · ${primaryDirections} directions</span>` +
+    (absentTypes.length ? `<span><b>Absent</b> · ${esc(absentTypes.join(" · "))}</span>` : "") +
+    (gateUnavailable ? `<span><b>Unavailable</b> · gate history</span>` : "") + `</div>` : "";
   const historyDisclosure = historyLanes.size ? projectDisclosure("semantic-source-history",
     `${historyCount} source event${historyCount === 1 ? "" : "s"} · ${historySpan}`,
     [...historyLanes].map(([key, events]) => {
@@ -1186,7 +1261,7 @@ function projectSemanticEvidence(group){
   return (historyCount ? `<li><b>Semantic work history · ${historyCount} source event` +
     `${historyCount === 1 ? "" : "s"}</b> · ${historySpan} · 24h retention · ` +
     `${history.persisted ? "restart-safe" : "memory only"} · raw sources remain authoritative.` +
-    `${historyDisclosure}</li>` : "") +
+    `${inventory}${historyDisclosure}</li>` : "") +
     `<li><b>Past dispatches without observed result · ${historicalDispatches}</b>` +
     (historical !== historicalDispatches ? ` · ${historical} distinct work label${historical === 1 ? "" : "s"}` : "") +
     ` · ${unpaired.length} intent candidate${unpaired.length === 1 ? "" : "s"} without a supported reaction.` +
