@@ -228,6 +228,11 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
 .pc-lane-labels{grid-column:3;display:flex;gap:5px;flex-wrap:wrap;color:var(--ink2);font:var(--fs-xs) var(--sans)}
 .pc-lane-labels span{padding:1px 6px;border-left:2px solid var(--line2);font-weight:650;white-space:normal}
 .pc-graph-row{display:grid;grid-template-columns:42px calc(var(--lane-count) * 44px) minmax(0,1fr);align-items:start;min-height:48px}
+.next-cockpit-session-nav{display:flex;gap:5px;overflow-x:auto;padding:3px 0 10px}
+.next-cockpit-session-nav a{display:grid;min-width:132px;padding:6px 8px;border:1px solid var(--line);color:var(--ink2);text-decoration:none}
+.next-cockpit-session-nav a[aria-current="page"]{border-color:var(--accent-ink);background:var(--panel);color:var(--ink)}
+.next-cockpit-session-nav strong,.next-cockpit-session-nav span,.next-cockpit-session-nav small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.next-cockpit-session-nav span,.next-cockpit-session-nav small{font:var(--fs-2xs) var(--mono);color:var(--ink3)}
 .pc-graph-row>time{padding-top:8px;color:var(--ink3);font-family:var(--mono);font-size:var(--fs-2xs);text-align:right}
 .pc-graph-filter{display:flex;justify-content:flex-end;gap:2px;margin-bottom:5px}
 .pc-graph-filter button{padding:3px 6px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--ink3);font:var(--fs-2xs) var(--mono);cursor:pointer}

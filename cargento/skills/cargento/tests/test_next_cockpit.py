@@ -15,22 +15,36 @@ __els.app = {innerHTML: ""};
 const __dashboard = {
   generated: 105, rate_window_sec: 600, window_hours: 24,
   summary: {working: 1, needs_input: 0},
-  harnesses: [{key: "codex", label: "Codex"}],
+  harnesses: [{key: "codex", label: "Codex"}, {key:"pi", label:"Pi"},
+    {key:"claude", label:"Claude"}],
   sessions: [{sid: "focus-1", harness: "codex", project: "cargento",
     project_key: "spacedock-research/cargento", state: "working", active: true,
-    last_activity: 104, title: "Shape project cockpit", subagents: []}]
+    last_activity: 104, title: "Shape project cockpit", subagents: []},
+    {sid:"pi-idle", harness:"pi", project:"cargento",
+      project_key:"spacedock-research/cargento", state:"idle", active:true,
+      last_activity:99, title:"Pi result", last_output:"Pi finished", subagents:[]},
+    {sid:"claude-idle", harness:"claude", project:"cargento",
+      project_key:"spacedock-research/cargento", state:"idle", active:true,
+      last_activity:98, title:"Claude result", last_output:"Claude finished", subagents:[]}]
 };
 const __task = "workflow:project-cockpit";
 const __semantic = {facts: [
   {fact_id:"fo-a", at:104, type:"user_message", summary:"Newest direction",
+    source_session:{harness:"codex", sid:"focus-1"},
     evidence:{source:"root transcript", confidence:"exact"}},
   {fact_id:"task-a", at:103, type:"prepared_dispatch", summary:"Dispatch cockpit",
-    work_item_id:__task, evidence:{source:"dispatch artifact", confidence:"exact"}},
+    source_session:{harness:"codex", sid:"focus-1"}, work_item_id:__task,
+    evidence:{source:"dispatch artifact", confidence:"exact"}},
   {fact_id:"fo-b", at:102, type:"user_message", summary:"Correct the lane order",
+    source_session:{harness:"codex", sid:"focus-1"},
     evidence:{source:"root transcript", confidence:"exact"}},
   {fact_id:"task-b", at:101, type:"stage_transition", stage:"shaping",
     summary:"Shaping cockpit", work_item_id:__task,
-    evidence:{source:"workflow state", confidence:"exact"}}
+    evidence:{source:"workflow state", confidence:"exact"}},
+  {fact_id:"gate-a", at:100, type:"gate_decision", source_kind:"gate",
+    summary:"project-cockpit · review · approve", scope:"project", by:"person:captain",
+    decision:"approve", stage:"review", target_stage:"shaping", work_item_id:__task,
+    evidence:{source:"entity gate", confidence:"exact"}}
 ], work_items:[{work_item_id:__task, label:"project-cockpit", kind:"workflow_item"}],
 relations:[{type:"dispatches_to", from:"fo:codex:focus-1",
   to:`task:${__task}`, evidence_ref:"task-a", confidence:"exact"}], projections:{
@@ -73,7 +87,7 @@ console.log(JSON.stringify({html, order: rows.map(row =>
         self.assertIn("SEMANTIC TIMELINE", html)
         self.assertIn('data-next-cockpit-action="graph-mode"', html)
         self.assertNotIn('data-calm="project-graph-mode"', html)
-        self.assertEqual(["fo-a", "task-a", "fo-b", "task-b"], out["order"])
+        self.assertEqual(["fo-a", "task-a", "fo-b", "task-b", "gate-a"], out["order"])
         self.assertEqual([True, True, True], out["foSpan"])
         self.assertEqual([True, True, True], out["taskSpan"])
         self.assertNotIn("pc-project-tabs", html)
@@ -81,6 +95,66 @@ console.log(JSON.stringify({html, order: rows.map(row =>
         self.assertNotIn("Evidence / limits", html)
         self.assertNotIn("data-branch-edge=", html)
         self.assertNotIn("data-merge-edge=", html)
+
+    def test_defaults_to_all_sessions_and_links_every_idle_peer(self) -> None:
+        out = self.run_fixture(
+            """
+const html = __els.app.innerHTML;
+console.log(JSON.stringify({html, query:[...nextCockpitContexts.keys()]}));
+"""
+        )
+        assert isinstance(out, dict)
+        html = out["html"]
+
+        self.assertIn('data-next-cockpit-session="all"', html)
+        self.assertIn('aria-current="page"><strong>All sessions', html)
+        self.assertIn("Codex", html)
+        self.assertIn("Pi", html)
+        self.assertIn("Claude", html)
+        self.assertIn("pi-idle", html)
+        self.assertIn("claude-idle", html)
+        self.assertIn("#n=project:cargento:pi%3Api-idle", html)
+        self.assertTrue(any(key.endswith("\n") for key in out["query"]))
+
+    def test_session_permalink_selects_exact_focus_and_decisions_filter_is_present(self) -> None:
+        out = self.run_fixture(
+            """
+nextRoute = nextRouteFromFragment("#n=project:cargento:pi%3Api-idle");
+renderNext();
+await __settle();
+await __settle();
+const html = __els.app.innerHTML;
+console.log(JSON.stringify({html, focus:nextCockpitFocusedSession(nextProjectGroups()[0]) &&
+  sessKey(nextCockpitFocusedSession(nextProjectGroups()[0]))}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual("pi:pi-idle", out["focus"])
+        self.assertIn('data-next-cockpit-session="pi:pi-idle"', out["html"])
+        self.assertIn('aria-current="page"><strong>Pi', out["html"])
+        self.assertIn('data-arg="decisions"', out["html"])
+
+    def test_decisions_view_uses_canonical_actor_action_object_result(self) -> None:
+        out = self.run_fixture(
+            """
+projectGraphModeBySession.set("", "decisions");
+renderNext();
+const html = __els.app.innerHTML;
+const rows = [...html.matchAll(/<article class="pc-graph-row[\\s\\S]*?<\\/article>/g)]
+  .map(match => match[0]);
+console.log(JSON.stringify({html, rows}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual(1, len(out["rows"]))
+        self.assertIn('data-semantic-kind="decision"', out["rows"][0])
+        self.assertIn('data-actor="You"', out["rows"][0])
+        self.assertIn('data-action="approved"', out["rows"][0])
+        self.assertIn('data-object="Project cockpit"', out["rows"][0])
+        self.assertIn('data-result="review → shaping"', out["rows"][0])
+        self.assertIn("You</strong> approved Project cockpit · review → shaping", out["rows"][0])
 
     def test_focus_reads_label_alias_then_saves_only_under_the_stable_project_key(self) -> None:
         label_key = "cargento.projectGoal.v1:cargento"

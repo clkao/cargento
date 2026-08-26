@@ -1330,7 +1330,7 @@ class ProjectContextTest(unittest.TestCase):
         )
 
         self.assertEqual(2, len(model["work_items"]))
-        self.assertTrue(all(fact["scope"] == "workflow" for fact in model["facts"]))
+        self.assertTrue(all(fact["scope"] == "project" for fact in model["facts"]))
         fact_ids = {fact["fact_id"] for fact in model["facts"]}
         reordered_ids = {fact["fact_id"] for fact in reordered["facts"]}
         self.assertTrue(fact_ids.issubset(reordered_ids))
@@ -1344,6 +1344,118 @@ class ProjectContextTest(unittest.TestCase):
                 for relation in model["relations"]
             )
         )
+
+    def test_transcript_facts_keep_source_session_without_branch_records(self) -> None:
+        model = project_context._semantic_model(
+            [
+                {
+                    "at": 2.0,
+                    "kind": "steer",
+                    "title": "Keep the selected project as the context boundary.",
+                    "source": "Codex user message",
+                    "harness": "codex",
+                    "sid": "codex-root",
+                    "intent_promotable": True,
+                }
+            ],
+            [],
+        )
+
+        fact = model["facts"][0]
+        self.assertEqual({"harness": "codex", "sid": "codex-root"}, fact["source_session"])
+        self.assertNotIn("branch", fact)
+
+    def test_gate_facts_are_project_scoped_without_invented_session_origin(self) -> None:
+        lines = [
+            "- id: gate:review",
+            "  stage: review",
+            "  resolution:",
+            "    at: 2026-08-24T20:10:00Z",
+            "    decision: approve",
+            "    by: person:captain",
+            "  application:",
+            "    state: applied",
+            "    target-stage: shaping",
+        ]
+        events, _briefings = project_context.gate_events(
+            self.config,
+            lines,
+            "project-cockpit",
+            "explore",
+            "codex",
+            self.SID,
+            workflow_binding="/repo/.spacedock/explore",
+        )
+        fact = project_context._semantic_model(events, [])["facts"][0]
+
+        self.assertEqual("project", fact["scope"])
+        self.assertEqual("person:captain", fact["by"])
+        self.assertEqual("shaping", fact["target_stage"])
+        self.assertNotIn("source_session", fact)
+        self.assertNotIn("harness", events[0])
+        self.assertNotIn("sid", events[0])
+
+    def test_focused_history_keeps_exact_session_and_project_facts_only(self) -> None:
+        history = {
+            "events": [
+                {
+                    "event_id": "codex",
+                    "fact": {
+                        "fact_id": "codex",
+                        "scope": "session",
+                        "source_session": {"harness": "codex", "sid": "root"},
+                    },
+                },
+                {
+                    "event_id": "pi",
+                    "fact": {
+                        "fact_id": "pi",
+                        "scope": "session",
+                        "source_session": {"harness": "pi", "sid": "other"},
+                    },
+                },
+                {
+                    "event_id": "gate",
+                    "fact": {"fact_id": "gate", "scope": "project"},
+                },
+            ],
+            "cursors": {"codex:root": {}, "pi:other": {}},
+        }
+
+        focused = project_context._focused_semantic_history(history, ("codex", "root"))
+
+        self.assertEqual(["codex", "gate"], [row["event_id"] for row in focused["events"]])
+        self.assertEqual(history["cursors"], focused["cursors"])
+
+    def test_focused_gate_context_reads_project_peer_without_foreign_transcript_facts(self) -> None:
+        focused = {
+            "harness": "codex",
+            "sid": "root",
+            "project_key": "git:project",
+            "active": True,
+        }
+        peer = {
+            "harness": "claude",
+            "sid": "peer",
+            "project_key": "git:project",
+            "active": True,
+        }
+        gate = {"kind": "gate", "scope": "project", "title": "task · review · approve"}
+        with (
+            mock.patch.object(observer, "resolve_transcript", return_value="/tmp/peer.jsonl"),
+            mock.patch.object(project_context, "_gate_context", return_value=([gate], 2)) as read,
+        ):
+            rows, briefings = project_context._project_peer_gate_context(
+                self.config,
+                mock.Mock(),
+                [focused, peer],
+                "git:project",
+                ("codex", "root"),
+            )
+
+        self.assertEqual([gate], rows)
+        self.assertEqual(2, briefings)
+        read.assert_called_once_with(self.config, mock.ANY, "/tmp/peer.jsonl", "claude", "peer")
 
     def test_environment_context_is_not_steering(self) -> None:
         event = project_context._instruction_event(

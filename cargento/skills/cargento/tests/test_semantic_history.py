@@ -182,6 +182,44 @@ class SemanticHistoryTest(unittest.TestCase):
         self.assertNotIn("stage", generic["fact"])
         self.assertEqual("one_off", generic["work_item"]["kind"])
 
+    def test_child_assignment_keeps_verified_child_parent_and_task_identity(self) -> None:
+        result = semantic_history.update(
+            self.config,
+            build_runtime_state(self.config, started=1),
+            "git:project",
+            {"facts": [], "work_items": []},
+            [],
+            [
+                {
+                    "name": "Banach",
+                    "observer_sid": "child-one",
+                    "parent_session": {"harness": "codex", "sid": "root"},
+                    "assignment": "Shape cockpit",
+                    "confidence": "exact",
+                    "source": "structured dispatch artifact",
+                    "workflow_entity": "project-cockpit",
+                    "workflow_stage": "shaping",
+                    "workflow_binding": "/repo/.spacedock/explore",
+                    "work_item_id": semantic_history.workflow_work_item_id(
+                        "/repo/.spacedock/explore", "project-cockpit"
+                    ),
+                }
+            ],
+            now=100,
+        )
+
+        fact = result["events"][0]["fact"]
+        self.assertEqual({"harness": "codex", "sid": "child-one"}, fact["source_session"])
+        self.assertEqual({"harness": "codex", "sid": "root"}, fact["parent_session"])
+        self.assertEqual(
+            {"harness": "codex", "sid": "child-one", "label": "Banach", "verified": True},
+            fact["contributor"],
+        )
+        self.assertEqual(
+            semantic_history.workflow_work_item_id("/repo/.spacedock/explore", "project-cockpit"),
+            fact["work_item_id"],
+        )
+
     def test_same_entity_slug_in_two_workflows_retains_distinct_exact_bindings(self) -> None:
         assignments = [
             {

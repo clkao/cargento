@@ -5,9 +5,6 @@ const nextCockpitFocusDrafts = new Map();
 let nextCockpitTerminalScreen = null;
 
 function nextCockpitStableKey(group){
-  const focus = nextCockpitFocusedSession(group);
-  const focusedKey = String(focus && focus.project_key || "");
-  if(focusedKey) return focusedKey;
   const keys = new Set(group.sessions.map(session => String(session.project_key || "")).filter(Boolean));
   return keys.size === 1 ? [...keys][0] : group.label;
 }
@@ -33,12 +30,37 @@ function nextCockpitReadFocus(group){
 }
 
 function nextCockpitFocusedSession(group){
-  const running = group.sessions.filter(session => session.state === "working" && session.active === true);
-  const candidates = running.length ? running : group.sessions;
-  return [...candidates].sort((left, right) =>
-    nextFiniteNumber(right.last_activity) - nextFiniteNumber(left.last_activity) ||
-    sessKey(left).localeCompare(sessKey(right))
-  )[0] || null;
+  if(!nextRoute || nextRoute.view !== "project" || !nextRoute.focus) return null;
+  return group.sessions.find(session => sessKey(session) === nextRoute.focus) || null;
+}
+
+function nextCockpitSessionLabel(session){
+  const harness = nextHarnessLabels().get(String(session.harness || "")) ||
+    String(session.harness || "Session");
+  return `${harness} · ${String(session.sid || "").slice(0, 12)}`;
+}
+
+function nextCockpitSessionResult(session){
+  if(session.state === "working") return session.title || "working";
+  return session.last_output || session.title || session.state || "state unavailable";
+}
+
+function nextCockpitSessionNav(group, focus){
+  const selected = focus ? sessKey(focus) : "all";
+  const link = (key, label, state, result) => {
+    const route = {view:"project", project:group.label, focus:key === "all" ? null : key};
+    return `<a href="${esc(nextFragmentForRoute(route))}" data-next-cockpit-session="${esc(key)}"` +
+      (selected === key ? ` aria-current="page"` : "") + `>` +
+      `<strong>${esc(label)}</strong><span>${esc(state)}</span>` +
+      `<small>${esc(String(result || "").replace(/\s+/g, " ").slice(0, 90))}</small></a>`;
+  };
+  const rows = [...group.sessions].sort((left, right) =>
+    String(left.harness || "").localeCompare(String(right.harness || "")) ||
+    sessKey(left).localeCompare(sessKey(right)));
+  return `<nav class="next-cockpit-session-nav" aria-label="Project sessions">` +
+    link("all", "All sessions", `${rows.length} sessions`, "Project-wide semantic union") +
+    rows.map(session => link(sessKey(session), nextCockpitSessionLabel(session),
+      String(session.state || "unknown"), nextCockpitSessionResult(session))).join("") + `</nav>`;
 }
 
 function nextCockpitContextKey(group, focus){
@@ -102,7 +124,7 @@ function nextCockpitTimeline(group, focus){
   projectContextByLabel[cacheKey] = {state:"ready", data:entry.data, generated:entry.revision};
   const lanes = projectDelegationLanes(focus, {label: nextCockpitStableKey(group)});
   const semantic = entry.data.semantic || {facts:[], work_items:[], projections:{}};
-  const timeline = projectSemanticTimeline(nextData, semantic, lanes, focus)
+  const timeline = projectSemanticTimeline(nextData, semantic, lanes, focus, group.sessions)
     .replaceAll('data-calm="project-graph-mode"', 'data-next-cockpit-action="graph-mode"');
   return '<section class="next-cockpit-semantic" data-next-cockpit-semantic>' +
     '<h2>SEMANTIC TIMELINE</h2>' + timeline + '</section>';
@@ -124,7 +146,8 @@ function nextProjectCockpit(context){
   const focus = nextCockpitFocusedSession(group);
   projectQuerySession = focus ? sessKey(focus) : "";
   lastData = nextData;
-  return nextCockpitFocus(group) + nextCockpitTimeline(group, focus) +
+  return nextCockpitSessionNav(group, focus) + nextCockpitFocus(group) +
+    nextCockpitTimeline(group, focus) +
     nextCockpitTerminal(group, focus);
 }
 
@@ -171,7 +194,7 @@ document.addEventListener("click", event => {
   const key = String(target.dataset.arg || projectQuerySession || "");
   if(action === "graph-mode"){
     event.preventDefault();
-    if(["active", "all"].includes(String(target.dataset.arg || ""))){
+    if(["active", "all", "decisions"].includes(String(target.dataset.arg || ""))){
       projectGraphModeBySession.set(projectQuerySession, String(target.dataset.arg));
       renderNext();
     }

@@ -108,6 +108,12 @@ def backfill_scan_bytes(
 
 
 def _source_identity(fact: Mapping[str, Any]) -> str:
+    source_session = fact.get("source_session")
+    if isinstance(source_session, dict):
+        harness = records.safe_text(source_session.get("harness"), 32)
+        sid = records.safe_text(source_session.get("sid"), 128)
+        if harness and sid:
+            return f"{harness}:{sid}"
     branch = fact.get("branch")
     if isinstance(branch, dict):
         harness = records.safe_text(branch.get("harness"), 32)
@@ -158,6 +164,9 @@ def _event_from_fact(
             "batch_id",
             "workflow_binding",
             "workflow_entity",
+            "source_session",
+            "parent_session",
+            "contributor",
         }
     }
     if isinstance(branch, dict):
@@ -205,6 +214,7 @@ def _final_output_events(sessions: Iterable[Mapping[str, Any]]) -> list[dict[str
                 "confidence": "exact",
             },
             "detail": exact,
+            "source_session": {"harness": harness, "sid": sid},
         }
         found.append(
             {
@@ -266,6 +276,20 @@ def _assignment_events(
                 "confidence": "exact",
             },
         }
+        if observer_sid:
+            fact["source_session"] = {"harness": "codex", "sid": observer_sid}
+            fact["contributor"] = {
+                "harness": "codex",
+                "sid": observer_sid,
+                "label": worker,
+                "verified": True,
+            }
+        parent_session = assignment.get("parent_session")
+        if isinstance(parent_session, dict):
+            parent_harness = records.safe_text(parent_session.get("harness"), 32)
+            parent_sid = records.safe_text(parent_session.get("sid"), 128)
+            if parent_harness and parent_sid:
+                fact["parent_session"] = {"harness": parent_harness, "sid": parent_sid}
         if stage:
             fact["stage"] = stage
         if workflow:

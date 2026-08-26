@@ -1320,8 +1320,8 @@ def _gate_event(
     slug: str,
     workflow: str,
     workflow_binding: str,
-    harness: str,
-    sid: str,
+    _harness: str,
+    _sid: str,
 ) -> dict[str, Any] | None:
     at = records.parse_ts(current.get("at", ""))
     decision = current.get("decision", "")
@@ -1331,7 +1331,7 @@ def _gate_event(
     application = current.get("application", "")
     phase = "gate decision" + (f" · application {application}" if application else "")
     reason = records.safe_text(current.get("reason", ""), config.observer_block_cap_chars)
-    detail = f"{workflow} · {harness}:{sid}"
+    detail = workflow
     if reason:
         detail += f" · {reason}"
     return {
@@ -1341,8 +1341,7 @@ def _gate_event(
         "title": f"{slug} · {stage} · {decision}",
         "detail": detail,
         "source": "Spacedock entity gate frontmatter",
-        "harness": harness,
-        "sid": sid,
+        "scope": "project",
         "workflow": workflow,
         "workflow_binding": workflow_binding,
         "entity": slug,
@@ -1455,6 +1454,37 @@ def _gate_context(
             )
             events.extend(found)
             briefings += prepared
+    return events, briefings
+
+
+def _project_peer_gate_context(
+    config: RuntimeConfig,
+    state: RuntimeState,
+    sessions: Sequence[Mapping[str, Any]],
+    project: str,
+    focus: tuple[str, str] | None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Read only project state from peers; their transcript facts stay excluded."""
+    if focus is None:
+        return [], 0
+    events: list[dict[str, Any]] = []
+    briefings = 0
+    for session in sessions:
+        harness = str(session.get("harness") or "")
+        sid = str(session.get("sid") or "")
+        session_project = str(session.get("project_key") or session.get("project") or "")
+        if (
+            session.get("active") is not True
+            or session_project != project
+            or (harness, sid) == focus
+        ):
+            continue
+        transcript_path = observer.resolve_transcript(config, state, harness, sid)
+        if transcript_path is None:
+            continue
+        found, prepared = _gate_context(config, state, transcript_path, harness, sid)
+        events.extend(found)
+        briefings += prepared
     return events, briefings
 
 
@@ -1602,7 +1632,7 @@ def _semantic_fact_from_event(
         "type": fact_type,
         "source_kind": raw_kind,
         "summary": source_event.get("title"),
-        "scope": "workflow" if raw_kind == "gate" else "session",
+        "scope": "project" if raw_kind == "gate" else "session",
         "actor_claim": _semantic_actor_claim(source_event, raw_kind),
         "work_item_id": work_item_id or None,
         "evidence": {"source": source_event.get("source"), "confidence": "exact"},
@@ -1610,6 +1640,10 @@ def _semantic_fact_from_event(
     for key in ("stage", "decision", "by", "target_stage", "assignment", "worker_kind"):
         if source_event.get(key) not in (None, ""):
             fact[key] = source_event[key]
+    harness = records.safe_text(source_event.get("harness"), 32)
+    sid = records.safe_text(source_event.get("sid"), 128)
+    if raw_kind != "gate" and harness and sid:
+        fact["source_session"] = {"harness": harness, "sid": sid}
     branch = {
         key: source_event[key]
         for key in ("record_id", "parent_id", "turn_id", "branch_id")
@@ -1740,28 +1774,31 @@ def _semantic_observer_facts(observers: list[dict[str, Any]]) -> list[dict[str, 
         goal = observer_row.get("goal")
         if not isinstance(observed_at, (int, float)) or not isinstance(goal, str):
             continue
-        facts.append(
-            {
-                "fact_id": _semantic_id(
-                    "observer",
-                    observer_row.get("harness"),
-                    observer_row.get("sid"),
-                    observed_at,
-                    goal,
-                ),
-                "at": observed_at,
-                "type": "observer_snapshot",
-                "summary": goal,
-                "scope": "session",
-                "actor_claim": "model-derived observer snapshot",
-                "work_item_id": None,
-                "evidence": {
-                    "source": observer_row.get("source"),
-                    "confidence": "derived",
-                    "snapshot_status": observer_row.get("snapshot_status"),
-                },
-            }
-        )
+        fact: dict[str, Any] = {
+            "fact_id": _semantic_id(
+                "observer",
+                observer_row.get("harness"),
+                observer_row.get("sid"),
+                observed_at,
+                goal,
+            ),
+            "at": observed_at,
+            "type": "observer_snapshot",
+            "summary": goal,
+            "scope": "session",
+            "actor_claim": "model-derived observer snapshot",
+            "work_item_id": None,
+            "evidence": {
+                "source": observer_row.get("source"),
+                "confidence": "derived",
+                "snapshot_status": observer_row.get("snapshot_status"),
+            },
+        }
+        harness = records.safe_text(observer_row.get("harness"), 32)
+        sid = records.safe_text(observer_row.get("sid"), 128)
+        if harness and sid:
+            fact["source_session"] = {"harness": harness, "sid": sid}
+        facts.append(fact)
     return facts
 
 
@@ -2409,6 +2446,24 @@ def _merge_semantic_history(
     return semantic
 
 
+def _focused_semantic_history(history: dict[str, Any], focus: tuple[str, str]) -> dict[str, Any]:
+    """Project facts cross session boundaries; transcript facts do not."""
+    focused_events: list[dict[str, Any]] = []
+    wanted = {"harness": focus[0], "sid": focus[1]}
+    for event in history.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        fact = event.get("fact")
+        if not isinstance(fact, dict):
+            continue
+        if fact.get("scope") in {"project", "workflow"}:
+            focused_events.append(event)
+            continue
+        if fact.get("source_session") == wanted or fact.get("parent_session") == wanted:
+            focused_events.append(event)
+    return {**history, "events": focused_events}
+
+
 def _active_child_assignments(
     config: RuntimeConfig,
     state: RuntimeState,
@@ -2421,6 +2476,11 @@ def _active_child_assignments(
     if not isinstance(hierarchy, list):
         return []
     assignments: list[dict[str, Any]] = []
+    parent_harness = records.safe_text(session.get("harness"), 32)
+    parent_sid = records.safe_text(session.get("sid"), 128)
+    parent_session = (
+        {"harness": parent_harness, "sid": parent_sid} if parent_harness and parent_sid else None
+    )
     for raw_child in hierarchy[:MAX_ACTIVE_CHILD_OBSERVERS]:
         if not isinstance(raw_child, dict):
             continue
@@ -2430,6 +2490,7 @@ def _active_child_assignments(
             "depth": child.get("depth"),
             "parent_name": child.get("parent_name"),
             "observer_sid": child.get("observer_sid"),
+            **({"parent_session": parent_session} if parent_session else {}),
         }
         workflow_entity = child.get("workflow_entity")
         workflow_stage = child.get("workflow_stage")
@@ -2604,6 +2665,13 @@ def collect(
         history_events.extend(gate_rows)
         briefings += prepared
 
+    project_gate_rows, prepared = _project_peer_gate_context(
+        config, state, sessions, project, focus
+    )
+    events.extend(project_gate_rows)
+    history_events.extend(project_gate_rows)
+    briefings += prepared
+
     timeline = _dedupe_project_events(events, limit=MAX_PROJECT_EVENTS)
     history_timeline = _dedupe_project_events(history_events)
     gate_count, steer_count, work_count = _timeline_counts(timeline)
@@ -2619,6 +2687,8 @@ def collect(
         now=now,
         source_scans=history_source_scans,
     )
+    if focus is not None:
+        history = _focused_semantic_history(history, focus)
     semantic = _merge_semantic_history(semantic, history, now=now)
     return {
         "project": project,

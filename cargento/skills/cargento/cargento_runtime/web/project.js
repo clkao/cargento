@@ -968,7 +968,7 @@ function projectMeaningfulDirections(intents, factById){
   return selected;
 }
 
-function projectLaneRegistry(model, delegations, focus){
+function projectLaneRegistry(model, delegations, focus, sessionOrigins){
   const projections = model.projections || {};
   const facts = Array.isArray(model.facts) ? model.facts : [];
   const items = Array.isArray(model.work_items) ? model.work_items : [];
@@ -978,8 +978,19 @@ function projectLaneRegistry(model, delegations, focus){
     ? projections.steering_episodes : [];
   const intents = Array.isArray(projections.operator_intents)
     ? projections.operator_intents : [];
-  const focusedKey = focus ? sessKey(focus) : (projectQuerySession || "focused");
-  const foKey = `fo:${focusedKey}`;
+  const factSessionKey = fact => fact && fact.source_session && fact.source_session.harness &&
+    fact.source_session.sid ? `${fact.source_session.harness}:${fact.source_session.sid}` : "";
+  const namedOrigins = Array.isArray(sessionOrigins) && sessionOrigins.length > 0;
+  let origins = Array.isArray(sessionOrigins) ? sessionOrigins : [];
+  if(focus) origins = [focus];
+  if(!origins.length){
+    const keys = [...new Set(facts.map(factSessionKey).filter(Boolean))];
+    origins = keys.map(key => ({harness:key.split(":")[0], sid:key.slice(key.indexOf(":") + 1)}));
+  }
+  if(!origins.length) origins = [{harness:"", sid:projectQuerySession || "focused"}];
+  const originKeys = [...new Set(origins.map(origin => sessKey(origin) || String(origin.sid || "focused")))];
+  const foKeys = originKeys.map(key => `fo:${key}`);
+  const foKey = foKeys[0];
   const itemById = new Map(items.map(item => [item.work_item_id, item]));
   const normalizedItem = item => String(item && item.label || "").toLowerCase()
     .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -1052,7 +1063,7 @@ function projectLaneRegistry(model, delegations, focus){
       addTask(id, node.at, node.kind === "burst" ? 1 : 2)));
   const taskIds = [...relevance].sort((a, b) => b[1].priority - a[1].priority ||
       b[1].at - a[1].at || a[0].localeCompare(b[0])).map(entry => entry[0]);
-  const foEvents = facts.filter(fact => {
+  const allFoEvents = facts.filter(fact => {
     const item = itemById.get(fact.work_item_id);
     if(["final_output", "result"].includes(fact.type) &&
         focus && focus.state === "working") return false;
@@ -1063,9 +1074,18 @@ function projectLaneRegistry(model, delegations, focus){
     Number(b.at) - Number(a.at));
   const episodeByFact = new Map(episodes.map(episode =>
     [intentFactById.get(episode.intent_id), episode]).filter(entry => entry[0]));
-  const foLane = {key:foKey, kind:"fo", label:"First Officer", index:0, events:foEvents,
-    directions:meaningfulDirections, contributors:unboundContributors, item:null, head:null,
-    branch:"none", merge:"none", episodeByFact, factById, suppressedDirections};
+  const foLanes = originKeys.map((originKey, index) => {
+    const matching = fact => factSessionKey(fact) === originKey ||
+      (!factSessionKey(fact) && originKeys.length === 1);
+    const harness = originKey.split(":")[0];
+    const label = namedOrigins ? `${projectTaskTitle(harness || "First Officer")} FO` :
+      "First Officer";
+    return {key:`fo:${originKey}`, kind:"fo", label, index,
+      events:allFoEvents.filter(matching), directions:meaningfulDirections.filter(matching),
+      contributors:index === 0 ? unboundContributors : [], item:null, head:null,
+      branch:"none", merge:"none", episodeByFact, factById,
+      suppressedDirections:suppressedDirections.filter(matching)};
+  });
   const relations = Array.isArray(model.relations) ? model.relations : [];
   const relationEdge = relation => String(relation.confidence || "").includes("derived")
     ? "derived" : "solid";
@@ -1073,9 +1093,9 @@ function projectLaneRegistry(model, delegations, focus){
     const taskKey = `task:${workItemId}`;
     const supported = relation => !String(relation.confidence || "").includes("derived");
     const branchRelations = relations.filter(relation => relation.type === "dispatches_to" &&
-      relation.from === foKey && relation.to === taskKey);
+      foKeys.includes(relation.from) && relation.to === taskKey);
     const mergeRelations = relations.filter(relation => relation.type === "returns_to" &&
-      relation.from === taskKey && relation.to === foKey);
+      relation.from === taskKey && foKeys.includes(relation.to));
     const branches = branchRelations.filter(supported);
     const merges = mergeRelations.filter(supported);
     const strongest = selected => selected.some(relation => relationEdge(relation) === "solid")
@@ -1105,10 +1125,7 @@ function projectLaneRegistry(model, delegations, focus){
     const head = headByItem.get(workItemId) || null;
     const headFact = head && factById.get(head.latest_meaningful_event) || null;
     const working = contributors.length > 0 || taskEvents.some(fact =>
-      fact.current_state === true && fact.evidence && fact.evidence.confidence === "exact") ||
-      Boolean(headFact && headFact.type === "stage_transition" &&
-        headFact.source_kind === "child_assignment" && headFact.evidence &&
-        headFact.evidence.confidence === "exact");
+      fact.current_state === true && fact.evidence && fact.evidence.confidence === "exact");
     const unreturned = topology.dispatchCount > 0 &&
       topology.latestDispatchAt > topology.latestReturnAt;
     const returned = topology.latestReturnAt > 0 && !unreturned;
@@ -1121,9 +1138,9 @@ function projectLaneRegistry(model, delegations, focus){
       retryEvidence:topology.retryEvidence,
       branch:topology.branch, merge:topology.merge};
   });
-  const lanes = [foLane].concat(taskLanes);
+  const lanes = foLanes.concat(taskLanes);
   lanes.forEach((lane, index) => { lane.index = index; });
-  return {foKey, lanes, laneByKey:new Map(lanes.map(lane => [lane.key, lane])),
+  return {foKey, foKeys, lanes, laneByKey:new Map(lanes.map(lane => [lane.key, lane])),
     unboundContributors, omittedTaskCount:Math.max(0, relevance.size - taskLanes.length)};
 }
 
@@ -1286,7 +1303,7 @@ function projectTaskLaneRow(d, registry, lane){
 function projectLaneLegend(registry){
   return `<div class="pc-lane-legend" style="--lane-count:${registry.lanes.length}">` +
     `<span></span><span class="pc-lane-labels">` + registry.lanes.map(lane =>
-      `<span title="${esc(lane.label)}">${esc(lane.kind === "fo" ? "First Officer" :
+      `<span title="${esc(lane.label)}">${esc(lane.kind === "fo" ? lane.label :
         projectTaskTitle(lane.label))}</span>`).join("") +
     `</span></div>`;
 }
@@ -1321,37 +1338,42 @@ function projectGlobalEvents(model, registry, focus){
   const relations = Array.isArray(model.relations) ? model.relations : [];
   const facts = Array.isArray(model.facts) ? model.facts : [];
   const events = [];
-  const foLane = registry.laneByKey.get(registry.foKey);
-  (foLane && foLane.directions || []).forEach((fact, index) => {
-    const episode = foLane.episodeByFact.get(fact.fact_id);
-    events.push({eventId:fact.fact_id, at:Number(fact.at) || 0, kind:"direction",
-      meaning:fact.summary, fact, lane:foLane, branch:"none", merge:"none",
-      rationale:projectDirectionRationale(fact.summary), relations:[],
-      suppressed:index === 0 ? foLane.suppressedDirections : [],
-      causal:episode ? (String(episode.confidence || "").includes("derived")
-        ? "derived" : "solid") : "none"});
-  });
-  const foContext = foLane && foLane.events || [];
+  const foLanes = registry.lanes.filter(lane => lane.kind === "fo");
+  foLanes.forEach(foLane => (foLane.directions || []).forEach((fact, index) => {
+      const episode = foLane.episodeByFact.get(fact.fact_id);
+      events.push({eventId:fact.fact_id, at:Number(fact.at) || 0, kind:"direction",
+        meaning:fact.summary, fact, lane:foLane, branch:"none", merge:"none",
+        rationale:projectDirectionRationale(fact.summary), relations:[],
+        suppressed:index === 0 ? foLane.suppressedDirections : [],
+        causal:episode ? (String(episode.confidence || "").includes("derived")
+          ? "derived" : "solid") : "none"});
+    }));
   /* The current observer snapshot is already named beside the operator-owned
      focus. Only a source-backed change belongs in the event axis; repeating the
      same snapshot here makes one observation look like two events. */
-  const observed = foContext.filter(fact => fact.type === "goal_shift")
-    .sort((a, b) => Number(b.at) - Number(a.at))[0];
-  if(observed) events.push({eventId:observed.fact_id, at:Number(observed.at) || 0,
-    kind:"observed_goal", meaning:observed.summary, fact:observed, lane:foLane,
-    branch:"none", merge:"none", relations:[],
-    rationale:"Changes understanding of the observed goal."});
-  if(focus && focus.state !== "working"){
-    const finalOutput = foContext.find(fact => ["final_output", "result"].includes(fact.type));
-    if(finalOutput) events.push({eventId:finalOutput.fact_id, at:Number(finalOutput.at) || 0,
-      kind:"result", meaning:finalOutput.summary, fact:finalOutput, lane:foLane,
+  foLanes.forEach(foLane => {
+    const observed = foLane.events.filter(fact => fact.type === "goal_shift")
+      .sort((a, b) => Number(b.at) - Number(a.at))[0];
+    if(observed) events.push({eventId:observed.fact_id, at:Number(observed.at) || 0,
+      kind:"observed_goal", meaning:observed.summary, fact:observed, lane:foLane,
       branch:"none", merge:"none", relations:[],
-      rationale:"Changes understanding of an observed outcome."});
-  }
-  const linkedReactionIds = new Set([...(foLane && foLane.episodeByFact.values() || [])]
+      rationale:"Changes understanding of the observed goal."});
+    const finalOutput = foLane.events.find(fact => ["final_output", "result"].includes(fact.type));
+    if(finalOutput && (!focus || focus.state !== "working")){
+      events.push({eventId:finalOutput.fact_id, at:Number(finalOutput.at) || 0,
+        kind:"result", meaning:finalOutput.summary, fact:finalOutput, lane:foLane,
+        branch:"none", merge:"none", relations:[],
+        rationale:"Changes understanding of an observed outcome."});
+    }
+  });
+  const linkedReactionIds = new Set(foLanes.flatMap(foLane =>
+    [...foLane.episodeByFact.values()])
     .map(episode => episode.adaptation_fact));
   facts.filter(fact => linkedReactionIds.has(fact.fact_id) &&
     ["result", "decision", "final_output"].includes(fact.type)).forEach(fact => {
+      const sourceKey = fact.source_session && fact.source_session.harness && fact.source_session.sid
+        ? `fo:${fact.source_session.harness}:${fact.source_session.sid}` : registry.foKey;
+      const foLane = registry.laneByKey.get(sourceKey) || registry.laneByKey.get(registry.foKey);
       if(!events.some(event => event.eventId === fact.fact_id)) events.push({
         eventId:fact.fact_id, at:Number(fact.at) || 0, kind:projectEventKind(fact) || "result",
         meaning:fact.summary, fact, lane:foLane, branch:"none", merge:"none", relations:[],
@@ -1362,12 +1384,14 @@ function projectGlobalEvents(model, registry, focus){
     lane.events.forEach(fact => {
       const kind = projectEventKind(fact);
       if(!kind) return;
+      const sourceFoKey = fact.source_session && fact.source_session.harness && fact.source_session.sid
+        ? `fo:${fact.source_session.harness}:${fact.source_session.sid}` : registry.foKey;
       const branchRelations = kind === "dispatch" ? relations.filter(relation =>
-        relation.type === "dispatches_to" && relation.from === registry.foKey &&
+        relation.type === "dispatches_to" && relation.from === sourceFoKey &&
         relation.to === lane.key && relation.evidence_ref === fact.fact_id) : [];
       const mergeRelations = kind === "result" ? relations.filter(relation =>
         relation.type === "returns_to" && relation.from === lane.key &&
-        relation.to === registry.foKey && relation.evidence_ref === fact.fact_id) : [];
+        relation.to === sourceFoKey && relation.evidence_ref === fact.fact_id) : [];
       const meaning = kind === "progress" && fact.stage ? projectTaskTitle(fact.stage) :
         (kind === "dispatch" ? fact.summary || "Dispatched" :
           fact.summary || projectTaskTitle(kind));
@@ -1392,9 +1416,10 @@ function projectGlobalEvents(model, registry, focus){
 }
 
 function projectVisibleRegistry(registry, mode){
-  const lanes = registry.lanes.filter(lane => lane.kind === "fo" || mode === "all" || lane.current)
+  const lanes = registry.lanes.filter(lane => lane.kind === "fo" || mode === "all" || lane.current ||
+      mode === "decisions" && lane.events.some(fact => projectEventKind(fact) === "decision"))
     .map((lane, index) => Object.assign({}, lane, {index}));
-  return {foKey:registry.foKey, lanes,
+  return {foKey:registry.foKey, foKeys:registry.foKeys, lanes,
     laneByKey:new Map(lanes.map(lane => [lane.key, lane])), unboundContributors:registry.unboundContributors,
     omittedTaskCount:registry.lanes.length - lanes.length};
 }
@@ -1469,6 +1494,41 @@ function projectGlobalEventDetails(event, lane){
     suppressedDetails + `</div>`;
 }
 
+function projectGlobalEventSentence(event, lane){
+  const fact = event.fact || {};
+  const source = fact.source_session || {};
+  const harness = projectTaskTitle(source.harness || "Session");
+  const contributor = fact.contributor && fact.contributor.verified === true
+    ? String(fact.contributor.label || `${harness} worker`) : `${harness} worker`;
+  const object = lane.kind === "task" ? projectTaskTitle(lane.label) : lane.label;
+  let actor = harness + " FO";
+  let action = event.kind;
+  let result = event.meaning || "observed";
+  if(event.kind === "direction"){
+    actor = "You";
+    action = "directed";
+  }else if(event.kind === "decision"){
+    actor = fact.by === "person:captain" ? "You" : String(fact.by || "Decision author");
+    action = ({approve:"approved", revise:"revised", hold:"held"})[fact.decision] ||
+      String(fact.decision || "decided");
+    result = fact.target_stage ? `${fact.stage || "gate"} → ${fact.target_stage}` :
+      (fact.stage || event.meaning || "decision recorded");
+  }else if(event.kind === "dispatch"){
+    const started = ["work_birth", "task_started", "child_assignment"].includes(fact.source_kind);
+    actor = started ? contributor : `${harness} FO`;
+    action = started ? "started" : "dispatched";
+    result = lane.unreturned ? "return not observed" : (fact.stage || "dispatch recorded");
+  }else if(event.kind === "result"){
+    actor = contributor;
+    action = "returned";
+  }else if(event.kind === "progress"){
+    actor = fact.source_session ? `${harness} worker` : "Project state";
+    action = "advanced";
+    result = fact.stage || event.meaning || "progress recorded";
+  }
+  return {actor, action, object, result};
+}
+
 function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){
   const lane = registry.laneByKey.get(event.lane.key);
   const fact = event.fact || {};
@@ -1492,11 +1552,15 @@ function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){
   const title = lane.kind === "fo" ? "First Officer" : projectTaskTitle(lane.label);
   const source = lane.kind === "task" && first ? projectTaskSource(lane, fact) :
     {binding:"", html:""};
+  const sentence = projectGlobalEventSentence(event, lane);
   const visible = `<div class="pc-trail-summary"><div class="pc-trail-top">` +
     (first ? `<strong class="pc-lane-title">${esc(title)}</strong>` :
       `<span class="pc-event-kind">${esc(projectTaskTitle(event.kind))}</span>`) +
     (first ? `<span>${esc(meta)}</span>` : "") +
-    `</div><div class="pc-trail-result">${esc(event.meaning)}</div>` +
+    `</div><div class="pc-trail-result" data-actor="${esc(sentence.actor)}"` +
+    ` data-action="${esc(sentence.action)}" data-object="${esc(sentence.object)}"` +
+    ` data-result="${esc(sentence.result)}"><strong>${esc(sentence.actor)}</strong> ` +
+    `${esc(sentence.action)} ${esc(sentence.object)} · ${esc(sentence.result)}</div>` +
     (secondary ? `<div class="pc-trail-quiet">${esc(secondary)}</div>` : "") +
     (attempts ? `<div class="pc-trail-quiet" data-dispatch-count="${dispatchCount}">${esc(attempts)}</div>` : "") +
     `</div>`;
@@ -1530,11 +1594,12 @@ function projectUnboundContext(registry){
     "pc-trail-history pc-fo-context") + `</div>`;
 }
 
-function projectSemanticTimeline(d, model, workflowLanes, focus){
-  const fullRegistry = projectLaneRegistry(model, workflowLanes, focus);
+function projectSemanticTimeline(d, model, workflowLanes, focus, sessionOrigins){
+  const fullRegistry = projectLaneRegistry(model, workflowLanes, focus, sessionOrigins);
   const mode = projectGraphModeBySession.get(String(projectQuerySession || "")) || "active";
   const registry = projectVisibleRegistry(fullRegistry, mode);
   const events = projectGlobalEvents(model, fullRegistry, focus)
+    .filter(event => mode !== "decisions" || event.kind === "decision")
     .filter(event => registry.laneByKey.has(event.lane.key));
   const flows = projectEventFlows(events);
   const firstByLane = new Set();
@@ -1555,9 +1620,10 @@ function projectSemanticTimeline(d, model, workflowLanes, focus){
     `Earlier meaningful · ${earlierRows.length}`, earlierRows.join(""),
     "pc-history-band", ` data-activity-band="earlier-meaningful"`) : "";
   const controls = `<div class="pc-graph-filter" role="group" aria-label="Work activity filter">` +
-    ["active", "all"].map(value => `<button type="button" data-calm="project-graph-mode"` +
+    ["active", "all", "decisions"].map(value => `<button type="button" data-calm="project-graph-mode"` +
       ` data-arg="${value}" class="${mode === value ? "selected" : ""}"` +
-      ` aria-pressed="${mode === value}">${value === "active" ? "Active" : "All"}</button>`).join("") +
+      ` aria-pressed="${mode === value}">${value === "active" ? "Active" :
+        (value === "all" ? "All" : "Decisions")}</button>`).join("") +
     `</div>`;
   return `<section class="pc-semantic-timeline" data-order="newest-first" data-model="fact-projection"` +
     ` data-graph-layout="fo-task-lanes" data-graph-mode="${mode}">${controls}` +

@@ -23,6 +23,11 @@ function nextRouteFromFragment(fragment){
     const project = nextDecodeRoutePart(parts[1]);
     if(project) return {view: "project", project, session: null};
   }
+  if(parts.length === 3 && parts[0] === "project"){
+    const project = nextDecodeRoutePart(parts[1]);
+    const focus = nextDecodeRoutePart(parts[2]);
+    if(project && focus) return {view: "project", project, session: null, focus};
+  }
   if(parts.length === 3 && parts[0] === "session"){
     const project = nextDecodeRoutePart(parts[1]);
     const session = nextDecodeRoutePart(parts[2]);
@@ -36,7 +41,8 @@ function nextFragmentForRoute(route){
     return `#n=session:${encodeURIComponent(route.project)}:${encodeURIComponent(route.session)}`;
   }
   if(route && route.view === "project" && route.project){
-    return `#n=project:${encodeURIComponent(route.project)}`;
+    return `#n=project:${encodeURIComponent(route.project)}` +
+      (route.focus ? `:${encodeURIComponent(route.focus)}` : "");
   }
   return "#n=overview";
 }
