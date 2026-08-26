@@ -8,7 +8,7 @@
 const PROJECT_COCKPIT_KEY = "cargento.projectCockpitProject";
 const PROJECT_GOAL_PREFIX = "cargento.projectGoal.v1:";
 const PROJECT_USAGE_KEY = "cargento.projectUsage.v1";
-const PROJECT_VISIBLE_TASK_LANES = 3;
+const PROJECT_PRIMARY_DIRECTIONS = 4;
 let projectCockpitLabel = null;
 let projectQueryLabel = null;
 let projectQuerySession = null;
@@ -20,6 +20,7 @@ const projectContextRequests = {};
 let projectContextRequestSequence = 0;
 const projectDisclosureOpenBySession = new Map();
 const projectDisclosurePendingBySession = new Set();
+const projectGraphModeBySession = new Map();
 let projectUsageCounts = null;
 let projectTabOrder = null;
 let projectOpenedKey = null;
@@ -348,6 +349,11 @@ function projectGoalAction(act, label){
 }
 
 function projectAction(act, arg){
+  if(act === "project-graph-mode"){
+    projectGraphModeBySession.set(String(projectQuerySession || ""), arg === "all" ? "all" : "active");
+    if(lastData) render(lastData);
+    return true;
+  }
   if(act === "project-terminal-open"){
     projectTerminalOpenKey = String(arg || "");
     projectTerminalDispose();
@@ -977,6 +983,13 @@ function projectLaneRegistry(model, delegations, focus){
   };
   contributorByTask.forEach((rows, workItemId) =>
     addTask(workItemId, Math.max(...rows.map(row => Number(row.at) || 0)), 3));
+  /* Active filters these later. The complete registry must retain every
+     source-backed head so All can restore an inactive or unresolved lane
+     without inventing a new key at filter time. */
+  heads.forEach(head => {
+    const fact = factById.get(head.latest_meaningful_event);
+    addTask(head.work_item_id, fact && fact.at, 1);
+  });
   let nodes = Array.isArray(activity.nodes) ? activity.nodes : [];
   if(!nodes.length && !Object.prototype.hasOwnProperty.call(activity, "nodes")){
     nodes = heads.filter(head => ["prepared", "outcome", "decision"].includes(head.status))
@@ -987,8 +1000,7 @@ function projectLaneRegistry(model, delegations, focus){
     .forEach(node => (node.work_item_ids || []).forEach(id =>
       addTask(id, node.at, node.kind === "burst" ? 1 : 2)));
   const taskIds = [...relevance].sort((a, b) => b[1].priority - a[1].priority ||
-      b[1].at - a[1].at || a[0].localeCompare(b[0]))
-    .slice(0, PROJECT_VISIBLE_TASK_LANES).map(entry => entry[0]);
+      b[1].at - a[1].at || a[0].localeCompare(b[0])).map(entry => entry[0]);
   const foEvents = facts.filter(fact => {
     const item = itemById.get(fact.work_item_id);
     if(["final_output", "result"].includes(fact.type) &&
@@ -1060,9 +1072,12 @@ function projectLaneRegistry(model, delegations, focus){
     unboundContributors, omittedTaskCount:Math.max(0, relevance.size - taskLanes.length)};
 }
 
-function projectLaneRails(registry, activeLane, kind, tip, hasEvent){
-  return registry.lanes.map(lane => `<span class="pc-rail-cell${lane.key === activeLane.key ? " active" : ""}"` +
-    ` data-rail-key="${esc(lane.key)}">` +
+function projectLaneRails(registry, activeLane, kind, tip, hasEvent, flows){
+  return registry.lanes.map(lane => `<span class="pc-rail-cell` +
+    `${lane.key === activeLane.key ? " active" : ""}` +
+    `${flows.has(lane.key) ? ` flow-${flows.get(lane.key)}` : ""}"` +
+    ` data-rail-key="${esc(lane.key)}"` +
+    (flows.has(lane.key) ? ` data-flow-key="${esc(lane.key)}"` : "") + `>` +
     (hasEvent && lane.key === activeLane.key ? `<span class="pc-graph-mark ${esc(kind)}"` +
       (tip ? ` title="${esc(tip)}"` : "") + `></span>` : "") + `</span>`).join("");
 }
@@ -1070,12 +1085,14 @@ function projectLaneRails(registry, activeLane, kind, tip, hasEvent){
 function projectGraphRow(d, at, kind, registry, lane, body, attributes, tip, connectsNext){
   const age = at ? fmtDur(Math.max(0, Number(d.generated) - Number(at))) + " ago" : "";
   const style = `--lane-count:${registry.lanes.length};--lane-index:${lane.index}`;
+  const flows = connectsNext instanceof Map ? connectsNext :
+    (connectsNext ? new Map([[lane.key, "out"]]) : new Map());
   return `<article class="pc-graph-row ${esc(kind)}" data-graph-node="${esc(kind)}"` +
     ` data-lane-key="${esc(lane.key)}" style="${style}"` +
-    (connectsNext ? ` data-lane-connect="next"` : "") +
+    (flows.size ? ` data-lane-connect="next"` : "") +
     (attributes ? ` ${attributes}` : "") + `>` +
     `<time>${esc(age)}</time><span class="pc-graph-rail">` +
-    projectLaneRails(registry, lane, kind, tip, Boolean(at)) +
+    projectLaneRails(registry, lane, kind, tip, Boolean(at), flows) +
     `</span><div class="pc-trail-body">${body}</div></article>`;
 }
 
@@ -1116,8 +1133,10 @@ function projectFoLaneRows(d, registry, lane, focus){
     const reaction = episode && lane.factById.get(episode.adaptation_fact);
     const edge = episode && String(episode.confidence || "").includes("derived")
       ? "derived" : (episode ? "solid" : "none");
-    const body = `<div class="pc-trail-top"><strong class="pc-lane-title">First Officer</strong>` +
-      `<span>Direction</span></div><div class="pc-trail-result">${esc(direction.summary)}</div>` +
+    const body = `<div class="pc-trail-top">` + (index === 0
+      ? `<strong class="pc-lane-title">First Officer</strong><span>Direction</span>`
+      : `<span class="pc-event-kind">Direction</span>`) +
+      `</div><div class="pc-trail-result">${esc(direction.summary)}</div>` +
       (reaction ? `<div class="pc-trail-quiet">${esc(reaction.summary || "Linked reaction")}</div>` : "") +
       projectFactEvidence(direction, `fo-direction:${direction.fact_id}`) +
       (index === 0 ? `${projectFoContext(lane)}${contributors}` : "");
@@ -1228,28 +1247,208 @@ function projectHistorySpan(events){
   return `${Math.max(1, Math.floor(seconds))}s observed span`;
 }
 
+function projectEventKind(fact){
+  if(["prepared_dispatch", "assignment", "work_birth"].includes(fact.type)) return "dispatch";
+  if(["work_result", "result", "final_output"].includes(fact.type)) return "result";
+  if(["decision", "gate_decision"].includes(fact.type)) return "decision";
+  if(["observer_snapshot", "goal_shift"].includes(fact.type)) return "observed_goal";
+  if(["stage_transition", "checkpoint", "progress_head"].includes(fact.type)) return "progress";
+  return "";
+}
+
+function projectRelationEdge(relations){
+  if(!relations.length) return "none";
+  return relations.some(relation => !String(relation.confidence || "").includes("derived"))
+    ? "solid" : "none";
+}
+
+function projectGlobalEvents(model, registry, focus){
+  const relations = Array.isArray(model.relations) ? model.relations : [];
+  const events = [];
+  const foLane = registry.laneByKey.get(registry.foKey);
+  (foLane && foLane.directions || []).forEach(fact => {
+    const episode = foLane.episodeByFact.get(fact.fact_id);
+    events.push({eventId:fact.fact_id, at:Number(fact.at) || 0, kind:"direction",
+      meaning:fact.summary, fact, lane:foLane, branch:"none", merge:"none",
+      causal:episode ? (String(episode.confidence || "").includes("derived")
+        ? "derived" : "solid") : "none"});
+  });
+  const foContext = foLane && foLane.events || [];
+  /* The current observer snapshot is already named beside the operator-owned
+     focus. Only a source-backed change belongs in the event axis; repeating the
+     same snapshot here makes one observation look like two events. */
+  const observed = foContext.filter(fact => fact.type === "goal_shift")
+    .sort((a, b) => Number(b.at) - Number(a.at))[0];
+  if(observed) events.push({eventId:observed.fact_id, at:Number(observed.at) || 0,
+    kind:"observed_goal", meaning:observed.summary, fact:observed, lane:foLane,
+    branch:"none", merge:"none"});
+  if(focus && focus.state !== "working"){
+    const finalOutput = foContext.find(fact => ["final_output", "result"].includes(fact.type));
+    if(finalOutput) events.push({eventId:finalOutput.fact_id, at:Number(finalOutput.at) || 0,
+      kind:"result", meaning:finalOutput.summary, fact:finalOutput, lane:foLane,
+      branch:"none", merge:"none"});
+  }
+  const linkedReactionIds = new Set([...(foLane && foLane.episodeByFact.values() || [])]
+    .map(episode => episode.adaptation_fact));
+  foContext.filter(fact => linkedReactionIds.has(fact.fact_id) &&
+    ["result", "decision", "final_output"].includes(fact.type)).forEach(fact => {
+      if(!events.some(event => event.eventId === fact.fact_id)) events.push({
+        eventId:fact.fact_id, at:Number(fact.at) || 0, kind:projectEventKind(fact) || "result",
+        meaning:fact.summary, fact, lane:foLane, branch:"none", merge:"none"
+      });
+    });
+  registry.lanes.filter(lane => lane.kind === "task").forEach(lane => {
+    lane.events.forEach(fact => {
+      const kind = projectEventKind(fact);
+      if(!kind) return;
+      const branchRelations = kind === "dispatch" ? relations.filter(relation =>
+        relation.type === "dispatches_to" && relation.from === registry.foKey &&
+        relation.to === lane.key && relation.evidence_ref === fact.fact_id) : [];
+      const mergeRelations = kind === "result" ? relations.filter(relation =>
+        relation.type === "returns_to" && relation.from === lane.key &&
+        relation.to === registry.foKey && relation.evidence_ref === fact.fact_id) : [];
+      const meaning = kind === "progress" && fact.stage ? projectTaskTitle(fact.stage) :
+        (kind === "dispatch" ? fact.summary || "Dispatched" :
+          fact.summary || projectTaskTitle(kind));
+      events.push({eventId:fact.fact_id, at:Number(fact.at) || 0, kind, meaning, fact, lane,
+        branch:projectRelationEdge(branchRelations), merge:projectRelationEdge(mergeRelations)});
+    });
+  });
+  return events.sort((a, b) => b.at - a.at || a.eventId.localeCompare(b.eventId));
+}
+
+function projectVisibleRegistry(registry, mode){
+  const lanes = registry.lanes.filter(lane => lane.kind === "fo" || mode === "all" || lane.current)
+    .map((lane, index) => Object.assign({}, lane, {index}));
+  return {foKey:registry.foKey, lanes,
+    laneByKey:new Map(lanes.map(lane => [lane.key, lane])), unboundContributors:registry.unboundContributors,
+    omittedTaskCount:registry.lanes.length - lanes.length};
+}
+
+function projectEventFlows(events){
+  const flows = events.map(() => new Map());
+  const byLane = new Map();
+  events.forEach((event, index) => {
+    if(!byLane.has(event.lane.key)) byLane.set(event.lane.key, []);
+    byLane.get(event.lane.key).push(index);
+  });
+  byLane.forEach((indices, laneKey) => indices.slice(0, -1).forEach((start, offset) => {
+    const end = indices[offset + 1];
+    for(let index = start; index <= end; index++){
+      const next = index === start ? "out" : (index === end ? "in" : "through");
+      flows[index].set(laneKey, flows[index].has(laneKey) ? "through" : next);
+    }
+  }));
+  return flows;
+}
+
+function projectTaskSource(lane, fact){
+  const bindings = Array.isArray(lane.item.source_bindings) && lane.item.source_bindings.length
+    ? lane.item.source_bindings : (fact.workflow_binding ? [{source:"task state",
+      value:`${fact.workflow_binding}:${fact.workflow_entity || ""}`}] : []);
+  if(!bindings.length) return {binding:"", html:""};
+  const binding = fact.workflow_binding || String(bindings[0].value || "").split(":")[0];
+  const body = bindings.map(row => {
+    const workflow = String(row.value || "").split(":")[0].split("/").filter(Boolean).pop();
+    return `${esc(row.source || "task source")}` +
+      (workflow ? ` · workflow ${esc(workflow)}` : "") + ` · <code>${esc(row.value)}</code>`;
+  }).join("<br>");
+  return {binding, html:projectDisclosure(`task-source:${lane.workItemId}`, "source",
+    body, "pc-trail-history")};
+}
+
+function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){
+  const lane = registry.laneByKey.get(event.lane.key);
+  const fact = event.fact || {};
+  const first = !firstByLane.has(lane.key);
+  firstByLane.add(lane.key);
+  const stage = fact.stage || (first && lane.head && lane.head.stage) || "";
+  let meta = projectTaskTitle(event.kind);
+  let secondary = "";
+  if(lane.kind === "task" && first){
+    const workers = lane.contributors.map(row => row.worker).filter(Boolean).join(" · ");
+    meta = lane.working ? ["Working", stage].filter(Boolean).join(" · ") :
+      (lane.unreturned ? "Unresolved" : projectTaskTitle(event.kind));
+    secondary = lane.working ? workers :
+      (lane.unreturned ? "No active worker · no return observed" : "");
+  }
+  const dispatchCount = lane.kind === "task" && first ? Number(lane.dispatchCount) || 0 : 0;
+  const retryCount = Math.max(0, dispatchCount - 1);
+  const attempts = dispatchCount === 1 ? "1 dispatch" : (dispatchCount > 1
+    ? `${dispatchCount} dispatches` + (lane.retryEvidence ? ` · ${retryCount} ` +
+      `${retryCount === 1 ? "retry" : "retries"}` : "") : "");
+  const title = lane.kind === "fo" ? "First Officer" : projectTaskTitle(lane.label);
+  const source = lane.kind === "task" && first ? projectTaskSource(lane, fact) :
+    {binding:"", html:""};
+  const body = `<div class="pc-trail-top">` +
+    (first ? `<strong class="pc-lane-title">${esc(title)}</strong>` :
+      `<span class="pc-event-kind">${esc(projectTaskTitle(event.kind))}</span>`) +
+    (first ? `<span>${esc(meta)}</span>` : "") +
+    `</div><div class="pc-trail-result">${esc(event.meaning)}</div>` +
+    (secondary ? `<div class="pc-trail-quiet">${esc(secondary)}</div>` : "") +
+    (attempts ? `<div class="pc-trail-quiet" data-dispatch-count="${dispatchCount}">${esc(attempts)}</div>` : "") +
+    projectFactEvidence(fact, `semantic-event:${event.eventId}`) + source.html;
+  const attributes = `data-event-id="${esc(event.eventId)}" data-semantic-kind="${esc(event.kind)}"` +
+    (lane.kind === "fo" ? (event.kind === "direction"
+      ? ` data-steering-state="${event.causal && event.causal !== "none" ? "paired" : "unpaired"}"` +
+        ` data-causal-edge="${esc(event.causal || "none")}"` : "") :
+      ` data-assignment-lane="${first ? "task-head" : "task-event"}"` +
+      ` data-work-item="${esc(lane.workItemId)}" data-task-current="${lane.current ? "true" : "false"}"` +
+      (first ? ` data-trail-head="${esc(lane.head && lane.head.status || "latest")}"` : "") +
+      ` data-branch-edge="${esc(event.branch)}" data-merge-edge="${esc(event.merge)}"` +
+      (stage ? ` data-work-stage="${esc(stage)}"` : "") +
+      (source.binding ? ` data-workflow-binding="${esc(source.binding)}"` : ""));
+  return projectGraphRow(d, event.at, event.kind === "direction" ? "steering" : "event",
+    registry, lane, body, attributes, event.meaning, flowKeys);
+}
+
+function projectUnboundContext(registry){
+  if(!registry.unboundContributors.length) return "";
+  return `<div class="pc-unbound-context"><div class="pc-trail-top">` +
+    `<strong class="pc-lane-title">First Officer</strong><span>Context</span></div>` +
+    projectDisclosure("fo-contributors",
+    `${registry.unboundContributors.length} unbound contributor` +
+      `${registry.unboundContributors.length === 1 ? "" : "s"}`,
+    registry.unboundContributors.map((row, index) => `<div class="pc-trail-event">` +
+      `<strong>${esc(row.assignment)}</strong><span>${esc(row.worker)}</span>` +
+      projectDisclosure(`fo-contributor:${row.observerSid || row.worker || index}`, "evidence",
+        `<div>${esc(row.source)}</div>`, "pc-event-evidence") + `</div>`).join(""),
+    "pc-trail-history pc-fo-context") + `</div>`;
+}
+
 function projectSemanticTimeline(d, model, workflowLanes, focus){
-  const registry = projectLaneRegistry(model, workflowLanes, focus);
-  const foLane = registry.lanes.find(lane => lane.kind === "fo");
-  const taskRows = registry.lanes.filter(lane => lane.kind === "task").map(lane => ({lane,
-    at:Number(lane.headFact && lane.headFact.at) || Number(lane.events[0] && lane.events[0].at) || 0,
-    html:projectTaskLaneRow(d, registry, lane)}));
-  const currentRows = taskRows.filter(row => row.lane.current)
-    .sort((a, b) => b.at - a.at);
-  const historyRows = taskRows.filter(row => !row.lane.current)
-    .sort((a, b) => b.at - a.at);
-  const fo = foLane ? projectFoLaneRows(d, registry, foLane, focus) : "";
-  const omitted = registry.omittedTaskCount ? projectDisclosure("folded-task-lanes",
-    `${registry.omittedTaskCount} task lane${registry.omittedTaskCount === 1 ? "" : "s"} folded`,
-    "Older task evidence remains under Evidence / limits.", "pc-semantic-overflow") : "";
-  const current = `<section class="pc-activity-band" data-activity-band="current">` +
-    `<h4>Current</h4>${fo}${currentRows.map(row => row.html).join("")}</section>`;
-  const history = historyRows.length ? projectDisclosure("past-work",
-    `Past work · ${historyRows.length}`, historyRows.map(row => row.html).join(""),
-    "pc-history-band", ` data-activity-band="past-work"`) : "";
+  const fullRegistry = projectLaneRegistry(model, workflowLanes, focus);
+  const mode = projectGraphModeBySession.get(String(projectQuerySession || "")) || "active";
+  const registry = projectVisibleRegistry(fullRegistry, mode);
+  const events = projectGlobalEvents(model, fullRegistry, focus)
+    .filter(event => registry.laneByKey.has(event.lane.key));
+  const flows = projectEventFlows(events);
+  const firstByLane = new Set();
+  const rows = events.map((event, index) =>
+    projectGlobalEventRow(d, registry, event, flows[index], firstByLane));
+  let splitAt = rows.length;
+  let directionCount = 0;
+  events.forEach((event, index) => {
+    if(event.kind !== "direction") return;
+    directionCount++;
+    if(directionCount === PROJECT_PRIMARY_DIRECTIONS + 1 && splitAt === rows.length){
+      splitAt = index;
+    }
+  });
+  const primary = rows.slice(0, splitAt).join("");
+  const earlierRows = rows.slice(splitAt);
+  const earlier = earlierRows.length ? projectDisclosure("earlier-meaningful-events",
+    `Earlier meaningful · ${earlierRows.length}`, earlierRows.join(""),
+    "pc-history-band", ` data-activity-band="earlier-meaningful"`) : "";
+  const controls = `<div class="pc-graph-filter" role="group" aria-label="Work activity filter">` +
+    ["active", "all"].map(value => `<button type="button" data-calm="project-graph-mode"` +
+      ` data-arg="${value}" class="${mode === value ? "selected" : ""}"` +
+      ` aria-pressed="${mode === value}">${value === "active" ? "Active" : "All"}</button>`).join("") +
+    `</div>`;
   return `<section class="pc-semantic-timeline" data-order="newest-first" data-model="fact-projection"` +
-    ` data-graph-layout="fo-task-lanes">${projectLaneLegend(registry)}${current}${history}` +
-    omitted + `</section>`;
+    ` data-graph-layout="fo-task-lanes" data-graph-mode="${mode}">${controls}` +
+    `${projectLaneLegend(registry)}${primary}${earlier}` +
+    `${projectUnboundContext(registry)}</section>`;
 }
 function projectSemanticEvidence(group){
   const entry = projectContextEntry(group.label);

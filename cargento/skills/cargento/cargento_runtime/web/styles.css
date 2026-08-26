@@ -756,10 +756,17 @@
   .pc-lane-labels span{padding:1px 6px;border-left:2px solid var(--line2);font-weight:650;white-space:normal}
   .pc-graph-row{display:grid;grid-template-columns:42px calc(var(--lane-count) * 44px) minmax(0,1fr);align-items:start;min-height:48px}
   .pc-graph-row>time{padding-top:8px;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--ink3);text-align:right}
+  .pc-graph-filter{display:flex;justify-content:flex-end;gap:2px;margin-bottom:5px}
+  .pc-graph-filter button{border:0;border-bottom:2px solid transparent;padding:3px 6px;background:transparent;color:var(--ink3);font:var(--fs-2xs) var(--mono);cursor:pointer}
+  .pc-graph-filter button.selected{border-bottom-color:var(--accent-ink);color:var(--ink);font-weight:700}
+  .pc-graph-filter button:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,transparent)}
   .pc-graph-rail{position:relative;align-self:stretch;display:grid;grid-template-columns:repeat(var(--lane-count),minmax(0,1fr));min-height:48px}
   .pc-rail-cell{position:relative}
   .pc-graph-mark{position:absolute;z-index:1;left:calc(50% - 5px);top:9px;width:9px;height:9px;border-radius:50%;background:var(--panel);border:2px solid var(--ink2);box-shadow:0 0 0 3px var(--panel)}
-  .pc-graph-row[data-lane-connect="next"] .pc-rail-cell.active::after{content:"";position:absolute;left:50%;top:18px;bottom:-9px;border-left:1px solid var(--line2)}
+  .pc-rail-cell.flow-in::before,.pc-rail-cell.flow-out::after,.pc-rail-cell.flow-through::before{content:"";position:absolute;left:50%;border-left:1px solid var(--line2)}
+  .pc-rail-cell.flow-in::before{top:0;height:13px}
+  .pc-rail-cell.flow-out::after{top:18px;bottom:0}
+  .pc-rail-cell.flow-through::before{top:0;bottom:0}
   .pc-graph-mark.burst{left:calc(var(--lane-x) - 5px);top:10px;width:11px;height:7px;border-radius:2px;background:var(--ink3);border:0}
   .pc-graph-mark.steering{left:calc(50% - 4px);top:10px;width:7px;height:7px;border-radius:1px;background:var(--accent-ink);border:0;transform:rotate(45deg)}
   .pc-graph-row[data-branch-edge="solid"] .pc-graph-rail::after,.pc-graph-row[data-branch-edge="derived"] .pc-graph-rail::after,.pc-graph-row[data-merge-edge="solid"] .pc-graph-rail::before,.pc-graph-row[data-merge-edge="derived"] .pc-graph-rail::before{content:"";position:absolute;left:calc((100% / var(--lane-count)) / 2);width:calc((100% / var(--lane-count)) * var(--lane-index));border-top:1px solid var(--accent-ink)}

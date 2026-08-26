@@ -341,8 +341,8 @@ const h = __els.app.innerHTML;
 console.log(JSON.stringify({
   operator: h.includes("<b>Focus</b> — Operator-owned goal"),
   observed: h.includes("Derived session goal"),
-  scoped: h.includes("Observed goal") && h.includes("cached observer snapshot") &&
-    h.includes('data-semantic-kind="observed_goal"'),
+  scoped: h.includes("Observed goal · stale") &&
+    !h.includes('data-semantic-kind="observed_goal"'),
   separate: h.indexOf("<b>Focus</b>") < h.indexOf("Observed goal · stale</b> — Derived session goal"),
   noOverwrite: h.includes("Browser focus is operator-authored"),
   once: h.split("Derived session goal").length - 1 === 1 &&
@@ -1063,6 +1063,7 @@ for(const sid of ["focus-1", "focus-2"]){
     data:{observers:[], events:[], semantic:semantic(sid),
       sources:{gate:{}, steer:{unavailable:[]}, work:{}, observer:{}}}};
 }
+projectGraphModeBySession.set("codex:focus-1", "all");
 const d = payload([
   mk({project:"repo/proj", harness:"codex", sid:"focus-1", state:"idle", active:true,
     last_output:"First result", last_activity:99999}),
@@ -1076,28 +1077,28 @@ const detail = (control, open) => ({open, getAttribute(name){
   return name === "data-pc-disclosure" ? control : null;
 }});
 const last = detail("last-output", true);
-const past = detail("past-work", true);
+const eventEvidence = detail("fact:semantic-event:dispatch-focus-1:dispatch-focus-1", true);
 const evidence = detail("evidence-limits", true);
-__els.app.querySelectorAll = () => [last, past, evidence];
+__els.app.querySelectorAll = () => [last, eventEvidence, evidence];
 render(Object.assign({}, d, {generated:100001}));
 const firstOpen = __els.app.innerHTML.includes('class="pc-last-output" open') &&
-  __els.app.innerHTML.includes('class="pc-history-band" open') &&
+  __els.app.innerHTML.includes('class="pc-event-evidence" open') &&
   __els.app.innerHTML.includes('class="pc-sources" open');
-past.open = false;
+eventEvidence.open = false;
 render(Object.assign({}, d, {generated:100002}));
 const explicitClose = __els.app.innerHTML.includes('class="pc-last-output" open') &&
-  !__els.app.innerHTML.includes('class="pc-history-band" open') &&
+  !__els.app.innerHTML.includes('class="pc-event-evidence" open') &&
   __els.app.innerHTML.includes('class="pc-sources" open');
 __els.app.querySelectorAll = () => [];
 projectQuerySession = "codex:focus-2";
 render(Object.assign({}, d, {generated:100003}));
 const secondClosed = !__els.app.innerHTML.includes('class="pc-last-output" open') &&
-  !__els.app.innerHTML.includes('class="pc-history-band" open') &&
+  !__els.app.innerHTML.includes('class="pc-event-evidence" open') &&
   !__els.app.innerHTML.includes('class="pc-sources" open');
 projectQuerySession = "codex:focus-1";
 render(Object.assign({}, d, {generated:100004}));
 const firstRestored = __els.app.innerHTML.includes('class="pc-last-output" open') &&
-  !__els.app.innerHTML.includes('class="pc-history-band" open') &&
+  !__els.app.innerHTML.includes('class="pc-event-evidence" open') &&
   __els.app.innerHTML.includes('class="pc-sources" open');
 console.log(JSON.stringify({firstOpen, explicitClose, secondClosed, firstRestored}));
 """
@@ -1124,10 +1125,24 @@ Object.defineProperty(__els.app, "innerHTML", {configurable:true,
   get(){ return rendered; },
   set(value){
     rendered = String(value);
-    details = [...rendered.matchAll(/<details([^>]*)>/g)].map(match => ({
-      tagName:"DETAILS", open:/(?:^|\\s)open(?:\\s|$)/.test(match[1]),
-      getAttribute(name){ return attr(match[1], name); }
-    }));
+    details = [];
+    const stack = [];
+    for(const match of rendered.matchAll(/<details([^>]*)>|<\\/details>|<summary[^>]*>/g)){
+      if(match[0].startsWith("</details")){ stack.pop(); continue; }
+      if(match[0].startsWith("<summary")){
+        const parent = stack[stack.length - 1];
+        if(parent) parent.summary = {parentElement:parent,
+          closest(selector){ return selector === "summary" ? this : null; }};
+        continue;
+      }
+      const source = match[1];
+      const parent = stack[stack.length - 1] || null;
+      const node = {tagName:"DETAILS", parentElement:parent, depth:stack.length,
+        open:/(?:^|\\s)open(?:\\s|$)/.test(source),
+        getAttribute(name){ return attr(source, name); }};
+      details.push(node);
+      stack.push(node);
+    }
   }
 });
 __els.app.querySelectorAll = selector => selector === "details[data-pc-disclosure]"
@@ -1145,25 +1160,32 @@ const context = {observers:[], events:[], semantic:{facts:[
     evidence_ref:"dispatch", confidence:"exact"},
   {type:"returns_to", from:`task:${task}`, to:"fo:codex:focus-1",
     evidence_ref:"result", confidence:"exact"}
-], history:{event_count:2, persisted:true, events:[]}, projections:{operator_intents:[],
+], history:{event_count:2, persisted:true, events:[
+  {event_id:"history-dispatch", event_type:"assignment", at:99990,
+    source_ref:"dispatch", source_identity:"codex:focus-1", work_binding:task,
+    summary:"Dispatch task"},
+  {event_id:"history-result", event_type:"result", at:99991,
+    source_ref:"result", source_identity:"codex:focus-1", work_binding:task,
+    summary:"Task returned"}
+]}, projections:{operator_intents:[],
   steering_episodes:[], trail_heads:[{work_item_id:task, status:"outcome",
     latest_meaningful_event:"result", dispatch_count:1}],
   activity:{nodes:[{kind:"work", at:99991, work_item_ids:[task]}]}}},
   sources:{gate:{}, steer:{unavailable:[]}, work:{}, observer:{}}};
 projectContextByLabel[projectContextKey("repo/proj")] = {
   state:"ready", generated:100000, dashboard_revision:100000, data:context};
+projectGraphModeBySession.set("codex:focus-1", "all");
 const d = payload([mk({project:"repo/proj", harness:"codex", sid:"focus-1",
   state:"idle", active:true, last_activity:99999})]);
 Object.assign(d, {ask:true, asks:[]});
 render(d);
-const before = details.find(row => row.getAttribute("data-pc-disclosure") === "past-work");
+const before = details.find(row =>
+  row.getAttribute("data-pc-disclosure") === "semantic-source-history");
 usageCfgOpen = true;
-const summary = {parentElement:before, closest(selector){
-  return selector === "summary" ? this : null;
-}};
-__fire("click", {target:summary});
+__fire("click", {target:before.summary});
 const pastOpen = () => {
-  const row = details.find(item => item.getAttribute("data-pc-disclosure") === "past-work");
+  const row = details.find(item =>
+    item.getAttribute("data-pc-disclosure") === "semantic-source-history");
   return row === undefined ? null : row.open;
 };
 const sameClick = pastOpen();
@@ -1189,17 +1211,15 @@ await refresh();
 const refreshed = pastOpen();
 await __settle(); await __settle();
 const afterRefreshContext = pastOpen();
-const current = details.find(row => row.getAttribute("data-pc-disclosure") === "past-work");
+const current = details.find(row =>
+  row.getAttribute("data-pc-disclosure") === "semantic-source-history");
 usageCfgOpen = true;
-const closeSummary = {parentElement:current, closest(selector){
-  return selector === "summary" ? this : null;
-}};
-__fire("click", {target:closeSummary});
+__fire("click", {target:current.summary});
 const explicitlyClosed = pastOpen() === false;
 render(Object.assign({}, d, {generated:100004}));
 await __settle(); await __settle();
 const stayedClosed = pastOpen() === false;
-console.log(JSON.stringify({before:before.open, sameClick, loading, settled, outer,
+console.log(JSON.stringify({before:before.open, nested:before.depth === 1, sameClick, loading, settled, outer,
   afterOuterContext, refreshed, afterRefreshContext, explicitlyClosed, stayedClosed,
   contextFetches}));
 """
@@ -1209,6 +1229,7 @@ console.log(JSON.stringify({before:before.open, sameClick, loading, settled, out
             query_session="codex:focus-1",
         )
         self.assertFalse(out["before"])
+        self.assertTrue(out["nested"])
         for path in (
             "sameClick",
             "loading",
@@ -1281,6 +1302,7 @@ console.log(JSON.stringify({
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_what_changed_separates_real_steering_from_demonstrated_outcomes(self) -> None:
         checks = """
+projectGraphModeBySession.set("claude:aaa1", "all");
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
   observers: [], events: [
     {at: 99980, kind: "steer", phase: "user-role transcript message",
@@ -1466,6 +1488,7 @@ const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
     {kind: "task_complete", source: "raw lifecycle"}
   ]})]);
 Object.assign(d, {ask: true, asks: []});
+projectGraphModeBySession.set("pi:asr-root", "all");
 render(d);
 const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
@@ -1474,8 +1497,8 @@ const primaryText = Array.from(visibleText.matchAll(
   /<div class="pc-trail-top">([\\s\\S]*?)<\\/div>/g
 )).map(match => match[1]).join("");
 console.log(JSON.stringify({
-  bounded: (visibleText.match(/<article class="pc-graph-row/g) || []).length === 5 &&
-    graph.includes("4 task lanes folded") &&
+  bounded: (visibleText.match(/<article class="pc-graph-row/g) || []).length === 9 &&
+    !graph.includes("task lanes folded") &&
     graph.includes('data-graph-layout="fo-task-lanes"'),
   separated: graph.includes('data-model="fact-projection"') &&
     !graph.includes("What you asked") && !graph.includes("What happened"),
@@ -1558,9 +1581,7 @@ const live = [{entity:"project-cockpit", stage:"shaping", workflowBinding:"/repo
   workItemId:cockpit, observerSid:"child-1", worker:"Einstein", assignment:"Shape cockpit",
   source:"structured dispatch artifact", relation:"direct child", depth:1, at:110}];
 const html = projectSemanticTimeline({generated:112}, model, live, focus);
-const current = html.slice(html.indexOf('data-activity-band="current"'),
-  html.indexOf('data-activity-band="past-work"'));
-const history = html.slice(html.indexOf('data-activity-band="past-work"'));
+const current = html;
 const withoutLive = projectLaneRegistry(model, [], focus);
 const withoutLiveHtml = projectSemanticTimeline({generated:112}, model, [], focus);
 console.log(JSON.stringify({
@@ -1569,8 +1590,8 @@ console.log(JSON.stringify({
     current.includes("Working · shaping") && current.includes("Einstein") &&
     current.includes("Session interaction origin") &&
     current.includes("No active worker · no return observed"),
-  noHistory:!html.includes('data-activity-band="past-work"'),
-  topology:(html.match(/data-branch-edge="solid"/g) || []).length === 2 &&
+  noHistory:!html.includes('data-activity-band="earlier-meaningful"'),
+  topology:(html.match(/data-branch-edge="solid"/g) || []).length === 4 &&
     !html.includes('data-merge-edge="solid"'),
   attempts:current.includes("3 dispatches") && !current.includes("retries"),
   contributorLoss:withoutLive.laneByKey.get(`task:${cockpit}`).current === true &&
@@ -1593,6 +1614,7 @@ console.log(JSON.stringify({
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_task_lifecycle_returns_reopens_and_requires_retry_evidence(self) -> None:
         checks = """
+projectGraphModeBySession.set("", "all");
 const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1",
   state:"working", last_activity:10});
 const task = "workflow:task";
@@ -1645,7 +1667,8 @@ const retryHtml = projectSemanticTimeline({generated:10}, retryModel, [], focus)
 console.log(JSON.stringify({
   returned:returnedRegistry.laneByKey.get(`task:${task}`).current === false &&
     returnedRegistry.laneByKey.get(`task:${task}`).returned === true &&
-    returnedHtml.includes('data-activity-band="past-work"') && returnedHtml.includes("Returned"),
+    returnedHtml.includes('data-graph-mode="all"') && returnedHtml.includes("Task returned") &&
+    returnedHtml.includes('data-task-current="false"'),
   reopened:reopenedRegistry.laneByKey.get(`task:${task}`).current === true &&
     reopenedRegistry.laneByKey.get(`task:${task}`).key === `task:${task}` &&
     reopenedHtml.includes("No active worker · no return observed"),
@@ -1664,6 +1687,7 @@ console.log(JSON.stringify({
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_lane_registry_keeps_fo_and_task_identity_stable(self) -> None:
         checks = """
+projectGraphModeBySession.set("", "all");
 const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1", active:true,
   state:"working", last_activity:110});
 const delegations = [
@@ -1734,15 +1758,17 @@ console.log(JSON.stringify({
     html.includes('data-lane-connect="next"') && !html.includes("FO event 3"),
   oneCockpitLane:cockpit && cockpit.events.length === 4 && cockpit.contributors.length === 2 &&
     (html.match(/data-assignment-lane="task-head"/g) || []).length === 2 &&
+    (html.match(/data-work-item="workflow:cockpit"/g) || []).length === 4 &&
     html.includes('class="pc-lane-title">Project cockpit') &&
     html.includes("Working · shaping") && html.includes("Ampere · Einstein") &&
-    html.includes("1 dispatch") && html.includes("3 sourced events") &&
-    !html.includes("<span>Cockpit ready</span>"),
+    html.includes("1 dispatch") && html.includes('data-event-id="result"') &&
+    html.includes("Cockpit ready"),
   godelFolded:first.lanes.filter(lane => lane.kind === "task").length === 2 &&
     first.unboundContributors.length === 1 && html.includes("Godel") &&
     !html.includes('data-lane-key="task:Godel"'),
-  relations:html.includes('data-branch-edge="solid"') &&
-    html.includes('data-merge-edge="solid"') &&
+  relations:!html.includes('data-branch-edge="solid"') &&
+    !html.includes('data-merge-edge="solid"') && cockpit.branch === "solid" &&
+    cockpit.merge === "solid" &&
     html.includes('data-steering-state="unpaired"') &&
     html.includes('data-causal-edge="none"') &&
     first.laneByKey.get("fo:codex:focus-1").episodeByFact.has("fo-1"),
@@ -1863,7 +1889,7 @@ const oneState = Object.assign({}, base, {facts:base.facts.filter(fact => fact.f
 const oneStateHtml = projectSemanticTimeline({generated:112}, oneState, delegations, focus);
 const exactBranchHtml = projectSemanticTimeline({generated:112}, Object.assign({}, base,
   {relations:[{from:"fo:codex:focus-1", to:"task:workflow:cockpit", type:"dispatches_to",
-    confidence:"structural"}]}), delegations, focus);
+    evidence_ref:"dispatch", confidence:"structural"}]}), delegations, focus);
 console.log(JSON.stringify({
   none:edge([]) === "none/none" &&
     noRelation.includes('data-branch-edge="none" data-merge-edge="none"'),
@@ -1940,7 +1966,7 @@ const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits
 console.log(JSON.stringify({
   visible: graph.includes("Show current intents") && graph.includes("Keep the lane grammar"),
   diamonds: (graph.match(/data-steering-state="unpaired"/g) || []).length === 2 &&
-    (graph.match(/data-lane-connect="next"/g) || []).length === 1 &&
+    (graph.match(/data-lane-connect="next"/g) || []).length === 2 &&
     !graph.includes("Keep the lane grammar please") && !graph.includes(">ok.<") &&
     !graph.includes("env | grep TMUX"),
   noEdges: (graph.match(/data-causal-edge="none"/g) || []).length === 2 &&
@@ -1981,15 +2007,20 @@ const d = payload([mk({project: "git/asr", harness: "pi", sid: "asr-root",
   active: true, state: "idle"})]);
 Object.assign(d, {ask: true, asks: []});
 render(d);
+const activeHtml = __els.app.innerHTML;
+const activeGraph = activeHtml.slice(activeHtml.indexOf("Work & steering"),
+  activeHtml.indexOf("Evidence / limits"));
+projectAction("project-graph-mode", "all");
 const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
-const primary = graph.split('<details class="pc-semantic-overflow"')[0];
+const evidence = h.slice(h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
-  finalPrimary: primary.includes("Search index shipped") && primary.includes('data-trail-head="outcome"'),
-  historicalHidden: !primary.includes("task is DONE") && !primary.includes("42 validation checks passed"),
-  historyPreserved: h.includes("task is DONE") && h.includes("42 validation checks passed") &&
-    h.includes("requested · current state unknown") &&
-    h.indexOf("task is DONE") > h.indexOf("Evidence / limits"),
+  finalPrimary: graph.includes("Search index shipped") && graph.includes('data-trail-head="outcome"'),
+  historicalHidden: !activeGraph.includes("task is DONE") &&
+    !activeGraph.includes("Search index shipped") && !activeGraph.includes("42 validation checks passed"),
+  historyPreserved: graph.includes("task is DONE") &&
+    evidence.includes("42 validation checks passed") &&
+    evidence.includes("requested · current state unknown"),
   noFalseCurrent: !graph.includes('data-trail-head="started"') &&
     !graph.includes("current state unverified")
 }));
@@ -2066,13 +2097,15 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
   ]
 })]);
 Object.assign(d, {ask: true, asks: []});
+projectGraphModeBySession.set("pi:asr-root", "all");
 render(d);
 const h = __els.app.innerHTML;
 const graph = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
 const evidence = h.slice(h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
   tree: graph.split('data-assignment-lane="task-head"').length - 1 === 0 &&
-    graph.split('data-lane-key="fo:codex:focus-1"').length - 1 === 1,
+    graph.includes('class="pc-unbound-context"') &&
+    graph.includes('class="pc-lane-title">First Officer'),
   nested: graph.includes("2 unbound contributors") &&
     graph.indexOf("Volta") < graph.indexOf("Turing") &&
     graph.includes("Make assignments visible") && graph.includes("assignment unavailable") &&
@@ -2152,6 +2185,7 @@ console.log(JSON.stringify({
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_one_recent_and_twelve_old_pi_births_render_as_work_not_workers(self) -> None:
         checks = """
+projectGraphModeBySession.set("pi:asr-root", "all");
 const facts = Array.from({length: 13}, (_, i) => ({fact_id: `birth-${i}`,
   at: i === 0 ? 99999 : 98000 - i, type: "work_birth",
   summary: i === 0 ? "Fix current encoder fault" : `Historical dispatch ${i}`,
@@ -2186,7 +2220,7 @@ console.log(JSON.stringify({
     !graph.includes("recently dispatched · current state not confirmed"),
   historyCollapsed: evidence.includes("Past dispatches without observed result · 12") &&
     evidence.includes("show historical request evidence") &&
-    !graph.includes("Historical dispatch 1")
+    graph.includes("Historical dispatch 1") && graph.includes('data-graph-mode="all"')
 }));
 """
         out = self.run_project(
@@ -2216,7 +2250,7 @@ const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
 Object.assign(d, {ask: true, asks: []});
 render(d);
 const h = __els.app.innerHTML;
-const row = h.slice(h.indexOf('data-lane-key="fo:codex:focus-1"'), h.indexOf("Evidence / limits"));
+const row = h.slice(h.indexOf("Work & steering"), h.indexOf("Evidence / limits"));
 console.log(JSON.stringify({
   visible: row.includes("Volta") && row.includes("Improve the assignment roster") &&
     !row.includes("working now"),
@@ -2466,7 +2500,7 @@ console.log(JSON.stringify({
     !afterStale.includes("Show stale direction"),
   updated: graph.includes("Show newest direction") &&
     (graph.match(/data-steering-state="unpaired"/g) || []).length === 4 &&
-    (graph.match(/data-lane-connect="next"/g) || []).length === 3,
+    (graph.match(/data-lane-connect="next"/g) || []).length === 4,
   automatic: pending.every(call => !String(call.url).includes("refresh=1")),
   settled: projectContextByLabel[key].dashboard_revision === 100001
 }));
@@ -2482,6 +2516,125 @@ console.log(JSON.stringify({
         self.assertTrue(out["updated"])
         self.assertTrue(out["automatic"])
         self.assertTrue(out["settled"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_global_timeline_interleaves_lanes_and_spans_intervening_rows(self) -> None:
+        checks = """
+const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1",
+  active:true, state:"working", last_activity:104});
+const task = "workflow:project-cockpit";
+const facts = [
+  {fact_id:"fo-a", at:104, type:"user_message", summary:"Newest direction",
+    evidence:{source:"root transcript", confidence:"exact"}},
+  {fact_id:"task-a", at:103, type:"prepared_dispatch", source_kind:"prepared_dispatch",
+    summary:"Dispatch cockpit", work_item_id:task,
+    evidence:{source:"dispatch artifact", confidence:"exact"}},
+  {fact_id:"fo-b", at:102, type:"user_message", summary:"Correct the lane order",
+    evidence:{source:"root transcript", confidence:"exact"}},
+  {fact_id:"task-b", at:101, type:"stage_transition", stage:"shaping",
+    summary:"Shaping cockpit", work_item_id:task,
+    evidence:{source:"workflow state", confidence:"exact"}}
+];
+const model = {facts, work_items:[{work_item_id:task, label:"project-cockpit",
+  kind:"workflow_item"}], relations:[{type:"dispatches_to", from:"fo:codex:focus-1",
+  to:`task:${task}`, evidence_ref:"task-a", confidence:"exact"}], projections:{
+  operator_intents:[
+    {projection_id:"intent-a", at:104, summary:"Newest direction", derived_from:"fo-a"},
+    {projection_id:"intent-b", at:102, summary:"Correct the lane order", derived_from:"fo-b"}
+  ], steering_episodes:[], trail_heads:[{work_item_id:task, status:"current stage",
+    stage:"shaping", latest_meaningful_event:"task-b"}], activity:{nodes:[
+    {kind:"work", at:103, work_item_ids:[task]}
+  ]}}};
+const html = projectSemanticTimeline({generated:105}, model, [{workItemId:task,
+  worker:"Einstein", assignment:"Shape cockpit", source:"structured assignment", at:103}], focus);
+const graphRows = [...html.matchAll(/<article class="pc-graph-row[\\s\\S]*?<\\/article>/g)]
+  .map(match => match[0]);
+console.log(JSON.stringify({
+  order:graphRows.map(row => (row.match(/data-event-id="([^"]+)/) || [])[1]),
+  lanes:graphRows.map(row => (row.match(/data-lane-key="([^"]+)/) || [])[1]),
+  foSpan:graphRows.slice(0, 3).map(row => row.includes('data-flow-key="fo:codex:focus-1"')),
+  taskSpan:graphRows.slice(1, 4).map(row => row.includes(
+    'data-flow-key="task:workflow:project-cockpit"')),
+  exactDispatch:graphRows[1].includes('data-branch-edge="solid"') &&
+    !graphRows[3].includes('data-branch-edge="solid"')
+}));
+"""
+        out = self.run_project(checks)
+        self.assertEqual(["fo-a", "task-a", "fo-b", "task-b"], out["order"])
+        self.assertEqual(
+            [
+                "fo:codex:focus-1",
+                "task:workflow:project-cockpit",
+                "fo:codex:focus-1",
+                "task:workflow:project-cockpit",
+            ],
+            out["lanes"],
+        )
+        self.assertEqual([True, True, True], out["foSpan"])
+        self.assertEqual([True, True, True], out["taskSpan"])
+        self.assertTrue(out["exactDispatch"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_active_all_filter_preserves_lane_keys_and_semantic_history(self) -> None:
+        checks = """
+const focus = mk({project:"repo/proj", harness:"codex", sid:"focus-1",
+  active:true, state:"working", last_activity:105});
+const active = "workflow:project-cockpit";
+const inactive = "workflow:session-interaction-origin";
+const facts = [
+  {fact_id:"direction", at:105, type:"user_message", summary:"Keep the active work calm",
+    evidence:{source:"root transcript", confidence:"exact"}},
+  {fact_id:"active-progress", at:104, type:"stage_transition", stage:"shaping",
+    summary:"Shape cockpit", work_item_id:active,
+    evidence:{source:"workflow state", confidence:"exact"}},
+  {fact_id:"inactive-result", at:103, type:"work_result", summary:"Origin probe returned",
+    work_item_id:inactive, evidence:{source:"paired result", confidence:"exact"}},
+  {fact_id:"ack", at:102, type:"user_message", summary:"ok.",
+    evidence:{source:"root transcript", confidence:"exact"}},
+  {fact_id:"transport", at:101, type:"user_message", summary:"env | grep TMUX",
+    evidence:{source:"root transcript", confidence:"exact"}}
+];
+const model = {facts, work_items:[
+  {work_item_id:active, label:"project-cockpit", kind:"workflow_item"},
+  {work_item_id:inactive, label:"session-interaction-origin", kind:"workflow_item"}
+], relations:[], projections:{operator_intents:[
+  {projection_id:"direction", at:105, summary:"Keep the active work calm", derived_from:"direction"},
+  {projection_id:"ack", at:102, summary:"ok.", derived_from:"ack"},
+  {projection_id:"transport", at:101, summary:"env | grep TMUX", derived_from:"transport"}
+], steering_episodes:[], trail_heads:[
+  {work_item_id:active, status:"current stage", latest_meaningful_event:"active-progress"},
+  {work_item_id:inactive, status:"outcome", latest_meaningful_event:"inactive-result"}
+], activity:{nodes:[
+  {kind:"work", at:104, work_item_ids:[active]},
+  {kind:"work", at:103, work_item_ids:[inactive]}
+]}}};
+const workers = [{workItemId:active, worker:"Einstein", assignment:"Shape cockpit",
+  source:"structured assignment", at:104}];
+projectQuerySession = "codex:focus-1";
+const activeHtml = projectSemanticTimeline({generated:106}, model, workers, focus);
+projectGraphModeBySession.set(projectQuerySession, "all");
+const allHtml = projectSemanticTimeline({generated:106}, model, workers, focus);
+console.log(JSON.stringify({
+  activeKeeps:activeHtml.includes('data-lane-key="fo:codex:focus-1"') &&
+    activeHtml.includes('data-lane-key="task:workflow:project-cockpit"'),
+  activeHides:!activeHtml.includes('data-lane-key="task:workflow:session-interaction-origin"'),
+  allRestores:allHtml.includes('data-lane-key="task:workflow:session-interaction-origin"') &&
+    allHtml.includes("Origin probe returned"),
+  stable:activeHtml.includes('data-lane-key="task:workflow:project-cockpit"') &&
+    allHtml.includes('data-lane-key="task:workflow:project-cockpit"'),
+  filtered:!activeHtml.includes(">ok.<") && !allHtml.includes(">ok.<") &&
+    !activeHtml.includes("env | grep TMUX") && !allHtml.includes("env | grep TMUX"),
+  noStructuralCompression:!activeHtml.includes('class="pc-event-scroll"') &&
+    !allHtml.includes('class="pc-event-scroll"')
+}));
+"""
+        out = self.run_project(checks)
+        self.assertTrue(out["activeKeeps"])
+        self.assertTrue(out["activeHides"])
+        self.assertTrue(out["allRestores"])
+        self.assertTrue(out["stable"])
+        self.assertTrue(out["filtered"])
+        self.assertTrue(out["noStructuralCompression"])
 
 
 if __name__ == "__main__":
