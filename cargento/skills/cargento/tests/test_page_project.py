@@ -200,7 +200,7 @@ console.log(JSON.stringify({
   className: __els.app.className,
   compactNav: h.includes('role="tablist"') && h.includes('class="pc-project-tab selected"') &&
     h.includes('class="pc-link"') && !h.includes('id="pc-project-select"'),
-  chosen: h.includes("Project context</span><h2>repo/proj</h2>"),
+  chosen: h.includes("Project context</span><h2>proj</h2>"),
   active: h.includes("1</b> recent"),
   identity: h.includes("claude:aaa1"),
   goalFirst: h.indexOf("add focus") < h.indexOf("Work & steering") &&
@@ -270,6 +270,57 @@ console.log(JSON.stringify({
         self.assertTrue(out["coldPermalink"])
         self.assertTrue(out["keyboard"])
         self.assertTrue(out["click"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_tabs_collapse_git_worktrees_and_freeze_persisted_usage_order(self) -> None:
+        checks = """
+__store[PROJECT_USAGE_KEY] = JSON.stringify({"git:other": 9, "git:cargento": 2});
+const d = payload([
+  mk({project: "spacedock-research/cargento", project_key: "git:cargento",
+    project_name: "cargento", harness: "codex", sid: "main", active: true,
+    state: "working", last_activity: 99990}),
+  mk({project: ".worktrees/feature", project_key: "git:cargento",
+    project_name: "cargento", harness: "codex", sid: "worktree", active: true,
+    state: "idle", last_activity: 99980}),
+  mk({project: "elsewhere/cargento", project_key: "git:other",
+    project_name: "cargento", harness: "pi", sid: "other", active: true,
+    state: "idle", last_activity: 99999})
+]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const first = __els.app.innerHTML;
+const firstOther = first.indexOf('data-arg="git:other"');
+const firstRepo = first.indexOf('data-arg="git:cargento"');
+projectAction("project-cockpit", "git:cargento");
+projectAction("project-cockpit", "git:cargento");
+const after = __els.app.innerHTML;
+console.log(JSON.stringify({
+  collapsed: projectGroups(d).length === 2 &&
+    projectGroups(d).find(group => group.label === "git:cargento").sessions.length === 2,
+  distinct: first.includes('data-arg="git:other"') && first.includes('data-arg="git:cargento"'),
+  basename: (first.match(/<span>cargento<\\/span>/g) || []).length === 2 &&
+    !first.includes(".worktrees/feature</span>"),
+  order: firstOther >= 0 && firstOther < firstRepo &&
+    after.indexOf('data-arg="git:other"') < after.indexOf('data-arg="git:cargento"'),
+  permalink: first.includes('data-arg="git:cargento"') &&
+    first.includes('aria-selected="true"'),
+  focus: first.includes("Keep one repository together"),
+  countPersisted: JSON.parse(__store[PROJECT_USAGE_KEY])["git:cargento"] === 5
+}));
+"""
+        out = self.run_project(
+            checks,
+            project="git:cargento",
+            goals={"git:cargento": "Keep one repository together"},
+            query_project="git:cargento",
+        )
+        self.assertTrue(out["collapsed"])
+        self.assertTrue(out["distinct"])
+        self.assertTrue(out["basename"])
+        self.assertTrue(out["order"])
+        self.assertTrue(out["permalink"])
+        self.assertTrue(out["focus"])
+        self.assertTrue(out["countPersisted"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_real_observer_context_stays_subordinate_to_operator_goal(self) -> None:
@@ -595,6 +646,35 @@ console.log(JSON.stringify({
         self.assertTrue(out["noEmptySurroundings"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_awaiting_session_shows_escaped_final_output_compact_then_full(self) -> None:
+        checks = """
+const answer = "Ready for review.\\n\\n<img src=x onerror=alert(1)> exact tail";
+const d = payload([mk({project: "repo/proj", harness: "codex", sid: "focus-1",
+  active: true, state: "idle", state_detail: "awaiting your message",
+  last_activity: 99999, last_output: answer})]);
+Object.assign(d, {ask: true, asks: []});
+render(d);
+const h = __els.app.innerHTML;
+const output = h.slice(h.indexOf('class="pc-last-output"'), h.indexOf("</details>",
+  h.indexOf('class="pc-last-output"')));
+console.log(JSON.stringify({
+  compact: output.includes("Last · Ready for review."),
+  full: output.includes("Ready for review.\\n\\n&lt;img src=x onerror=alert(1)&gt; exact tail"),
+  escaped: !output.includes("<img src=x") && output.includes("<pre>"),
+  idleOnly: h.includes('data-operator-state="idle"')
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["compact"])
+        self.assertTrue(out["full"])
+        self.assertTrue(out["escaped"])
+        self.assertTrue(out["idleOnly"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_what_changed_separates_real_steering_from_demonstrated_outcomes(self) -> None:
         checks = """
 projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
@@ -637,7 +717,7 @@ console.log(JSON.stringify({
   unrelated: !h.includes("unrelated read") && !h.includes("caused") &&
     !h.includes('data-causal-link="supported"') && !h.includes("Work interval") &&
     h.includes("chronology alone is not causality"),
-  boundary: h.indexOf("Status-transition history is omitted") >
+  boundary: h.indexOf("Lifecycle-only transitions stay hidden") >
     h.indexOf("Evidence / limits"),
   noMockTags: !h.includes("generated</span>") && !h.includes("consistency")
 }));
@@ -1280,7 +1360,7 @@ console.log(JSON.stringify({
             """
 render(projectBoard());
 const h = __els.app.innerHTML;
-console.log(JSON.stringify({chosen: h.includes("Project context</span><h2>repo/other</h2>"),
+console.log(JSON.stringify({chosen: h.includes("Project context</span><h2>other</h2>"),
   goal: h.includes("Goal for project B"), noLeak: !h.includes("Goal for project A")}));
 """,
             goals=goals,
@@ -1297,7 +1377,7 @@ render(projectBoard());
 projectGoalAction("project-link-copy", "repo/other");
 await __settle();
 console.log(JSON.stringify({
-  selected: __els.app.innerHTML.includes("Project context</span><h2>repo/other</h2>"),
+  selected: __els.app.innerHTML.includes("Project context</span><h2>other</h2>"),
   copied: __links[0],
   note: __els.app.innerHTML.includes("project link copied")
 }));

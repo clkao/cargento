@@ -43,6 +43,7 @@ class RuntimeState:
     hook_lock: LockType = field(default_factory=threading.Lock)
     cache_lock: LockType = field(default_factory=threading.Lock)
     scanner_lock: LockType = field(default_factory=threading.Lock)
+    semantic_history_lock: LockType = field(default_factory=threading.Lock)
     # Named for the memo it used to guard, and still doing that memo's real job:
     # held across collection so concurrent readers share one filesystem and
     # SQLite scan. The published bytes moved to `snapshot`, which has its own

@@ -396,11 +396,10 @@ def collect(
         if not (active or show_all):
             continue
 
+        cwd = claude_data.session_cwd(config, state, transcript) if transcript else ""
         project = (
             (
-                runtime_sessions.project_from_cwd(
-                    config, claude_data.session_cwd(config, state, transcript)
-                )
+                runtime_sessions.project_from_cwd(config, cwd)
                 # Lossy fallback: the encoded name cannot be split back into
                 # segments, so it stays whole rather than guessing at a split.
                 or runtime_sessions.project_label(
@@ -529,6 +528,7 @@ def collect(
             else None
         )
         s = runtime_sessions.base_session("claude", prefix, project)
+        runtime_sessions.apply_project_identity(config, s, cwd)
         s.update(
             {
                 "title": (info or {}).get("title"),

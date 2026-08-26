@@ -493,28 +493,22 @@ def collect(
         ]
         lifecycle = sorted(data["lifecycle"], key=lambda event: event["at"])[-48:]
         session_state, state_detail = "idle", "awaiting your message"
-        if sessions.is_fresh(
-            config,
-            now,
-            sessions.newest_plausible(config, now, last_event_sources),
-            config.working_threshold_sec,
-        ):
+        if (scan and scan.get("turn_start") is not None) or subagents:
             session_state = "working"
             state_detail = sessions.working_detail(info, subagents)
 
+        cwd = transcripts.codex_meta(config, state, fp).get("cwd") or ""
         s = sessions.base_session(
             "codex",
             sid,
-            sessions.project_from_cwd(
-                config,
-                transcripts.codex_meta(config, state, fp).get("cwd") or "",
-            )
-            or "codex",
+            sessions.project_from_cwd(config, cwd) or "codex",
         )
+        sessions.apply_project_identity(config, s, cwd)
         s.update(
             {
                 "title": (info or {}).get("title"),
                 "last_prompt": ((info or {}).get("last_prompt") or "")[:140],
+                "last_output": (info or {}).get("last_output"),
                 "state": session_state,
                 "state_detail": state_detail,
                 "active": active,

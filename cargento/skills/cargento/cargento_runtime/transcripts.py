@@ -9,7 +9,7 @@ import unicodedata
 from typing import TYPE_CHECKING, Any, Final
 
 from . import io as runtime_io
-from . import records
+from . import records, sessions
 from . import state as runtime_state
 
 if TYPE_CHECKING:
@@ -242,6 +242,7 @@ def analyze_codex_transcript(config: RuntimeConfig, path: str) -> dict[str, Any]
     info: dict[str, Any] = {
         "title": None,
         "last_prompt": None,
+        "last_output": None,
         "usage_events": [],
         "last_tool": None,
         "last_event_ts": 0,
@@ -277,8 +278,27 @@ def analyze_codex_transcript(config: RuntimeConfig, path: str) -> dict[str, Any]
                 held = info["rate_limits"]
                 if ep and limits and (held is None or ep >= held[0]):
                     info["rate_limits"] = (ep, limits)
-        elif t == "response_item" and p.get("type") in ("function_call", "custom_tool_call"):
-            info["last_tool"] = p.get("name")
+        elif t == "response_item":
+            if p.get("type") in ("function_call", "custom_tool_call"):
+                info["last_tool"] = p.get("name")
+            elif (
+                p.get("type") == "message"
+                and p.get("role") == "assistant"
+                and p.get("phase") == "final_answer"
+            ):
+                chunks = [
+                    str(block["text"])
+                    for block in records.as_list(p.get("content"))
+                    if isinstance(block, dict)
+                    and block.get("type") == "output_text"
+                    and isinstance(block.get("text"), str)
+                ]
+                raw = "\n".join(chunks)
+                bounded = "\n".join(
+                    records.safe_text(line, sessions.LAST_OUTPUT_CAP_CHARS)
+                    for line in raw.split("\n")
+                )[: sessions.LAST_OUTPUT_CAP_CHARS]
+                info["last_output"] = bounded or None
     return info
 
 

@@ -10,7 +10,7 @@ import shlex
 from typing import TYPE_CHECKING, Any
 
 from . import io as runtime_io
-from . import observer, records, spacedock
+from . import observer, records, semantic_history, spacedock
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -1135,6 +1135,7 @@ def _semantic_fact_from_event(
         "fact_id": fact_id,
         "at": source_event.get("at"),
         "type": fact_type,
+        "source_kind": raw_kind,
         "summary": source_event.get("title"),
         "scope": "workflow" if raw_kind == "gate" else "session",
         "actor_claim": _semantic_actor_claim(source_event, raw_kind),
@@ -1382,11 +1383,6 @@ def _semantic_activity_projection(
     if not facts:
         return {"nodes": [], "historical_unresolved": 0}
     fact_by_id = {str(fact["fact_id"]): fact for fact in facts}
-    head_facts = [
-        fact_by_id[str(head["latest_meaningful_event"])]
-        for head in trail_heads
-        if str(head.get("latest_meaningful_event")) in fact_by_id
-    ]
     reference_at = (
         float(now)
         if isinstance(now, (int, float))
@@ -1482,9 +1478,7 @@ def _recent_steering_nodes(
     ]
     selected: list[dict[str, Any]] = []
     selected_tokens: list[tuple[float, list[str]]] = []
-    for candidate in sorted(
-        candidates, key=lambda row: float(row.get("at") or 0), reverse=True
-    ):
+    for candidate in sorted(candidates, key=lambda row: float(row.get("at") or 0), reverse=True):
         summary = str(candidate.get("summary") or "").casefold().strip()
         at = float(candidate.get("at") or 0)
         tokens = [
@@ -1512,8 +1506,7 @@ def _recent_steering_nodes(
             and prior_tokens
             and tokens[0] == prior_tokens[0]
             and (
-                len(set(tokens) & set(prior_tokens))
-                / min(len(set(tokens)), len(set(prior_tokens)))
+                len(set(tokens) & set(prior_tokens)) / min(len(set(tokens)), len(set(prior_tokens)))
             )
             >= 0.8
             for prior_at, prior_tokens in selected_tokens
@@ -1585,9 +1578,7 @@ def _structural_steering_episodes(
         )
     return sorted(
         episodes,
-        key=lambda episode: float(
-            facts_by_id[str(episode["adaptation_fact"])].get("at") or 0
-        ),
+        key=lambda episode: float(facts_by_id[str(episode["adaptation_fact"])].get("at") or 0),
         reverse=True,
     )
 
@@ -1708,6 +1699,134 @@ def _semantic_model(
     }
 
 
+def _history_sources(
+    semantic: dict[str, Any], history: dict[str, Any]
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    facts = list(semantic.get("facts") or [])
+    work_items = list(semantic.get("work_items") or [])
+    facts_by_id = {str(fact.get("fact_id")): fact for fact in facts}
+    work_by_id = {
+        str(item.get("work_item_id")): item for item in work_items if item.get("work_item_id")
+    }
+    for event in history.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        fact = event.get("fact")
+        item = event.get("work_item")
+        if isinstance(fact, dict) and fact.get("fact_id"):
+            facts_by_id.setdefault(str(fact["fact_id"]), fact)
+        if isinstance(item, dict) and item.get("work_item_id"):
+            work_by_id.setdefault(str(item["work_item_id"]), item)
+    return facts_by_id, work_by_id
+
+
+def _history_intents(
+    history: dict[str, Any],
+    facts_by_id: dict[str, dict[str, Any]],
+    projections: dict[str, Any],
+    relations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    intents = list(projections.get("operator_intents") or [])
+    intent_ids = {str(intent.get("derived_from")) for intent in intents}
+    for event in history.get("events", []):
+        if not isinstance(event, dict) or event.get("event_type") != "operator_direction":
+            continue
+        fact = facts_by_id.get(str(event.get("source_ref") or ""))
+        if fact is None or str(fact.get("fact_id")) in intent_ids:
+            continue
+        intent, relation = _semantic_intent(fact)
+        intents.append(intent)
+        relations.append(relation)
+        intent_ids.add(str(fact["fact_id"]))
+    return intents
+
+
+def _history_activity_nodes(
+    history: dict[str, Any], current_event_ids: set[str]
+) -> list[dict[str, Any]]:
+    consequential = {"checkpoint", "gate_decision", "result", "final_output", "stage_transition"}
+    nodes: list[dict[str, Any]] = []
+    for event in history.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        if (
+            event.get("event_type") not in consequential
+            or not event.get("work_binding")
+            or str(event.get("source_ref") or "") in current_event_ids
+        ):
+            continue
+        nodes.append(
+            {
+                "kind": "work",
+                "at": event.get("at"),
+                "status": "decision" if event.get("event_type") == "gate_decision" else "outcome",
+                "work_item_ids": [event["work_binding"]],
+                "latest_event": event.get("source_ref"),
+                "history_event_type": event.get("event_type"),
+            }
+        )
+    return nodes[:MAX_PRIMARY_ACTIVITY_NODES]
+
+
+def _merge_semantic_history(
+    semantic: dict[str, Any], history: dict[str, Any], *, now: float
+) -> dict[str, Any]:
+    """Let persisted meaning outlive the bounded source tail without becoming authority."""
+    facts_by_id, work_by_id = _history_sources(semantic, history)
+    facts = sorted(facts_by_id.values(), key=lambda fact: float(fact.get("at") or 0), reverse=True)
+    projections = semantic.get("projections")
+    if not isinstance(projections, dict):
+        projections = {}
+        semantic["projections"] = projections
+    relations = list(semantic.get("relations") or [])
+    intents = _history_intents(history, facts_by_id, projections, relations)
+    fact_by_work_item: dict[str, list[dict[str, Any]]] = {}
+    for fact in facts:
+        work_item_id = str(fact.get("work_item_id") or "")
+        if work_item_id:
+            fact_by_work_item.setdefault(work_item_id, []).append(fact)
+    trails = _semantic_trail_heads(fact_by_work_item, facts)
+    assignments = _semantic_assignments(fact_by_work_item, work_by_id)
+    episodes = _structural_steering_episodes(intents, facts, relations)
+    paired = {str(episode["intent_id"]) for episode in episodes}
+    activity = _semantic_activity_projection(work_by_id, trails, facts, now=now)
+    current_event_ids = {str(node.get("latest_event") or "") for node in activity.get("nodes", [])}
+    activity["history_nodes"] = _history_activity_nodes(history, current_event_ids)
+    activity["steering"] = _recent_steering_nodes(intents, paired)
+    semantic["facts"] = facts
+    semantic["work_items"] = list(work_by_id.values())
+    semantic["relations"] = relations
+    projections["operator_intents"] = sorted(
+        intents, key=lambda intent: float(intent.get("at") or 0), reverse=True
+    )
+    projections["trail_heads"] = trails
+    projections["assignments"] = assignments
+    projections["activity"] = activity
+    projections["steering_episodes"] = episodes
+    semantic["history"] = {
+        "event_count": len(history.get("events", [])),
+        "cursors": history.get("cursors", {}),
+        "persisted": history.get("persisted") is True,
+        "events": [
+            {
+                key: event.get(key)
+                for key in (
+                    "event_id",
+                    "event_type",
+                    "at",
+                    "source_identity",
+                    "source_ref",
+                    "work_binding",
+                    "summary",
+                )
+            }
+            for event in history.get("events", [])
+            if isinstance(event, dict)
+        ],
+    }
+    return semantic
+
+
 def _active_child_assignments(
     config: RuntimeConfig,
     state: RuntimeState,
@@ -1806,7 +1925,11 @@ def collect(
     selected = [
         session
         for session in sessions
-        if str(session.get("project") or "") == project and session.get("active") is True
+        if (
+            str(session.get("project_key") or session.get("project") or "") == project
+            or str(session.get("project") or "") == project
+        )
+        and session.get("active") is True
     ]
     selected.sort(key=lambda item: float(item.get("last_activity") or 0), reverse=True)
     if focus is None:
@@ -1913,6 +2036,9 @@ def collect(
         for event in timeline
         if event["kind"] in {"prepared_dispatch", "task_started", "task_result", "outcome"}
     )
+    semantic = _semantic_model(timeline, observers, now=now)
+    history = semantic_history.update(config, state, project, semantic, analysis_sessions)
+    semantic = _merge_semantic_history(semantic, history, now=now)
     return {
         "project": project,
         "focus": {
@@ -1926,7 +2052,7 @@ def collect(
         else None,
         "observers": observers,
         "events": timeline,
-        "semantic": _semantic_model(timeline, observers, now=now),
+        "semantic": semantic,
         "child_assignments": child_assignments,
         "sources": {
             "scope": scope,

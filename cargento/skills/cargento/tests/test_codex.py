@@ -185,6 +185,72 @@ class CodexCollectorTest(RuntimeTestCase):
                 self.assertNotIn("subagent", session["state_detail"])
                 self.assertEqual(now, session["last_activity"])
 
+    def test_final_answer_and_task_complete_awaits_with_bounded_last_output(self) -> None:
+        now = time.time()
+        sid = "33333333-3333-3333-3333-333333333334"
+        answer = "Ready for review.\n\n`<checkpoint>` is preserved."
+        entries = [
+            {"type": "session_meta", "payload": {"id": sid, "cwd": "/tmp/project"}},
+            _task_started(now - 20),
+            {
+                "timestamp": _stamp(now - 10),
+                "type": "response_item",
+                "payload": {"type": "function_call", "name": "exec"},
+            },
+            {
+                "timestamp": _stamp(now - 2),
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "phase": "final_answer",
+                    "content": [{"type": "output_text", "text": answer}],
+                },
+            },
+            {
+                "timestamp": _stamp(now - 1),
+                "type": "event_msg",
+                "payload": {"type": "task_complete"},
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "2026" / "08" / "25" / "rollout-complete.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text("".join(json.dumps(row) + "\n" for row in entries))
+            os.utime(path, (now, now))
+            with store_patch(CODEX_SESSIONS_DIR=tmp):
+                config, state = runtime()
+                (session,) = codex_collector.collect(config, state, now, 24, False)
+
+        self.assertEqual(
+            ("idle", "awaiting your message"), (session["state"], session["state_detail"])
+        )
+        self.assertEqual(answer, session["last_output"])
+
+    def test_task_started_without_terminal_source_remains_working(self) -> None:
+        now = time.time()
+        sid = "33333333-3333-3333-3333-333333333335"
+        entries = [
+            {"type": "session_meta", "payload": {"id": sid, "cwd": "/tmp/project"}},
+            _task_started(now - 20),
+            {
+                "timestamp": _stamp(now - 1),
+                "type": "response_item",
+                "payload": {"type": "function_call", "name": "bash"},
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "2026" / "08" / "25" / "rollout-open.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text("".join(json.dumps(row) + "\n" for row in entries))
+            os.utime(path, (now, now))
+            with store_patch(CODEX_SESSIONS_DIR=tmp):
+                config, state = runtime()
+                (session,) = codex_collector.collect(config, state, now, 24, False)
+
+        self.assertEqual(("working", "running bash"), (session["state"], session["state_detail"]))
+        self.assertIsNone(session["last_output"])
+
     def test_nested_child_attaches_to_top_level_and_retires_on_completion(self) -> None:
         now = time.time()
         root_id = "33333333-3333-3333-3333-333333333333"

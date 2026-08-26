@@ -3,12 +3,11 @@
    choose the project being resumed, recover its browser-owned outcome, see its
    active sessions, and answer any real AskRegistry question attributed to it.
 
-   A project label is not an id. The browser goal intentionally uses the exact
-   label anyway because this is the smallest reload mechanism shaping can put
-   in front of an operator without inventing a server identity or persistence
-   contract. The page states the collision and rename failure beside the value. */
+   Git-backed sessions carry a canonical repository key distinct from the
+   basename shown here. Non-Git collectors retain their bounded label fallback. */
 const PROJECT_COCKPIT_KEY = "cargento.projectCockpitProject";
 const PROJECT_GOAL_PREFIX = "cargento.projectGoal.v1:";
+const PROJECT_USAGE_KEY = "cargento.projectUsage.v1";
 const PROJECT_VISIBLE_ACTIVITY_NODES = 5;
 const PROJECT_VISIBLE_STEERING_NODES = 3;
 let projectCockpitLabel = null;
@@ -20,6 +19,9 @@ const projectDraftByLabel = {};
 const projectContextByLabel = {};
 const projectContextRequests = {};
 let projectContextRequestSequence = 0;
+let projectUsageCounts = null;
+let projectTabOrder = null;
+let projectOpenedKey = null;
 try{
   projectCockpitLabel = localStorage.getItem(PROJECT_COCKPIT_KEY) || null;
 }catch(e){ /* no browser storage — choose from the payload */ }
@@ -43,6 +45,28 @@ function projectGoal(label){
   }
   try{ return localStorage.getItem(projectGoalKey(label)) || ""; }
   catch(e){ return ""; }
+}
+
+function projectUsage(){
+  if(projectUsageCounts) return projectUsageCounts;
+  projectUsageCounts = {};
+  try{
+    const raw = JSON.parse(localStorage.getItem(PROJECT_USAGE_KEY) || "{}");
+    if(raw && typeof raw === "object" && !Array.isArray(raw)){
+      for(const [key, value] of Object.entries(raw).slice(0, 200)){
+        const count = Math.floor(Number(value));
+        if(key && count > 0) projectUsageCounts[key] = Math.min(count, 999999);
+      }
+    }
+  }catch(e){ /* ordering falls back to live state and name */ }
+  return projectUsageCounts;
+}
+
+function projectRecordUse(key){
+  const usage = projectUsage();
+  usage[key] = Math.min(999999, (Number(usage[key]) || 0) + 1);
+  try{ localStorage.setItem(PROJECT_USAGE_KEY, JSON.stringify(usage)); }
+  catch(e){ /* stable in-memory order still survives this page */ }
 }
 
 function projectObservedGoal(label){
@@ -104,29 +128,59 @@ function projectSyncUrl(label, sessionKey, replace){
    it to the asker's session: attribution is caller-supplied at registration. */
 function projectGroups(d){
   const groups = new Map();
-  const ensure = raw => {
-    const label = String(raw || "Unlabeled project");
-    if(!groups.has(label)) groups.set(label, {label:label, sessions:[], asks:[]});
-    return groups.get(label);
+  const ensure = (rawKey, rawName, alias) => {
+    const label = String(rawKey || "Unlabeled project");
+    const name = String(rawName || label).split("/").filter(Boolean).pop() || label;
+    if(!groups.has(label)){
+      groups.set(label, {label, name, aliases:[], sessions:[], asks:[], latest:0});
+    }
+    const group = groups.get(label);
+    if(alias && !group.aliases.includes(String(alias))) group.aliases.push(String(alias));
+    return group;
   };
   for(const sess of (d && Array.isArray(d.sessions) ? d.sessions : [])){
-    ensure(sess.project).sessions.push(sess);
+    const group = ensure(sess.project_key || sess.project, sess.project_name || sess.project,
+      sess.project);
+    group.sessions.push(sess);
+    group.latest = Math.max(group.latest, Number(sess.last_activity) || 0);
   }
   if(d && d.ask && Array.isArray(d.asks)){
-    for(const ask of d.asks) ensure(ask && ask.project).asks.push(ask);
+    for(const ask of d.asks){
+      const raw = String(ask && ask.project || "Unlabeled project");
+      const matched = Array.from(groups.values()).find(group => group.aliases.includes(raw));
+      (matched || ensure(raw, raw, raw)).asks.push(ask);
+    }
   }
-  return Array.from(groups.values()).sort((a, b) => a.label.localeCompare(b.label));
+  const usage = projectUsage();
+  const rank = (a, b) => (Number(usage[b.label]) || 0) - (Number(usage[a.label]) || 0) ||
+    Number(b.sessions.some(sess => sess.state === "working")) -
+      Number(a.sessions.some(sess => sess.state === "working")) ||
+    b.latest - a.latest || a.name.localeCompare(b.name) || a.label.localeCompare(b.label);
+  const rows = Array.from(groups.values());
+  if(!projectTabOrder && rows.length) projectTabOrder = rows.slice().sort(rank).map(row => row.label);
+  if(projectTabOrder){
+    const known = new Set(projectTabOrder);
+    projectTabOrder.push(...rows.filter(row => !known.has(row.label)).sort(rank).map(row => row.label));
+    const positions = new Map(projectTabOrder.map((key, index) => [key, index]));
+    rows.sort((a, b) => positions.get(a.label) - positions.get(b.label));
+  }
+  return rows;
 }
 
 function projectCockpitGroup(d){
   const groups = projectGroups(d);
-  let group = groups.find(item => item.label === projectQueryLabel);
-  if(!group) group = groups.find(item => item.label === projectCockpitLabel);
+  const matches = (item, value) => item.label === value || item.aliases.includes(value);
+  let group = groups.find(item => matches(item, projectQueryLabel));
+  if(!group) group = groups.find(item => matches(item, projectCockpitLabel));
   if(!group && groups.length){
     group = groups[0];
     projectCockpitLabel = group.label;
   }
   if(group) projectCockpitLabel = group.label;
+  if(group && projectOpenedKey === null){
+    projectOpenedKey = group.label;
+    projectRecordUse(group.label);
+  }
   return {groups:groups, selected:group || null};
 }
 
@@ -141,6 +195,7 @@ function setProjectCockpit(label){
   projectQueryLabel = projectCockpitLabel;
   projectQuerySession = null;
   projectGoalNote = "";
+  projectRecordUse(projectCockpitLabel);
   try{ localStorage.setItem(PROJECT_COCKPIT_KEY, projectCockpitLabel); }
   catch(e){ /* selection still works for this page */ }
   projectSyncUrl(projectCockpitLabel, null, false);
@@ -360,6 +415,16 @@ function projectDelegationLanes(sess, group){
   });
 }
 
+function projectLastOutput(sess){
+  if(!sess || sess.state !== "idle" || typeof sess.last_output !== "string") return "";
+  const exact = sess.last_output;
+  const compact = exact.replace(/\s+/g, " ").trim();
+  if(!compact) return "";
+  const preview = compact.length > 110 ? compact.slice(0, 109) + "…" : compact;
+  return `<details class="pc-last-output"><summary>Last · ${esc(preview)}</summary>` +
+    `<pre>${esc(exact)}</pre></details>`;
+}
+
 function projectSessionMirror(d, sess, group){
   if(!sess){
     if(!projectQuerySession) return "";
@@ -387,6 +452,7 @@ function projectSessionMirror(d, sess, group){
     ` data-operator-state="${esc(state.toLowerCase().replace(/ /g, "-"))}">` +
     `<div class="pc-operator-line"><strong>${esc(state)}</strong>` +
     `<span>${esc(detail)} · ${esc(request)} · ${esc(freshness)}</span></div>` +
+    projectLastOutput(sess) +
     `<details><summary>session</summary><div class="pc-operator-detail">` +
     `<strong>${esc(sess.title || "Untitled Codex session")}</strong><code>${esc(key)}</code>` +
     (sess.model ? `<span>model · ${esc(sess.model)}</span>` : "") +
@@ -600,6 +666,7 @@ function projectSemanticTimeline(d, model, workflowLanes){
     .sort((a, b) => Number(b.at) - Number(a.at))
     .slice(0, PROJECT_VISIBLE_STEERING_NODES);
   let nodes = Array.isArray(activity.nodes) ? activity.nodes : [];
+  const historyNodes = Array.isArray(activity.history_nodes) ? activity.history_nodes : [];
   if(!nodes.length && !Object.prototype.hasOwnProperty.call(activity, "nodes")){
     nodes = heads.filter(head => ["prepared", "outcome", "decision"].includes(head.status))
       .slice(0, PROJECT_VISIBLE_ACTIVITY_NODES).map(head => {
@@ -608,6 +675,9 @@ function projectSemanticTimeline(d, model, workflowLanes){
         work_item_ids:[head.work_item_id], latest_event:head.latest_meaningful_event};
     });
   }
+  const visibleEventIds = new Set(nodes.map(node => node.latest_event));
+  nodes = nodes.concat(historyNodes.filter(node => !visibleEventIds.has(node.latest_event))
+    .slice(0, Math.max(0, PROJECT_VISIBLE_ACTIVITY_NODES - nodes.length)));
   const headByItem = new Map(heads.map(head => [head.work_item_id, head]));
   const activityRows = nodes.filter(node => !["requested", "prepared"].includes(node.status) ||
     !(node.work_item_ids || []).some(id => {
@@ -643,6 +713,7 @@ function projectSemanticTimeline(d, model, workflowLanes){
 function projectSemanticEvidence(group){
   const entry = projectContextEntry(group.label);
   const model = entry && entry.data && entry.data.semantic || {};
+  const history = model.history || {};
   const projections = model.projections || {};
   const activity = projections.activity || {};
   const intents = Array.isArray(projections.operator_intents) ? projections.operator_intents : [];
@@ -657,8 +728,11 @@ function projectSemanticEvidence(group){
   const historicalDispatches = Number(activity.historical_dispatches) || historicalHeads.length;
   const contextFacts = facts.filter(fact => !fact.work_item_id &&
     ["result", "decision", "observer_snapshot"].includes(fact.type));
-  if(!historical && !unpaired.length && !contextFacts.length) return "";
-  return `<li><b>Past dispatches without observed result · ${historicalDispatches}</b>` +
+  const historyCount = Number(history.event_count) || 0;
+  if(!historical && !unpaired.length && !contextFacts.length && !historyCount) return "";
+  return (historyCount ? `<li><b>Semantic work history · ${historyCount}</b> · ` +
+    `${history.persisted ? "restart-safe" : "memory only"} · raw sources remain authoritative.</li>` : "") +
+    `<li><b>Past dispatches without observed result · ${historicalDispatches}</b>` +
     (historical !== historicalDispatches ? ` · ${historical} distinct work label${historical === 1 ? "" : "s"}` : "") +
     ` · ${unpaired.length} intent candidate${unpaired.length === 1 ? "" : "s"} without a supported reaction.` +
     (unpaired.length ? `<details><summary>show unpaired intent evidence</summary>` +
@@ -725,7 +799,7 @@ function projectEvidenceLimits(group, focus){
   const work = sources.work || {};
   const support = work.support || {};
   return `<ul class="pc-limit-list">` +
-    `<li><b>Focus:</b> Browser focus is operator-authored, keyed by the exact project label, and is not durable project authority. <code>${esc(projectGoalKey(group.label))}</code></li>` +
+    `<li><b>Focus:</b> Browser focus is operator-authored, keyed by the stable local project key, and is not durable project authority. <code>${esc(projectGoalKey(group.label))}</code></li>` +
     `<li><b>Requests:</b> Absence of an exact AskRegistry or live needs-input signal does not prove unblocked.</li>` +
     `<li><b>Meaning:</b> Intent is derived from timestamped non-meta user-role text, not verified captain authorship. A reaction is linked only when both ends have evidence; chronology alone is not causality.</li>` +
     `<li><b>Derived context:</b> The cached snapshot stays subordinate and may lag; its timestamp reports its age. Only explicit focused refresh runs model derivation. Stage and block are omitted when absent.</li>` +
@@ -733,7 +807,7 @@ function projectEvidenceLimits(group, focus){
     `<li><b>Observed sources:</b> ${Number(steer.live) || 0} steering records · ` +
     `${Number(gate.live) || 0} gate decisions · ${Number(work.live) || 0} work records · ` +
     `${Number(observer.live) || 0} derived snapshots · ${Number(support.suppressed_tool_calls) || 0} supporting tool calls suppressed. ` +
-    `Status-transition history is omitted.</li>${projectSemanticEvidence(group)}${projectLifecycleEvidence(focus)}</ul>`;
+    `Lifecycle-only transitions stay hidden.</li>${projectSemanticEvidence(group)}${projectLifecycleEvidence(focus)}</ul>`;
 }
 
 function projectView(d, draft){
@@ -754,9 +828,10 @@ function projectView(d, draft){
     return `<button type="button" id="${esc(projectTabId(item.label))}" class="pc-project-tab` +
       `${selected ? " selected" : ""}" role="tab" aria-selected="${selected}"` +
       ` tabindex="${selected ? "0" : "-1"}" data-calm="project-cockpit"` +
-      ` data-arg="${esc(item.label)}"><span class="pc-project-dot${working ? " working" : ""}"` +
+      ` data-arg="${esc(item.label)}" title="${esc(item.aliases[0] || item.name)}">` +
+      `<span class="pc-project-dot${working ? " working" : ""}"` +
       ` aria-label="${working ? "working now" : "no demonstrated work now"}"></span>` +
-      `<span>${esc(item.label)}</span></button>`;
+      `<span>${esc(item.name)}</span></button>`;
   }).join("");
   const recent = group.sessions.filter(sess => sess.active);
   const focus = projectFocusSession(group);
@@ -779,7 +854,7 @@ function projectView(d, draft){
     `<button type="button" class="pc-link" data-calm="project-link-copy"` +
     ` data-arg="${esc(group.label)}">copy link</button></nav>` +
     `<section class="pc-focus"><div class="pc-focus-head"><div>` +
-    `<span class="pc-kicker">Project context</span><h2>${esc(group.label)}</h2></div>` +
+    `<span class="pc-kicker">Project context</span><h2>${esc(group.name)}</h2></div>` +
     `<div class="pc-counts">` +
     (projectQuerySession ? "" : `<span><b>${workingNow}</b> working now</span>`) +
     `<span><b>${recent.length}</b> recent</span>` +
