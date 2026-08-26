@@ -646,6 +646,54 @@ console.log(JSON.stringify({
         self.assertTrue(out["noEmptySurroundings"])
 
     @unittest.skipUnless(shutil.which("node"), "node not available")
+    def test_current_assignment_history_does_not_duplicate_live_work_lanes(self) -> None:
+        checks = """
+projectContextByLabel["repo/proj"] = {state: "ready", generated: 100000, data: {
+  observers: [], events: [], child_assignments: [], semantic: {
+    facts: [
+      {fact_id:"a1", at:99999, type:"prepared_dispatch", source_kind:"child_assignment",
+        summary:"Shape cockpit", work_item_id:"workflow:project-cockpit", evidence:{}},
+      {fact_id:"a2", at:99999, type:"prepared_dispatch", source_kind:"child_assignment",
+        summary:"Shape terminal", work_item_id:"workflow:session-origin", evidence:{}}
+    ],
+    work_items: [
+      {work_item_id:"workflow:project-cockpit", label:"Project cockpit", kind:"workflow_item"},
+      {work_item_id:"workflow:session-origin", label:"Session origin", kind:"workflow_item"}
+    ], relations: [], history: {event_count:2, persisted:true, events:[
+      {event_type:"assignment", source_identity:"codex:child-1",
+        work_binding:"workflow:project-cockpit"},
+      {event_type:"assignment", source_identity:"codex:child-2",
+        work_binding:"workflow:session-origin"}
+    ]}, projections: {operator_intents:[], trail_heads:[], steering_episodes:[],
+      activity:{nodes:[{kind:"burst", at:99999, count:2,
+        work_item_ids:["workflow:project-cockpit","workflow:session-origin"],
+        latest_event:"a2"}]}}
+  }, sources:{gate:{},steer:{},work:{},observer:{}}
+}};
+const d = payload([mk({project:"repo/proj", harness:"codex", sid:"focus-1", active:true,
+  state:"working", last_activity:99999, subagent_hierarchy:[
+    {name:"Einstein", observer_sid:"child-1", depth:1, assignment:"Shape cockpit",
+      workflow_entity:"project-cockpit", workflow_stage:"shaping"},
+    {name:"Ampere", observer_sid:"child-2", depth:1, assignment:"Shape terminal",
+      workflow_entity:"session-origin", workflow_stage:"shaping"}
+  ]})]);
+Object.assign(d, {ask:true, asks:[]});
+render(d);
+const h = __els.app.innerHTML;
+console.log(JSON.stringify({
+  lanes:h.includes("Project cockpit · shaping") && h.includes("Session origin · shaping"),
+  noDuplicate:!h.includes('data-semantic-burst="2"') && !h.includes("2 entities touched")
+}));
+"""
+        out = self.run_project(
+            checks,
+            query_project="repo/proj",
+            query_session="codex:focus-1",
+        )
+        self.assertTrue(out["lanes"])
+        self.assertTrue(out["noDuplicate"])
+
+    @unittest.skipUnless(shutil.which("node"), "node not available")
     def test_awaiting_session_shows_escaped_final_output_compact_then_full(self) -> None:
         checks = """
 const answer = "Ready for review.\\n\\n<img src=x onerror=alert(1)> exact tail";

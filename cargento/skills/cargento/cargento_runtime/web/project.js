@@ -404,7 +404,8 @@ function projectDelegationLanes(sess, group){
       row.observer_sid === agent.observer_sid) || {};
     const entity = agent.workflow_entity || fallback.workflow_entity || "";
     const stage = agent.workflow_stage || fallback.workflow_stage || "";
-    return {entity, stage, worker:agent.name || fallback.name || "Ensign",
+    return {entity, stage, observerSid:agent.observer_sid || fallback.observer_sid || "",
+      worker:agent.name || fallback.name || "Ensign",
       assignment:agent.assignment || fallback.assignment || "assignment unavailable",
       source:agent.assignment ? (agent.assignment_status || "exact parent dispatch") :
         (fallback.assignment ? `${fallback.source || "child observer snapshot"} · ${fallback.snapshot_status || "derived"}` :
@@ -657,7 +658,13 @@ function projectSemanticTimeline(d, model, workflowLanes){
   const episodes = Array.isArray(projections.steering_episodes)
     ? projections.steering_episodes : [];
   const activity = projections.activity || {};
-  const liveEntities = new Set(workflowLanes.map(row => row.entity));
+  const liveObserverSources = new Set(workflowLanes.filter(row => row.observerSid)
+    .map(row => `codex:${row.observerSid}`));
+  const historyEvents = model.history && Array.isArray(model.history.events)
+    ? model.history.events : [];
+  const liveAssignmentBindings = new Set(historyEvents.filter(event =>
+    event.event_type === "assignment" && liveObserverSources.has(event.source_identity))
+    .map(event => event.work_binding));
   const items = Array.isArray(model.work_items) ? model.work_items : [];
   const pairedIntents = new Set(episodes.map(episode => episode.intent_id));
   const intentPool = Array.isArray(activity.steering) ? activity.steering :
@@ -679,12 +686,11 @@ function projectSemanticTimeline(d, model, workflowLanes){
   nodes = nodes.concat(historyNodes.filter(node => !visibleEventIds.has(node.latest_event))
     .slice(0, Math.max(0, PROJECT_VISIBLE_ACTIVITY_NODES - nodes.length)));
   const headByItem = new Map(heads.map(head => [head.work_item_id, head]));
-  const activityRows = nodes.filter(node => !["requested", "prepared"].includes(node.status) ||
-    !(node.work_item_ids || []).some(id => {
-    const item = items.find(candidate => candidate.work_item_id === id) || {};
-    const entity = String(item.label || "").split(" · ")[0];
-    return item.kind === "workflow_item" && liveEntities.has(entity);
-  })).map((node, index) => {
+  const activityRows = nodes.filter(node => {
+    const ids = node.work_item_ids || [];
+    const representedByLiveLane = ids.length && ids.every(id => liveAssignmentBindings.has(id));
+    return !representedByLiveLane;
+  }).map((node, index) => {
     const lane = index % 3;
     if(node.kind === "burst") return {at:Number(node.at), html:projectBurstRow(d, node, model, lane)};
     const firstId = Array.isArray(node.work_item_ids) ? node.work_item_ids[0] : "";
