@@ -52,7 +52,8 @@ const __semantic = {facts: [
     evidence:{source:"workflow state", confidence:"exact"}},
   {fact_id:"gate-a", at:100, type:"gate_decision", source_kind:"gate",
     summary:"project-cockpit · review · approve", scope:"project", by:"person:captain",
-    decision:"approve", stage:"review", target_stage:"shaping", work_item_id:__task,
+    decision:"approve", stage:"review", application_state:"consumed",
+    target_stage:"shaping", work_item_id:__task,
     evidence:{source:"entity gate", confidence:"exact"}}
 ], work_items:[{work_item_id:__task, label:"project-cockpit", kind:"workflow_item"}],
 relations:[{type:"dispatches_to", from:"fo:codex:focus-1",
@@ -241,6 +242,65 @@ console.log(JSON.stringify({html, rows}));
         self.assertIn('data-result="review → shaping"', out["rows"][0])
         self.assertIn("You</strong> approved Project cockpit · review → shaping", out["rows"][0])
 
+    def test_gate_application_state_controls_completed_transition_wording(self) -> None:
+        out = self.run_fixture(
+            """
+const lane = {kind:"task", label:"project-cockpit"};
+const sentence = application_state => projectGlobalEventSentence({kind:"decision", fact:{
+  type:"gate_decision", by:"person:captain", decision:"approve", stage:"review",
+  target_stage:"shaping", application_state
+}}, lane);
+console.log(JSON.stringify({
+  consumed:sentence("consumed"), applied:sentence("applied"),
+  pending:sentence("pending"), unspent:sentence("unspent"),
+  superseded:sentence("superseded"), unknown:sentence(undefined)
+}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual("review → shaping", out["consumed"]["result"])
+        self.assertEqual("review → shaping", out["applied"]["result"])
+        self.assertEqual(
+            "review · decision recorded · pending application", out["pending"]["result"]
+        )
+        self.assertEqual(
+            "review · decision recorded · pending application", out["unspent"]["result"]
+        )
+        self.assertEqual("review · decision superseded", out["superseded"]["result"])
+        self.assertEqual(
+            "review · decision recorded · application unknown", out["unknown"]["result"]
+        )
+
+    def test_unpromoted_user_fact_never_becomes_a_you_direction(self) -> None:
+        out = self.run_fixture(
+            """
+const semantic = JSON.parse(JSON.stringify(__semantic));
+semantic.facts.push({fact_id:"injected",at:106,type:"user_message",
+  summary:"Message Type: MESSAGE Sender: /root Payload: keep working",
+  intent_promoted:false,source_session:{harness:"codex",sid:"focus-1"},
+  evidence:{source:"injected collaboration envelope",confidence:"exact"}});
+const registry = projectLaneRegistry(semantic, [], null, __dashboard.sessions);
+const events = projectGlobalEvents(semantic, registry, null);
+console.log(JSON.stringify({
+  ids:events.map(event => event.eventId),
+  sentences:events.map(event => projectGlobalEventSentence(event,
+    registry.laneByKey.get(event.lane.key)))
+}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertNotIn("injected", out["ids"])
+        self.assertFalse(
+            any(
+                row["actor"] == "You"
+                and row["action"] == "directed"
+                and "Message Type" in row["result"]
+                for row in out["sentences"]
+            )
+        )
+
     def test_project_status_reports_exact_attention_and_collapses_older_captain_decisions(
         self,
     ) -> None:
@@ -248,13 +308,13 @@ console.log(JSON.stringify({html, rows}));
             """
 const facts = [
   {fact_id:"new",at:50,type:"gate_decision",by:"person:captain",decision:"approve",
-    stage:"ideation",target_stage:"implementation",work_item_id:"workflow:a"},
+    stage:"ideation",application_state:"consumed",target_stage:"implementation",work_item_id:"workflow:a"},
   {fact_id:"dupe",at:49,type:"gate_decision",by:"person:captain",decision:"approve",
-    stage:"ideation",target_stage:"implementation",work_item_id:"workflow:a"},
+    stage:"ideation",application_state:"consumed",target_stage:"implementation",work_item_id:"workflow:a"},
   {fact_id:"second",at:48,type:"gate_decision",by:"person:captain",decision:"revise",
-    stage:"review",target_stage:"shaping",work_item_id:"workflow:b"},
+    stage:"review",application_state:"pending",target_stage:"shaping",work_item_id:"workflow:b"},
   {fact_id:"third",at:47,type:"gate_decision",by:"person:captain",decision:"hold",
-    stage:"validation",target_stage:"validation",work_item_id:"workflow:c"},
+    stage:"validation",application_state:"superseded",target_stage:"validation",work_item_id:"workflow:c"},
   {fact_id:"fo",at:60,type:"gate_decision",by:"agent:first-officer",decision:"approve",
     stage:"validation",target_stage:"done",work_item_id:"workflow:d"}
 ];
@@ -269,8 +329,9 @@ console.log(JSON.stringify({html:nextCockpitProjectStatus(nextProjectGroups()[0]
 
         self.assertIn("Needs you: none observed", out["html"])
         self.assertEqual(1, out["html"].count("Alpha · ideation → implementation"))
-        self.assertIn("Beta · review → shaping", out["html"])
+        self.assertIn("Beta · review · decision recorded · pending application", out["html"])
         self.assertIn("1 older decision", out["html"])
+        self.assertIn("Gamma · validation · decision superseded", out["html"])
         self.assertNotIn("Delta", out["html"])
 
     def test_focus_reads_label_alias_then_saves_only_under_the_stable_project_key(self) -> None:

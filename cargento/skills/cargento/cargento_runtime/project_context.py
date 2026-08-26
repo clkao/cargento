@@ -1331,8 +1331,8 @@ def _gate_event(
     if at is None or not decision:
         return None
     stage = current.get("stage", "unknown stage")
-    application = current.get("application", "")
-    phase = "gate decision" + (f" · application {application}" if application else "")
+    application_state = current.get("application_state", "")
+    phase = "gate decision" + (f" · application {application_state}" if application_state else "")
     reason = records.safe_text(current.get("reason", ""), config.observer_block_cap_chars)
     detail = workflow
     if reason:
@@ -1354,6 +1354,7 @@ def _gate_event(
         "stage": stage,
         "decision": decision,
         "by": current.get("by", ""),
+        "application_state": application_state,
         "target_stage": current.get("target_stage", ""),
     }
 
@@ -1368,7 +1369,7 @@ def _gate_field(body: str, block: str, current: dict[str, str], gate_stage: str)
                 current[key] = body[len(key) + 1 :].strip().strip("\"'")
                 break
     elif block == "application" and body.startswith("state:"):
-        current["application"] = body[len("state:") :].strip().strip("\"'")
+        current["application_state"] = body[len("state:") :].strip().strip("\"'")
     elif block == "application" and body.startswith("target-stage:"):
         current["target_stage"] = body[len("target-stage:") :].strip().strip("\"'")
     return gate_stage
@@ -1620,35 +1621,53 @@ def _bind_dispatch_artifacts(events: list[dict[str, Any]]) -> list[dict[str, Any
     return normalized
 
 
-def _project_plan_entities(sessions: Sequence[Mapping[str, Any]]) -> set[tuple[str, str]]:
-    entities: set[tuple[str, str]] = set()
-    for session in sessions:
-        attachment = session.get("spacedock")
-        if not isinstance(attachment, Mapping):
+def _focused_persisted_facts(
+    history: Mapping[str, Any], focus: tuple[str, str]
+) -> list[dict[str, Any]]:
+    wanted = {"harness": focus[0], "sid": focus[1]}
+    facts: list[dict[str, Any]] = []
+    for row in history.get("events", []):
+        if not isinstance(row, Mapping):
             continue
-        workflows = attachment.get("workflows")
-        if not isinstance(workflows, list):
+        fact = row.get("fact")
+        if not isinstance(fact, dict):
             continue
-        for workflow in workflows:
-            if not isinstance(workflow, Mapping):
-                continue
-            name = str(workflow.get("workflow") or "")
-            rows = workflow.get("entities")
-            if not name or not isinstance(rows, list):
-                continue
-            for entity in rows:
-                if isinstance(entity, Mapping) and entity.get("slug"):
-                    entities.add((name, str(entity["slug"])))
-    return entities
+        if fact.get("source_session") == wanted or fact.get("parent_session") == wanted:
+            facts.append(fact)
+    return facts
+
+
+def _allow_exact_gate_evidence(
+    allowed: set[str],
+    evidence: Mapping[str, Any],
+    gate_aliases: dict[tuple[str, str], tuple[str, str]],
+    gate_entities: dict[str, set[tuple[str, str]]],
+) -> None:
+    work_item_id = str(evidence.get("work_item_id") or "")
+    if work_item_id:
+        allowed.add(work_item_id)
+    workflow = str(evidence.get("workflow_binding") or "")
+    entity = str(evidence.get("workflow_entity") or evidence.get("entity") or "")
+    if not entity:
+        return
+    alias_event = {"kind": "task_started", "workflow_binding": workflow, "entity": entity}
+    _bind_exact_gate_alias(alias_event, gate_aliases, gate_entities)
+    canonical_work_item, _kind, _label, _binding = _semantic_work_identity(
+        alias_event, "task_started"
+    )
+    if canonical_work_item:
+        allowed.add(canonical_work_item)
 
 
 def _focused_gate_events(
-    transcript_events: list[dict[str, Any]],
+    evidence_events: list[dict[str, Any]],
     gate_events: list[dict[str, Any]],
     child_assignments: list[dict[str, Any]],
-    sessions: Sequence[Mapping[str, Any]],
+    persisted_history: Mapping[str, Any],
+    focus: tuple[str, str],
 ) -> tuple[list[dict[str, Any]], set[str]]:
-    normalized = _bind_dispatch_artifacts([*transcript_events, *gate_events])
+    normalized = _bind_dispatch_artifacts([*evidence_events, *gate_events])
+    gate_aliases, gate_entities = _exact_gate_aliases(normalized)
     allowed = {
         work_item_id
         for event in normalized
@@ -1658,18 +1677,15 @@ def _focused_gate_events(
         ]
         if work_item_id
     }
-    allowed.update(
-        str(row.get("work_item_id") or "") for row in child_assignments if row.get("work_item_id")
-    )
-    plan_entities = _project_plan_entities(sessions)
+    for evidence in child_assignments:
+        _allow_exact_gate_evidence(allowed, evidence, gate_aliases, gate_entities)
+    for evidence in _focused_persisted_facts(persisted_history, focus):
+        _allow_exact_gate_evidence(allowed, evidence, gate_aliases, gate_entities)
     kept: list[dict[str, Any]] = []
     for event in normalized:
         if event.get("kind") != "gate":
             continue
         work_item_id, _kind, _label, _binding = _semantic_work_identity(event, "gate")
-        plan_alias = (str(event.get("workflow") or ""), str(event.get("entity_slug") or ""))
-        if plan_alias in plan_entities:
-            allowed.add(work_item_id)
         if work_item_id in allowed:
             kept.append(event)
     return kept, allowed
@@ -1681,15 +1697,16 @@ def _scope_gate_events(
     gate_events: list[dict[str, Any]],
     focus: tuple[str, str] | None,
     child_assignments: list[dict[str, Any]],
-    sessions: Sequence[Mapping[str, Any]],
+    persisted_history: Mapping[str, Any],
 ) -> set[str]:
     allowed: set[str] = set()
     if focus is not None:
         gate_events, allowed = _focused_gate_events(
-            events,
+            [*events, *history_events],
             gate_events,
             child_assignments,
-            sessions,
+            persisted_history,
+            focus,
         )
     events.extend(gate_events)
     history_events.extend(gate_events)
@@ -1774,9 +1791,19 @@ def _semantic_fact_from_event(
         "work_item_id": work_item_id or None,
         "evidence": {"source": source_event.get("source"), "confidence": "exact"},
     }
-    for key in ("stage", "decision", "by", "target_stage", "assignment", "worker_kind"):
+    for key in (
+        "stage",
+        "decision",
+        "by",
+        "application_state",
+        "target_stage",
+        "assignment",
+        "worker_kind",
+    ):
         if source_event.get(key) not in (None, ""):
             fact[key] = source_event[key]
+    if raw_kind == "steer":
+        fact["intent_promoted"] = source_event.get("intent_promotable") is True
     if raw_kind == "gate" and source_event.get("entity"):
         fact["workflow_entity"] = source_event["entity"]
     harness = records.safe_text(source_event.get("harness"), 32)
@@ -2340,16 +2367,6 @@ def _semantic_model(
     intent_projections: list[dict[str, Any]] = []
     intent_summaries: set[str] = set()
     fact_by_work_item: dict[str, list[dict[str, Any]]] = {}
-    structural_turns = {
-        (
-            str(event.get("harness") or ""),
-            str(event.get("sid") or ""),
-            str(event.get("turn_id") or ""),
-        )
-        for event in ordered
-        if event.get("kind") in {"task_started", "task_result", "outcome", "gate"}
-        and event.get("turn_id")
-    }
     for source_event in ordered:
         raw_kind = str(source_event.get("kind") or "")
         fact_type = _SEMANTIC_FACT_TYPES.get(raw_kind)
@@ -2361,15 +2378,7 @@ def _semantic_model(
         fact = _semantic_fact_from_event(source_event, raw_kind, fact_type, work_item_id)
         fact_id = str(fact["fact_id"])
         facts.append(fact)
-        source_turn = (
-            str(source_event.get("harness") or ""),
-            str(source_event.get("sid") or ""),
-            str(source_event.get("record_id") or ""),
-        )
-        structurally_consequential = raw_kind == "steer" and source_turn in structural_turns
-        if raw_kind == "steer" and (
-            source_event.get("intent_promotable") is True or structurally_consequential
-        ):
+        if raw_kind == "steer" and fact.get("intent_promoted") is True:
             _append_semantic_intent(fact, intent_summaries, intent_projections, relations)
         if not work_item_id:
             continue
@@ -2469,10 +2478,14 @@ def _history_intents(
     intents = list(projections.get("operator_intents") or [])
     intent_ids = {str(intent.get("derived_from")) for intent in intents}
     for event in history.get("events", []):
-        if not isinstance(event, dict) or event.get("event_type") != "operator_direction":
+        if not isinstance(event, dict):
             continue
         fact = facts_by_id.get(str(event.get("source_ref") or ""))
-        if fact is None or str(fact.get("fact_id")) in intent_ids:
+        if (
+            fact is None
+            or fact.get("intent_promoted") is not True
+            or str(fact.get("fact_id")) in intent_ids
+        ):
             continue
         intent, relation = _semantic_intent(fact)
         intents.append(intent)
@@ -2865,14 +2878,13 @@ def collect(
     )
     gate_events.extend(project_gate_rows)
     briefings += prepared
-
     allowed_gate_work_items = _scope_gate_events(
         events,
         history_events,
         gate_events,
         focus,
         child_assignments,
-        sessions,
+        semantic_history.read(config, state, project),
     )
 
     timeline = _dedupe_project_events(events, limit=MAX_PROJECT_EVENTS)

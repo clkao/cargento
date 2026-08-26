@@ -1014,10 +1014,6 @@ function projectLaneRegistry(model, delegations, focus, sessionOrigins){
   });
   const projectedDirections = intents.concat(Array.isArray(activity.steering)
     ? activity.steering : []);
-  const projectedFactIds = new Set(projectedDirections.map(intent => intent.derived_from));
-  facts.filter(fact => fact.type === "user_message" && !projectedFactIds.has(fact.fact_id))
-    .forEach(fact => projectedDirections.push({projection_id:`intent:${fact.fact_id}`,
-      derived_from:fact.fact_id, at:fact.at, summary:fact.summary}));
   const intentFactById = new Map(projectedDirections.map(intent =>
     [intent.projection_id, intent.derived_from]));
   const meaningfulDirections = projectMeaningfulDirections(projectedDirections, factById);
@@ -1512,8 +1508,7 @@ function projectGlobalEventSentence(event, lane){
     actor = fact.by === "person:captain" ? "You" : String(fact.by || "Decision author");
     action = ({approve:"approved", revise:"revised", hold:"held"})[fact.decision] ||
       String(fact.decision || "decided");
-    result = fact.target_stage ? `${fact.stage || "gate"} → ${fact.target_stage}` :
-      (fact.stage || event.meaning || "decision recorded");
+    result = projectGateApplicationResult(fact, event.meaning);
   }else if(event.kind === "dispatch"){
     const started = ["work_birth", "task_started", "child_assignment"].includes(fact.source_kind);
     actor = started ? contributor : `${harness} FO`;
@@ -1528,6 +1523,20 @@ function projectGlobalEventSentence(event, lane){
     result = fact.stage || event.meaning || "progress recorded";
   }
   return {actor, action, object, result};
+}
+
+function projectGateApplicationResult(fact, fallback){
+  const stage = String(fact.stage || "gate");
+  const state = String(fact.application_state || "").toLowerCase();
+  if(["applied", "consumed"].includes(state) && fact.target_stage){
+    return `${stage} → ${fact.target_stage}`;
+  }
+  if(["pending", "unspent"].includes(state)){
+    return `${stage} · decision recorded · pending application`;
+  }
+  if(state === "superseded") return `${stage} · decision superseded`;
+  if(!state) return `${stage} · decision recorded · application unknown`;
+  return `${stage} · decision recorded · application ${state}` || fallback || "decision recorded";
 }
 
 function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){

@@ -112,7 +112,7 @@ class ProjectContextTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def collect(self, *, refresh: bool = True) -> dict[str, Any]:
+    def collect(self, *, refresh: bool = True, focused: bool = True) -> dict[str, Any]:
         state = build_runtime_state(self.config, started=self.NOW)
         sessions = [
             {
@@ -139,13 +139,14 @@ class ProjectContextTest(unittest.TestCase):
             "repo/proj",
             now=self.NOW,
             refresh=refresh,
-            focus=("pi", self.SID),
+            focus=("pi", self.SID) if focused else None,
         )
 
     def test_real_transcript_and_gate_frontmatter_supply_the_context(self) -> None:
-        result = self.collect()
+        focused = self.collect()
+        result = self.collect(focused=False)
 
-        observer = result["observers"][0]
+        observer = focused["observers"][0]
         events = result["events"]
         self.assertEqual("Follow the captain revision", observer["goal"])
         self.assertEqual("shaping", observer["stage"])
@@ -340,13 +341,13 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual(["shaping"], result["workflows"][0]["stages"])
 
     def test_source_changes_move_events_and_source_removal_does_not_leave_rows(self) -> None:
-        before = self.collect()
+        before = self.collect(focused=False)
         self._write_gate("2026-08-24T20:15:00Z", "revise")
-        moved = self.collect()
+        moved = self.collect(focused=False)
         self.entity.unlink()
-        no_gate = self.collect()
+        no_gate = self.collect(focused=False)
         self._write_transcript(None, "2026-08-24T20:00:00Z")
-        empty = self.collect()
+        empty = self.collect(focused=False)
 
         self.assertNotEqual(before["events"][0]["at"], moved["events"][0]["at"])
         self.assertEqual(0, no_gate["sources"]["gate"]["live"])
@@ -440,7 +441,7 @@ class ProjectContextTest(unittest.TestCase):
             Path(path).unlink(missing_ok=True)
 
         with mock.patch.object(observer.CodexGoalModel, "__call__") as model:
-            automatic = self.collect(refresh=False)
+            automatic = self.collect(refresh=False, focused=False)
 
         model.assert_not_called()
         self.assertEqual([], automatic["observers"])
@@ -730,7 +731,7 @@ class ProjectContextTest(unittest.TestCase):
             )
         )
 
-    def test_structural_assistant_turn_promotes_short_command_and_one_reaction(self) -> None:
+    def test_only_explicitly_eligible_directive_promotes_and_links_a_reaction(self) -> None:
         model = project_context._semantic_model(
             [
                 {
@@ -779,20 +780,22 @@ class ProjectContextTest(unittest.TestCase):
 
         intents = model["projections"]["operator_intents"]
         episodes = model["projections"]["steering_episodes"]
-        self.assertIn("redispatch", [intent["summary"] for intent in intents])
-        self.assertEqual(1, len(episodes))
-        self.assertEqual("structural", episodes[0]["confidence"])
-        redispatch = next(intent for intent in intents if intent["summary"] == "redispatch")
-        comparison = next(
-            intent
-            for intent in intents
-            if intent["summary"] == "and do the comparison at the same time"
+        self.assertEqual(
+            ["and do the comparison at the same time"],
+            [intent["summary"] for intent in intents],
         )
-        self.assertEqual(redispatch["projection_id"], episodes[0]["intent_id"])
-        self.assertNotEqual(comparison["projection_id"], episodes[0]["intent_id"])
-        links = [relation for relation in model["relations"] if relation["type"] == "elicits"]
-        self.assertEqual(1, len(links))
-        self.assertEqual("structural", links[0]["confidence"])
+        self.assertEqual([], episodes)
+        self.assertEqual(
+            [False, True],
+            [
+                fact["intent_promoted"]
+                for fact in sorted(
+                    (fact for fact in model["facts"] if fact["type"] == "user_message"),
+                    key=lambda fact: fact["at"],
+                )
+            ],
+        )
+        self.assertFalse(any(relation["type"] == "elicits" for relation in model["relations"]))
 
     def test_pi_turn_identity_reaches_a_descendant_subagent_call(self) -> None:
         rows = [
@@ -1313,6 +1316,64 @@ class ProjectContextTest(unittest.TestCase):
             model["projections"]["operator_intents"][0]["summary"],
         )
 
+    def test_persisted_intent_flag_survives_restart_without_promoting_envelopes(self) -> None:
+        human = {
+            "at": 10.0,
+            "kind": "steer",
+            "title": "Keep exact workflow identity in the focused view.",
+            "source": "timestamped non-meta user-role record",
+            "harness": "codex",
+            "sid": self.SID,
+            "intent_promotable": True,
+        }
+        rejected = {
+            "at": 11.0,
+            "kind": "steer",
+            "title": "do it",
+            "source": "timestamped non-meta user-role record",
+            "harness": "codex",
+            "sid": self.SID,
+            "intent_promotable": False,
+        }
+        collaboration = {
+            "at": 12.0,
+            "kind": "steer",
+            "title": (
+                "Message Type: MESSAGE Task name: /root/worker Sender: /root Payload: keep working"
+            ),
+            "source": "Codex injected agent_message collaboration envelope",
+            "harness": "codex",
+            "sid": self.SID,
+            "intent_promotable": False,
+        }
+        state = build_runtime_state(self.config, started=1)
+        model = project_context._semantic_model([human, rejected, collaboration], [])
+        persisted = semantic_history.update(
+            self.config,
+            state,
+            "git:project",
+            model,
+            [],
+            now=20.0,
+        )
+        replay = project_context._merge_semantic_history(
+            project_context._semantic_model([], []),
+            semantic_history.read(
+                self.config, build_runtime_state(self.config, started=2), "git:project"
+            ),
+            now=20.0,
+        )
+
+        self.assertTrue(persisted["persisted"])
+        self.assertEqual(3, len(replay["facts"]))
+        self.assertEqual(
+            ["Keep exact workflow identity in the focused view."],
+            [row["summary"] for row in replay["projections"]["operator_intents"]],
+        )
+        by_summary = {fact["summary"]: fact for fact in replay["facts"]}
+        self.assertFalse(by_summary["do it"]["intent_promoted"])
+        self.assertFalse(by_summary[collaboration["title"]]["intent_promoted"])
+
     def test_semantic_ids_include_workflow_and_survive_order_changes(self) -> None:
         first = {
             "at": 2.0,
@@ -1402,6 +1463,7 @@ class ProjectContextTest(unittest.TestCase):
         self.assertEqual("project", fact["scope"])
         self.assertEqual("person:captain", fact["by"])
         self.assertEqual("shaping", fact["target_stage"])
+        self.assertEqual("applied", fact["application_state"])
         self.assertEqual("review", fact["stage"])
         self.assertEqual("abcdefghjk", fact["workflow_entity"])
         self.assertNotIn("source_session", fact)
@@ -1523,14 +1585,14 @@ class ProjectContextTest(unittest.TestCase):
 
         self.assertEqual(["kept"], [row["event_id"] for row in focused["events"]])
 
-    def test_focused_gates_require_exact_session_child_or_plan_identity(self) -> None:
+    def test_focused_gates_require_exact_current_child_or_persisted_identity(self) -> None:
         workflow = "/repo/docs/dev"
 
-        def gate(entity: str, slug: str) -> dict[str, str]:
+        def gate(entity: str, slug: str, binding: str = workflow) -> dict[str, str]:
             return {
                 "kind": "gate",
-                "workflow": "dev",
-                "workflow_binding": workflow,
+                "workflow": Path(binding).name,
+                "workflow_binding": binding,
                 "entity": entity,
                 "entity_slug": slug,
             }
@@ -1540,32 +1602,57 @@ class ProjectContextTest(unittest.TestCase):
                 "kind": "prepared_dispatch",
                 "workflow_binding": workflow,
                 "entity": "session-id",
-            }
+            },
+            {
+                "kind": "prepared_dispatch",
+                "workflow_binding": workflow,
+                "entity": "shared-slug",
+            },
         ]
         children = [{"work_item_id": semantic_history.workflow_work_item_id(workflow, "child-id")}]
-        sessions = [
-            {
-                "spacedock": {
-                    "workflows": [{"workflow": "dev", "entities": [{"slug": "planned-slug"}]}]
-                }
-            }
-        ]
+        persisted = {
+            "events": [
+                {
+                    "fact": {
+                        "scope": "session",
+                        "source_session": {"harness": "codex", "sid": "root"},
+                        "work_item_id": semantic_history.workflow_work_item_id(
+                            workflow, "persisted-id"
+                        ),
+                        "workflow_binding": workflow,
+                        "workflow_entity": "persisted-id",
+                    }
+                },
+                {
+                    "fact": {
+                        "scope": "session",
+                        "source_session": {"harness": "codex", "sid": "peer"},
+                        "work_item_id": semantic_history.workflow_work_item_id(workflow, "peer-id"),
+                        "workflow_binding": workflow,
+                        "workflow_entity": "peer-id",
+                    }
+                },
+            ]
+        }
         gates = [
             gate("session-id", "session-slug"),
             gate("child-id", "child-slug"),
-            gate("planned-id", "planned-slug"),
+            gate("persisted-id", "persisted-slug"),
             gate("peer-id", "peer-slug"),
+            gate("dev-alias-id", "shared-slug"),
+            gate("explore-alias-id", "shared-slug", "/repo/docs/explore"),
         ]
 
         kept, work_items = project_context._focused_gate_events(
             transcript,
             gates,
             children,
-            sessions,
+            persisted,
+            ("codex", "root"),
         )
 
         self.assertEqual(
-            ["session-id", "child-id", "planned-id"],
+            ["session-id", "child-id", "persisted-id", "dev-alias-id"],
             [row["entity"] for row in kept],
         )
         self.assertNotIn(

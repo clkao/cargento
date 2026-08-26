@@ -22,7 +22,7 @@ MAX_EVENTS_PER_PROJECT = 512
 HISTORY_WINDOW_SEC = 24 * 60 * 60
 STORE_NAME = "semantic-work-history.json"
 RESCAN_OVERLAP_BYTES = 64 * 1024
-BACKFILL_SCHEMA_VERSION = 4
+BACKFILL_SCHEMA_VERSION = 5
 
 _FACT_EVENT_TYPES = {
     "user_message": "operator_direction",
@@ -59,6 +59,29 @@ def _read(config: RuntimeConfig) -> dict[str, Any]:
     if not isinstance(value, dict) or not isinstance(value.get("projects"), dict):
         return {"v": SCHEMA_VERSION, "projects": {}}
     return value
+
+
+def read(config: RuntimeConfig, state: RuntimeState, project: str) -> dict[str, Any]:
+    """Read one project's persisted semantic evidence without mutating it."""
+    with state.semantic_history_lock:
+        payload = _read(config)
+    row = payload.get("projects", {}).get(project)
+    if not isinstance(row, dict):
+        return {
+            "events": [],
+            "cursors": {},
+            "persisted": False,
+            "window_sec": HISTORY_WINDOW_SEC,
+        }
+    events = row.get("events")
+    cursors = row.get("cursors")
+    return {
+        **row,
+        "events": events if isinstance(events, list) else [],
+        "cursors": cursors if isinstance(cursors, dict) else {},
+        "persisted": True,
+        "window_sec": row.get("window_sec", HISTORY_WINDOW_SEC),
+    }
 
 
 def _write(config: RuntimeConfig, payload: dict[str, Any]) -> bool:
@@ -158,7 +181,9 @@ def _event_from_fact(
             "work_item_id",
             "stage",
             "decision",
+            "application_state",
             "target_stage",
+            "intent_promoted",
             "assignment",
             "worker_kind",
             "batch_id",

@@ -1257,8 +1257,10 @@ const historyEvents = Array.from({length:69}, (_, i) => ({
 const facts = historyEvents.map((event, i) => ({fact_id:event.source_ref, at:event.at,
   type:i < 63 ? "user_message" : "stage_transition", summary:event.summary,
   work_item_id:null, evidence:{source:"root transcript", confidence:"exact"}}));
+const intents = facts.slice(0, 63).map(fact => ({projection_id:`intent:${fact.fact_id}`,
+  at:fact.at, summary:fact.summary, derived_from:fact.fact_id}));
 const semantic = {facts, work_items:[], relations:[], history:{event_count:69,
-  window_sec:86400, persisted:true, events:historyEvents}, projections:{operator_intents:[],
+  window_sec:86400, persisted:true, events:historyEvents}, projections:{operator_intents:intents,
   trail_heads:[], steering_episodes:[], candidate_goal_shifts:[], activity:{
     history_nodes:Array.from({length:5}, (_, i) => ({event_id:`history-${i}`})),
     steering:Array.from({length:3}, (_, i) => ({projection_id:`steer-${i}`})), nodes:[]}}};
@@ -1565,7 +1567,8 @@ const model = {facts, relations, work_items:[
   {work_item_id:cockpit, label:"Project cockpit", kind:"workflow_item", source_bindings:[]},
   {work_item_id:terminal, label:"session-interaction-origin", kind:"workflow_item",
     source_bindings:[]}
-], projections:{operator_intents:[], steering_episodes:[], trail_heads:[
+], projections:{operator_intents:[{projection_id:"intent:direction", at:111,
+  summary:"Keep current work clear", derived_from:"direction"}], steering_episodes:[], trail_heads:[
   {work_item_id:cockpit, status:"current stage", stage:"shaping",
     latest_meaningful_event:"cockpit-state", dispatch_count:3},
   {work_item_id:terminal, status:"prepared", stage:"shaping",
@@ -1801,7 +1804,8 @@ const model = {facts:[
 ], work_items:[
   {work_item_id:cockpit, label:"project-cockpit", kind:"workflow_item"},
   {work_item_id:terminal, label:"session-interaction-origin", kind:"workflow_item"}
-], relations:[], projections:{operator_intents:[], steering_episodes:[], trail_heads:[
+], relations:[], projections:{operator_intents:[{projection_id:"intent:direction", at:100,
+  summary:"Keep lanes readable", derived_from:"direction"}], steering_episodes:[], trail_heads:[
   {work_item_id:cockpit, stage:"shaping", latest_meaningful_event:"cockpit"},
   {work_item_id:terminal, stage:"shaping", latest_meaningful_event:"terminal"}
 ], activity:{nodes:[

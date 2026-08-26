@@ -315,6 +315,41 @@ class SemanticHistoryTest(unittest.TestCase):
         self.assertEqual("binds_to", restarted["events"][0]["relations"][0]["type"])
         self.assertEqual(semantic_history.HISTORY_WINDOW_SEC, restarted["window_sec"])
 
+    def test_operator_promotion_and_gate_application_fields_survive_restart(self) -> None:
+        direction = self._fact(
+            "direction", 10, "user_message", "steer", "Keep exact evidence", None
+        )
+        direction["intent_promoted"] = False
+        gate = self._fact(
+            "gate", 11, "gate_decision", "gate", "Cockpit approved", "workflow:cockpit"
+        )
+        gate.update(
+            {
+                "decision": "approve",
+                "by": "person:captain",
+                "application_state": "pending",
+                "target_stage": "review",
+            }
+        )
+        state = build_runtime_state(self.config, started=1)
+        semantic_history.update(
+            self.config,
+            state,
+            "git:project",
+            {"facts": [direction, gate], "work_items": []},
+            [],
+            now=20,
+        )
+
+        restarted = semantic_history.read(
+            self.config, build_runtime_state(self.config, started=2), "git:project"
+        )
+        facts = {event["event_id"]: event["fact"] for event in restarted["events"]}
+
+        self.assertFalse(facts["direction"]["intent_promoted"])
+        self.assertEqual("pending", facts["gate"]["application_state"])
+        self.assertEqual("review", facts["gate"]["target_stage"])
+
     def test_backfill_cursor_skips_unchanged_and_rescans_bounded_overlap(self) -> None:
         state = build_runtime_state(self.config, started=1)
         signature = {"size": 1_000_000, "mtime_ns": 10}

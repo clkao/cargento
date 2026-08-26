@@ -88,16 +88,15 @@ function nextCockpitProjectStatus(group, semantic){
     fact && fact.type === "gate_decision" && fact.by === "person:captain")
     .sort((left, right) => Number(right.at || 0) - Number(left.at || 0))
     .filter(fact => {
-      const key = [fact.work_item_id, fact.decision, fact.stage, fact.target_stage].join("\n");
+      const key = [fact.work_item_id, fact.decision, fact.stage, fact.application_state,
+        fact.target_stage].join("\n");
       if(seen.has(key)) return false;
       seen.add(key);
       return true;
     });
   const row = fact => {
     const label = labels.get(String(fact.work_item_id || "")) || "Workflow item";
-    const transition = fact.stage && fact.target_stage
-      ? ` · ${fact.stage} → ${fact.target_stage}` : "";
-    return `<li><strong>${esc(label + transition)}</strong></li>`;
+    return `<li><strong>${esc(label + " · " + projectGateApplicationResult(fact))}</strong></li>`;
   };
   const latest = decisions.slice(0, 2).map(row).join("");
   const older = decisions.slice(2);
