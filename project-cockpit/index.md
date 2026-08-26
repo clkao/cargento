@@ -177,3 +177,24 @@ The corrected breadboard validates the current data plane without producing or s
 ### Summary
 
 The project cockpit is rebased onto Cargento 0.15 and keeps explicit `Last` disclosure state across live outer renders. The live 8766 generation is stable at `2dea360`, its SSE stream is advancing, and its exact read-only terminal remains attached. Cargento 0.15's canonical project identity and isolated project-first preview are reused where authoritative; durable semantic history, FO/task topology, remembered focus, and terminal adjacency remain clearly bounded prototype exploration.
+
+## Stage Report: shaping (cycle 3)
+
+- DONE: Every operator-controlled mirror disclosure, including Last and history, remains open across dashboard revisions and only closes by explicit operator action.
+  Commit `c63073a1419bbc3117078cd802ffacfc18e28131` gives every focused-mirror disclosure one exact `harness:sid + control` state key. The executed DOM test opens Last, Past work, and Evidence across advancing outer renders, preserves an explicit Past-work close, proves a second session starts closed, and restores only the first session's remembered states.
+- DONE: The prototype branch is fetched and rebased onto current origin/main without touching .spacedock/dev or pushing/integrating.
+  `origin/main` at `7317941` remains an ancestor of the 67-commit Explore-only checkpoint; no code push, integration, or `.spacedock/dev` mutation occurred.
+- DONE: The history label and contents truthfully cover the measured source-backed time window, with exact oldest/newest timestamps and omissions reported.
+  The exact focused root transcript is 24.7 MB, below the bounded 32 MiB cold-scan cap, and its persisted cursor resumes by source signature plus overlap. The initial audit retained 69 normalized events across nearly 24 hours; at final live measurement the rolling cutoff retained 65 events from `2026-08-25T14:12:36Z` through `2026-08-26T06:31:10Z`, a 16h19m observed span after an isolated near-cutoff event expired and exposed a real 7.6-hour source-event gap.
+- DONE: Keep the primary graph concise while making the complete retained semantic projection discoverable.
+  The five history heads and three steering rows are labeled `Past work · N` and `newest first`, not `24h history`. Evidence exposes all 65 retained normalized source events with the measured span and `24h retention`; the final set is 59 operator directions, 3 assignments, 1 stage transition, 1 final output, and 1 observed goal.
+- DONE: Report the source boundary rather than letting lifecycle noise impersonate history.
+  Raw transcript rows remain authoritative; lifecycle, reasoning, token, and tool-envelope rows are intentionally absent from semantic history. Consequential child mailbox/transcript output, authoritative Spacedock status history, generic Git commits without exact binding, and task returns remain unavailable or uncollected; the live relation set has three dispatches, three bindings, 59 derived directions, and zero returns.
+- DONE: Restore and verify the exact live review checkpoint without regressing terminal authority.
+  `http://127.0.0.1:8766/` runs PID 7198 and serves SHA-256 `f7342fe463f5955a72a69ac2d7979071d95f29b5b7fcbf166c337271b09be3a4`; four real SSE revisions (`1787725679.6` through `.9`) arrived in 25 seconds. Root re-registered exact `$0/@0/%0`; lookup reports 202×58, stream connected, read-only, and keyboard input not exposed.
+- DONE: Exercise the correction and record inherited branch failures separately.
+  The 44 cockpit tests and 197-test source-sensitive set pass with Ruff, format, mypy, and frontend lint. The one full 1,824-test run reports 5 failures and 4 errors inherited outside this correction: earlier prototype CLI mock/import-allowlist drift, collector fixture expectations, lane CSS variable audit, and a surrogate-path loader error.
+
+### Summary
+
+The captain's live rejection identified two distinct truth failures: outer renders erased native disclosure state, and a sparse task-head projection claimed to be the whole rolling day. The corrected checkpoint preserves every focused disclosure per exact session, names the primary projection as past work, and makes the full retained semantic event set discoverable with its measured span and retention policy. The stable 8766 generation remains Explore-only and keeps the exact read-only terminal and FO/task graph contracts.
