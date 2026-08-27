@@ -261,6 +261,26 @@ function nextCockpitAttentionCoverage(group, observation){
     source:String(raw.source || "active-session attention scan")};
 }
 
+function nextCockpitRecoveryChildren(group){
+  const active = group.sessions.filter(session => session.state === "working")
+    .flatMap(session => projectDelegationLanes(session, {label:nextCockpitStableKey(group)}))
+    .map(lane => ({worker:lane.worker,lifecycle:"active",assignment:lane.assignment,
+      assignmentSource:lane.source,sourceSession:lane.parentSession,workItemId:lane.workItemId}));
+  const returned = group.sessions.flatMap(session =>
+    (Array.isArray(session.subagent_events) ? session.subagent_events : [])
+      .filter(event => event && event.kind === "subagent_complete")
+      .map(event => ({worker:String(event.name || "Child"),lifecycle:"returned",
+        assignment:typeof event.assignment === "string" && event.assignment.trim()
+          ? event.assignment.trim() : "assignment unavailable",
+        assignmentSource:String(event.source || "child lifecycle source unavailable"),
+        result:[event.result, event.result_summary]
+          .find(value => typeof value === "string" && value.trim())?.trim() ||
+          "result unavailable",
+        sourceSession:sessKey(session),at:Number(event.at) || 0})))
+    .sort((left, right) => right.at - left.at);
+  return {active,latestReturn:returned[0] || null};
+}
+
 function nextCockpitCommandAttention(group, observation){
   const attention = [];
   const add = (owner, label, source, confidence = "exact") => attention.push({
@@ -326,23 +346,38 @@ function nextCockpitCommandAttention(group, observation){
     if(stale.length) parts.push(`owner stale · ${stale.length}`);
     add("FO", parts.join(" · "), "exact session state");
   }
-  return attention;
+  const children = nextCockpitRecoveryChildren(group);
+  for(const child of children.active){
+    if(child.assignment !== "assignment unavailable") continue;
+    add("FO", `verify ${child.worker} assignment · assignment unavailable`,
+      child.assignmentSource, "unavailable");
+  }
+  const returned = children.latestReturn;
+  if(returned && (returned.assignment === "assignment unavailable" ||
+      returned.result === "result unavailable")){
+    const gaps = [returned.assignment,returned.result].filter(value => value.endsWith("unavailable"));
+    add("FO", `verify ${returned.worker} return · ${gaps.join(" · ")}`,
+      returned.assignmentSource, "unavailable");
+  }
+  return attention.sort((left, right) =>
+    (left.owner === "CAPTAIN" ? 0 : 1) - (right.owner === "CAPTAIN" ? 0 : 1));
 }
 
 function nextCockpitRecoveryAttention(group, observation, commandAttention){
   const attention = commandAttention || nextCockpitCommandAttention(group, observation);
   const coverage = nextCockpitAttentionCoverage(group, observation);
-  if(!attention.length){
-    return '<strong>No captain attention observed</strong>' +
-      `<small data-next-cockpit-attention-coverage>${esc(coverage.label)}</small>`;
-  }
+  const coverageEvidence = `${coverage.label} · ${coverage.source}`;
   const row = item => `<strong>${esc(item.owner + " · " + item.label)}</strong>` +
     `<small>${esc(String(item.evidence && item.evidence.source || "source unavailable"))} · ` +
     `${esc(String(item.evidence && item.evidence.confidence || "confidence unavailable"))}</small>`;
-  const rest = attention.slice(1);
-  return row(attention[0]) + (rest.length
-    ? `<details><summary>${rest.length} more</summary><ul>${rest.map(item => `<li>${row(item)}</li>`).join("")}</ul></details>`
-    : "") + `<small data-next-cockpit-attention-coverage>${esc(coverage.label)}</small>`;
+  const captain = attention.filter(item => item && item.owner === "CAPTAIN");
+  const system = attention.filter(item => item && item.owner === "FO");
+  const captainRows = captain.length ? captain.map(row).join("") :
+    '<strong>No captain action observed</strong>';
+  const systemRows = system.length ? '<details><summary>System details · ' + system.length +
+    `</summary><ul>${system.map(item => `<li>${row(item)}</li>`).join("")}</ul></details>` : "";
+  return captainRows + systemRows +
+    `<small data-next-cockpit-attention-coverage>${esc(coverageEvidence)}</small>`;
 }
 
 function nextCockpitRecoveryDecisions(semantic){
@@ -370,22 +405,32 @@ function nextCockpitRecoveryActive(group){
     ` · ${exactAssignments.length} exact ${exactAssignments.length === 1 ? "assignment" : "assignments"}`;
 }
 
-function nextCockpitRecoveryLatest(semantic){
+function nextCockpitRecoveryLatest(semantic, stale){
   const latest = type => (semantic && Array.isArray(semantic.facts) ? semantic.facts : [])
     .filter(fact => fact && fact.type === type && fact.evidence &&
       fact.evidence.confidence === "exact" && String(fact.summary || "").trim())
     .sort((left, right) => Number(right.at || 0) - Number(left.at || 0))[0] || null;
-  return {direction:latest("user_message"),result:latest("result")};
+  return {direction:latest("user_message"),result:latest("result"),stale:!!stale};
+}
+
+function nextCockpitRecoveryFactSource(fact){
+  const source = fact && fact.source_session || {};
+  const harness = String(source.harness || "");
+  const sid = String(source.sid || "");
+  return harness && sid ? `${harness}:${sid}` : "source session unavailable";
 }
 
 function nextCockpitRecoveryBriefing(group, focus, observation, commandAttention){
   const semantic = observation && observation.semantic || {};
+  const context = nextCockpitContexts.get(nextCockpitContextKey(group, null));
   const outcome = nextCockpitReadMemo(nextCockpitMemoKey(group, focus, "outcome")) || "Not set";
   const currentFocus = nextCockpitReadMemo(nextCockpitMemoKey(group, focus, "focus")) || "Not set";
+  const task = nextCockpitCurrentTask(observation);
   const active = nextCockpitRecoveryActive(group);
-  const latest = nextCockpitRecoveryLatest(semantic);
+  const latest = nextCockpitRecoveryLatest(semantic, context && context.error);
   const decisions = nextCockpitRecoveryDecisions(semantic);
   const coverage = nextCockpitAttentionCoverage(group, observation);
+  const children = nextCockpitRecoveryChildren(group);
   const captain = (commandAttention || []).filter(item => item && item.owner === "CAPTAIN" &&
     !["coverage_unavailable"].includes(String(item.kind || "")) &&
     item.label !== "Captain-attention coverage incomplete");
@@ -400,19 +445,55 @@ function nextCockpitRecoveryBriefing(group, focus, observation, commandAttention
     `Scope: ${focus ? `Session ${sessKey(focus)}` : "Project"}`,
     `Outcome (browser-local): ${outcome}`,
     `Focus (browser-local): ${currentFocus}`,
+    `Workflow task: ${task.known ? task.label + " · " + task.stage : "Not observed"}`,
     `Active: ${active}`,
     `Active sessions: ${activeSessions.length ? activeSessions.map(session =>
       `${sessKey(session)} · ${session.state}`).join("; ") : "None observed"}`,
+    `Active children: ${children.active.length ? children.active.map(child =>
+      `${child.worker} · ${child.lifecycle} · ${child.assignment} · source session ` +
+      child.sourceSession).join("; ") : "None observed"}`,
+    `Latest returned child (bounded 1): ${children.latestReturn ?
+      `${children.latestReturn.worker} · ${children.latestReturn.lifecycle} · ` +
+      `${children.latestReturn.assignment} · ${children.latestReturn.result} · source session ` +
+      children.latestReturn.sourceSession : "None observed"}`,
     `Exact assignments: ${assignments.length ? assignments.map(lane => lane.assignment).join("; ") :
       "None observed"}`,
-    `Latest exact direction: ${latest.direction ? latest.direction.summary : "Not observed"}`,
-    `Latest exact result: ${latest.result ? latest.result.summary : "Not observed"}`,
+    `${latest.stale ? "Exact direction (stale cached)" : "Latest exact direction"}: ` +
+      `${latest.direction ? latest.direction.summary + " · source session " +
+        nextCockpitRecoveryFactSource(latest.direction) : "Not observed"}`,
+    `${latest.stale ? "Exact result (stale cached)" : "Latest exact result"}: ` +
+      `${latest.result ? latest.result.summary + " · source session " +
+        nextCockpitRecoveryFactSource(latest.result) : "Not observed"}`,
     `Decisions: ${decisions}`,
     `Captain attention: ${captain.length ? captain.map(item => item.label).join("; ") :
       coverage.state === "complete" ? "None observed" : coverage.label}`,
-    `Attention coverage: ${coverage.label}`,
+    `Attention coverage: ${coverage.label} · source ${coverage.source}`,
   ];
-  return {outcome,currentFocus,active,latest,decisions,coverage,text:lines.join("\n")};
+  return {outcome,currentFocus,task,active,children,latest,decisions,coverage,text:lines.join("\n")};
+}
+
+function nextCockpitRecoveryMemoCell(group, focus, briefing){
+  const field = (kind, label, placeholder, value) => {
+    const key = nextCockpitMemoKey(group, focus, kind);
+    const state = nextCockpitMemoStates.get(key);
+    const editing = nextCockpitMemoEditingKey === key;
+    if(editing){
+      const cue = state === "error" ? "Browser storage unavailable" :
+        state === "saved" ? "Saved in this browser" : "Autosaves in this browser";
+      return `<label data-next-cockpit-memo-field="${kind}"><span>${label}</span>` +
+        `<textarea maxlength="${NEXT_COCKPIT_MEMO_LIMIT}" data-next-cockpit-memo-input ` +
+        `data-next-cockpit-memo-key="${esc(key)}" data-next-cockpit-memo-kind="${kind}" ` +
+        `placeholder="${esc(placeholder)}">${esc(value === "Not set" ? "" : value)}</textarea>` +
+        `<small data-next-cockpit-memo-cue="${kind}">${cue}</small>` +
+        '<button type="button" data-next-cockpit-action="memo-done">Done</button></label>';
+    }
+    return `<div data-next-cockpit-memo-field="${kind}"><span>${label}</span>` +
+      `<strong>${esc(value)}</strong><button type="button" data-next-cockpit-action="memo-edit" ` +
+      `data-arg="${esc(key)}" aria-label="Edit ${label}">Edit</button></div>`;
+  };
+  return '<div class="next-cockpit-recovery-memos"><span>OUTCOME / FOCUS · THIS BROWSER</span>' +
+    field("outcome", "OUTCOME", "What result should this scope achieve?", briefing.outcome) +
+    field("focus", "FOCUS", "What are you concentrating on now?", briefing.currentFocus) + '</div>';
 }
 
 function nextCockpitRecoveryStrip(group, observation, commandAttention){
@@ -423,13 +504,41 @@ function nextCockpitRecoveryStrip(group, observation, commandAttention){
     copyState === "error" ? "Copy unavailable" : "Copy briefing";
   const direction = briefing.latest.direction ? briefing.latest.direction.summary : "Not observed";
   const result = briefing.latest.result ? briefing.latest.result.summary : "Not observed";
+  const exactLabel = briefing.latest.stale ? "EXACT DIRECTION / RESULT · STALE CACHED" :
+    "LATEST EXACT DIRECTION / RESULT";
+  const directionSource = briefing.latest.direction
+    ? nextCockpitRecoveryFactSource(briefing.latest.direction) : "source session unavailable";
+  const resultSource = briefing.latest.result
+    ? nextCockpitRecoveryFactSource(briefing.latest.result) : "source session unavailable";
+  const taskText = briefing.task.known ? briefing.task.label + " · " + briefing.task.stage :
+    "Not observed";
+  const childScope = child => {
+    const session = group.sessions.find(candidate => sessKey(candidate) === child.sourceSession);
+    return session ? nextCockpitScopeCue(nextCockpitSessionScopeKind(session)) :
+      nextCockpitScopeCue({kind:"unknown",owner:"unknown"});
+  };
+  const activeChildRows = briefing.children.active.map(child =>
+    `<p data-parent-session="${esc(child.sourceSession)}"` +
+    (child.workItemId ? ` data-work-item="${esc(child.workItemId)}"` : "") + `>` +
+    childScope(child) + `<strong>${esc(child.worker + " · " + child.lifecycle)}</strong>` +
+    `<small>${esc(child.assignment + " · " + child.sourceSession)}</small></p>`).join("");
+  const returned = briefing.children.latestReturn;
+  const returnedRow = returned ? `<p data-parent-session="${esc(returned.sourceSession)}">` +
+    childScope(returned) + `<strong>${esc(returned.worker + " · " + returned.lifecycle)}</strong>` +
+    `<small>${esc(returned.assignment + " · " + returned.result + " · " + returned.sourceSession)}</small></p>` : "";
+  const childRows = activeChildRows + returnedRow || `<strong>${esc(briefing.active)}</strong>`;
+  const taskAttrs = briefing.task.known ? ` data-work-item="${esc(briefing.task.id)}"` : "";
   return '<section class="next-cockpit-recovery" aria-label="Recovery summary">' +
     '<header><strong>RECOVERY BRIEFING</strong>' +
     `<button type="button" data-next-cockpit-action="copy-briefing">${copyLabel}</button></header>` +
-    `<div><span>OUTCOME / FOCUS · THIS BROWSER</span><strong>${esc(briefing.outcome)}</strong>` +
-    `<small>${esc(briefing.currentFocus)}</small></div>` +
-    `<div><span>ACTIVE</span><strong>${esc(briefing.active)}</strong></div>` +
-    `<div><span>LATEST EXACT</span><strong>${esc(direction)}</strong><small>${esc(result)}</small></div>` +
+    nextCockpitRecoveryMemoCell(group, focus, briefing) +
+    `<div data-next-cockpit-task${taskAttrs}>${nextCockpitScopeCue(nextCockpitProjectScopeKind())}` +
+    `<span>${briefing.task.known ? "CURRENT TASK" : "WORKFLOW TASK"}</span>` +
+    `<strong>${esc(taskText)}</strong></div>` +
+    `<div><span>CHILDREN · LATEST RETURN BOUNDED 1</span>${childRows}</div>` +
+    `<div><span>${exactLabel}</span><strong>${esc(direction)}</strong>` +
+    `<small>${esc(directionSource)}</small><strong>${esc(result)}</strong>` +
+    `<small>${esc(resultSource)}</small></div>` +
     `<div><span>ATTENTION</span>${nextCockpitRecoveryAttention(group, observation, commandAttention)}</div>` +
     `<div><span>DECISIONS</span><strong>${esc(briefing.decisions)}</strong></div>` +
     '</section>';
@@ -613,8 +722,7 @@ function nextCockpitNowState(observation){
 function nextCockpitActiveDelegation(group, observation){
   const task = nextCockpitCurrentTask(observation);
   const delegationGroup = {label:nextCockpitStableKey(group)};
-  const lanes = group.sessions.flatMap(session => projectDelegationLanes(session, delegationGroup))
-    .filter(lane => lane.assignment !== "assignment unavailable");
+  const lanes = group.sessions.flatMap(session => projectDelegationLanes(session, delegationGroup));
   const activeSessions = group.sessions.filter(session => session.state === "working");
   if(!lanes.length && !activeSessions.length){
     return '<section class="next-cockpit-active-delegation" data-next-cockpit-primary>' +
@@ -627,7 +735,8 @@ function nextCockpitActiveDelegation(group, observation){
     const workItem = lane.workItemId ? ` data-work-item="${esc(lane.workItemId)}"` : "";
     return `<li${workItem} data-parent-session="${esc(lane.parentSession || "")}">` +
       `<strong>${esc(lane.assignment)}</strong>` +
-      `<small>${esc(lane.worker)} · ${esc(scope.detail || "source unavailable")}</small></li>`;
+      `<small>${esc(lane.worker)} · ${esc(scope.detail || "source unavailable")} · ` +
+      `${esc(lane.source)}</small></li>`;
   });
   const sessionRows = lanes.length ? [] : activeSessions.map(session => {
     const scope = nextCockpitSessionScopeKind(session);
@@ -903,10 +1012,7 @@ function nextCockpitPanel(context, focus, observation, commandAttention){
   const tab = NEXT_PROJECT_TABS.includes(nextRoute && nextRoute.tab) ? nextRoute.tab : "now";
   let body = "";
   if(tab === "now"){
-    body = nextCockpitMemoFields(context.group, focus) +
-      nextCockpitNeedsYou(commandAttention) +
-      nextCockpitActiveDelegation(context.group, observation) +
-      nextCockpitSystemDetails(commandAttention) + nextCockpitPlanDisclosure(context);
+    body = nextCockpitPlanDisclosure(context);
   }else if(tab === "course"){
     body = nextCockpitCoursePanel(context.group, focus) + nextCockpitCompletedWork(context);
   }else if(tab === "decisions"){
@@ -929,7 +1035,7 @@ function nextProjectCockpit(context, observation, commandAttention){
   const focus = nextCockpitFocusedSession(group);
   projectQuerySession = focus ? sessKey(focus) : "";
   lastData = nextData;
-  return nextCockpitTaskSubject(observation) + nextCockpitViewingSession(focus) +
+  return nextCockpitViewingSession(focus) +
     nextCockpitRecoveryStrip(group, observation, commandAttention) +
     nextCockpitTabList() +
     nextCockpitPanel(context, focus, observation, commandAttention);

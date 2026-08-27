@@ -324,6 +324,11 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
 .next-cockpit-recovery>header button{padding:4px 7px;border:1px solid var(--line2);background:transparent;color:var(--ink2);font:inherit;letter-spacing:0;cursor:pointer}
 .next-cockpit-recovery>div{min-width:0;padding:10px 12px;border-right:1px solid var(--line);font:var(--fs-xs) var(--mono)}
 .next-cockpit-recovery>div:last-child{border-right:0}
+.next-cockpit-recovery-memos>[data-next-cockpit-memo-field]{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 8px;padding-top:5px}
+.next-cockpit-recovery-memos>[data-next-cockpit-memo-field]+[data-next-cockpit-memo-field]{margin-top:5px;border-top:1px solid var(--line);padding-top:7px}
+.next-cockpit-recovery-memos>[data-next-cockpit-memo-field]>span{grid-column:1/-1;margin:0;letter-spacing:.04em}
+.next-cockpit-recovery-memos>[data-next-cockpit-memo-field]>button{border:0;background:none;color:var(--accent-ink);font:inherit;cursor:pointer}
+.next-cockpit-recovery-memos textarea{grid-column:1/-1;width:100%;min-height:54px;resize:vertical;padding:7px;border:1px solid var(--line2);background:var(--panel);color:var(--ink);font:inherit}
 .next-cockpit-recovery span,.next-cockpit-recovery strong,.next-cockpit-recovery small{display:block}
 .next-cockpit-recovery span{margin-bottom:5px;color:var(--ink3);font-size:var(--fs-2xs);letter-spacing:.08em}
 .next-cockpit-recovery strong{font-weight:500;overflow-wrap:anywhere}
