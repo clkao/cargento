@@ -97,7 +97,7 @@ console.log(JSON.stringify({html, rows}));
         self.assertIn('data-next-cockpit-panel="course"', html)
         self.assertIn("Other directions (2)", html)
         self.assertIn("Project cockpit · State change", html)
-        self.assertIn("+ Add human context · this browser", html)
+        self.assertIn(">Add human context</button>", html)
         self.assertNotIn("Outcome &amp; Focus", html)
         self.assertNotIn("SEMANTIC TIMELINE", html)
         self.assertNotIn('data-next-cockpit-action="graph-mode"', html)
@@ -133,10 +133,10 @@ console.log(JSON.stringify({html,tabs,panel}));
         )
         self.assertEqual(1, out["html"].count('role="tabpanel"'))
         self.assertIn('data-next-cockpit-panel="now"', out["html"])
-        self.assertIn("+ Add human context · this browser", out["html"])
+        self.assertIn(">Add human context</button>", out["html"])
         self.assertIn("FO INSPECTING", out["html"])
         self.assertIn("Banach · active", out["html"])
-        self.assertIn("Show project plan", out["html"])
+        self.assertNotIn("Show project plan", out["html"])
         self.assertNotIn("CURRENT FOCUS · DERIVED", out["html"])
         self.assertNotIn('data-next-project-section="plan"', out["html"])
         self.assertNotIn('data-next-project-section="going-on"', out["html"])
@@ -183,8 +183,8 @@ console.log(JSON.stringify({html,panel,mirror,visible,visibleWords:visible ? vis
         self.assertIn("Project cockpit · Shaping", out["mirror"])
         self.assertIn("Approve pushing this candidate?", out["mirror"])
         self.assertIn("Fix the completion guard", out["mirror"])
-        self.assertIn("+ Add human context · this browser", out["mirror"])
-        self.assertIn('data-next-cockpit-action="memo-edit"', out["mirror"])
+        self.assertNotIn("Add human context", out["mirror"])
+        self.assertNotIn('data-next-cockpit-action="memo-edit"', out["mirror"])
         for old_surface in (
             "Latest decisions",
             "CURRENT FOCUS · DERIVED",
@@ -693,13 +693,7 @@ console.log(JSON.stringify({html,recovery,task,scope,visibleWords:visible?visibl
         self.assertIn("Unbound · active", out["recovery"])
         self.assertIn("assignment unavailable", out["recovery"])
         self.assertIn("inspect Unbound assignment", out["recovery"])
-        self.assertIn("<small>1 session</small>", out["scope"])
-        self.assertIn(
-            '<span class="next-cockpit-scope-state">working</span>'
-            "<small>running 1 subagent</small>",
-            out["scope"],
-        )
-        self.assertEqual(1, out["scope"].count(">working<"))
+        self.assertEqual("", out["scope"])
 
     def test_session_switcher_is_below_header_and_outcome_first(self) -> None:
         out = self.run_fixture(
@@ -717,7 +711,8 @@ console.log(JSON.stringify({
         assert isinstance(out, dict)
 
         self.assertLess(out["header"], out["nav"])
-        self.assertLess(out["nav"], out["plan"])
+        self.assertEqual(-1, out["plan"])
+        self.assertLess(out["nav"], out["html"].index('class="next-cockpit-tabs"'))
         self.assertIn(
             '<strong class="next-cockpit-scope-name">Codex</strong>'
             '<span class="next-cockpit-scope-state">working</span>',
@@ -941,7 +936,7 @@ console.log(JSON.stringify({discovered,absent:__els.app.innerHTML}));
         assert isinstance(out, dict)
 
         self.assertLess(
-            out["discovered"].index("+ Add human context · this browser"),
+            out["discovered"].index(">Add human context</button>"),
             out["discovered"].index("data-next-cockpit-plan-details"),
         )
         self.assertIn("<summary>Show project plan</summary>", out["discovered"])
@@ -1195,7 +1190,7 @@ console.log(JSON.stringify({attention,
         self.assertNotIn("Hooke", out["html"])
         self.assertTrue(
             any(
-                row["owner"] == "FO" and "inspect Harvey handoff" in row["label"]
+                row["owner"] == "FO" and "recover Harvey handoff" in row["label"]
                 for row in out["attention"]
             )
         )
@@ -1644,6 +1639,163 @@ console.log(JSON.stringify({fresh,stale}));
         self.assertIn("22s", out["fresh"])
         self.assertIn("stale", stale_primary)
 
+    def test_returned_handoff_unavailable_is_inline_and_commands_recovery(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+group.sessions=[group.sessions[0]];
+group.sessions[0].subagent_hierarchy=[];
+group.sessions[0].subagent_events=[{at:112,kind:"subagent_complete",name:"Harvey",
+  source:"Codex child rollout lifecycle"}];
+const observation={semantic:__semantic,workflow_discovery:{state:"observed"},sources:{}};
+const attention=nextCockpitCommandAttention(group,observation);
+const briefing=nextCockpitRecoveryBriefing(group,null,observation,attention);
+console.log(JSON.stringify({attention,
+  execution:nextCockpitRecoveryExecution(group,briefing),
+  command:nextCockpitRecoveryAttention(group,observation,attention)}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertTrue(any(row["label"] == "recover Harvey handoff" for row in out["attention"]))
+        self.assertIn("Harvey · returned · handoff unavailable", out["execution"])
+        self.assertIn("INSPECT · recover Harvey handoff", out["command"])
+
+    def test_recovery_cells_put_situation_before_command_with_four_truths_inline(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+group.sessions=[group.sessions[0]];
+group.sessions[0].subagent_hierarchy=[];
+group.sessions[0].subagent_events=[{at:112,kind:"subagent_complete",name:"Harvey",
+  source:"Codex child rollout lifecycle"}];
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.projections.trail_heads=[];
+semantic.facts=semantic.facts.filter(fact=>fact.type!=="user_message");
+semantic.facts.push({fact_id:"direction",at:110,type:"user_message",
+  summary:"restart 5-round review loop",intent_promoted:true,
+  source_session:{harness:"codex",sid:"focus-1"},
+  evidence:{source:"root transcript",confidence:"exact"}});
+semantic.projections.command_attention_coverage={state:"complete",scanned:1,total:1,
+  omitted:0,source:"bounded attention scan"};
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+const attention=nextCockpitCommandAttention(group,observation);
+const html=nextCockpitRecoveryStrip(group,observation,attention);
+const primary=html.replace(/<details[^>]*>[\\s\\S]*?<\\/details>/g,"");
+console.log(JSON.stringify({html,primary}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        positions = [
+            out["primary"].index(label) for label in ("ASSIGNMENT", "EXECUTION", "COMMAND")
+        ]
+        self.assertEqual(sorted(positions), positions)
+        for truth in (
+            "Restart 5-round review loop",
+            "Stage link missing · current work can continue",
+            "Codex · working",
+            "Harvey · returned · handoff unavailable",
+            "FO INSPECTING",
+            "INSPECT · recover Harvey handoff",
+            "Captain not needed",
+        ):
+            self.assertIn(truth, out["primary"])
+
+    def test_idle_fo_continues_collapses_to_two_truthful_handoff_lines(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+group.sessions=[group.sessions[0]];
+group.sessions[0].subagent_hierarchy=[];group.sessions[0].subagent_events=[];
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.projections.command_attention_coverage={state:"complete",scanned:1,total:1,
+  omitted:0,source:"bounded attention scan"};
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+const html=nextCockpitRecoveryStrip(group,observation,[]);
+const primary=html.replace(/<details[^>]*>[\\s\\S]*?<\\/details>/g,"");
+console.log(JSON.stringify({primary}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("FO CONTINUES · Continue current assignment", out["primary"])
+        self.assertIn("No execution observed · Captain not needed", out["primary"])
+        self.assertNotIn("Codex · working", out["primary"])
+
+    def test_single_session_collapses_scope_while_multi_session_keeps_permalinks(self) -> None:
+        out = self.run_fixture(
+            """
+const multi=__els.app.innerHTML;
+nextData.sessions=[nextData.sessions[0]];
+nextRoute=nextRouteFromFragment("#n=project:cargento");renderNext();
+await __settle();await __settle();
+const single=__els.app.innerHTML;
+nextRoute=nextRouteFromFragment("#n=project:cargento:codex%3Afocus-1");renderNext();
+await __settle();await __settle();
+console.log(JSON.stringify({multi,single,selected:__els.app.innerHTML}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn('class="next-cockpit-scope-tree"', out["multi"])
+        self.assertIn('data-next-cockpit-scope="pi:pi-idle"', out["multi"])
+        self.assertNotIn('class="next-cockpit-scope-tree"', out["single"])
+        self.assertIn("next-cockpit-shell--single", out["single"])
+        self.assertNotIn('class="next-cockpit-scope-tree"', out["selected"])
+        self.assertIn("Viewing session · Codex · working", out["selected"])
+        self.assertIn("PROJECT RECOVERY BRIEFING", out["selected"])
+
+    def test_empty_plan_and_context_are_conditionally_subtracted(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const exact={semantic:__semantic,workflow_discovery:{state:"observed",workflows:[]},sources:{}};
+nextCockpitContexts.set(nextCockpitContextKey(group,null),{data:exact,revision:nextData.generated});
+renderNext();const quiet=__els.app.innerHTML;
+const discovered={semantic:__semantic,workflow_discovery:{state:"observed",workflows:[
+  {workflow:"dev",goal:"Discovered plan",stages:["build"]}]},sources:{}};
+nextCockpitContexts.set(nextCockpitContextKey(group,null),{data:discovered,revision:nextData.generated});
+renderNext();const planned=__els.app.innerHTML;
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.projections.trail_heads=[];semantic.work_items=[];
+semantic.projections.command_attention_coverage={state:"incomplete",scanned:2,total:3,omitted:1,
+  source:"bounded attention scan"};
+const unknown={semantic,workflow_discovery:{state:"none",workflows:[]},sources:{}};
+nextCockpitContexts.set(nextCockpitContextKey(group,null),{data:unknown,revision:nextData.generated});
+renderNext();const incomplete=__els.app.innerHTML;
+console.log(JSON.stringify({quiet,planned,incomplete}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertNotIn("Show project plan", out["quiet"])
+        self.assertNotIn("+ Add human context · this browser", out["quiet"])
+        self.assertIn('data-next-cockpit-action="memo-edit"', out["quiet"])
+        self.assertIn("Show project plan", out["planned"])
+        self.assertIn("Discovered plan", out["planned"])
+        self.assertIn("+ Add human context · this browser", out["incomplete"])
+
+    def test_project_utilities_demote_copy_global_count_and_duplicate_breadcrumb(self) -> None:
+        out = self.run_fixture(
+            """
+const html=__els.app.innerHTML;
+const header=(html.match(/<header class="next-header">[\\s\\S]*?<\\/header>/)||[""])[0];
+const recovery=(html.match(/<section class="next-cockpit-recovery"[\\s\\S]*?<\\/section>/)||[""])[0];
+const beforeMenu=header.split('<details class="next-menu"',1)[0];
+console.log(JSON.stringify({html,header,recovery,beforeMenu}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn('data-next-cockpit-action="copy-briefing"', out["header"])
+        self.assertNotIn('data-next-cockpit-action="copy-briefing"', out["recovery"])
+        self.assertNotIn("All projects", out["beforeMenu"])
+        self.assertIn("All projects", out["header"])
+        self.assertNotIn("spacedock-research/cargento", out["header"])
+        self.assertEqual(1, out["html"].count('class="next-project-detail-name"'))
+        self.assertNotIn("&gt; </span><span>cargento</span>", out["header"])
+
     def test_result_fallback_requires_same_session_affinity(self) -> None:
         out = self.run_fixture(
             """
@@ -1754,10 +1906,10 @@ console.log(JSON.stringify({items,html}));
         )
         assert isinstance(out, dict)
 
-        self.assertEqual("inspect Hooke handoff", out["items"][0]["label"])
+        self.assertEqual("recover Hooke handoff", out["items"][0]["label"])
         self.assertLess(
             out["html"].index("FO INSPECTING"),
-            out["html"].index("INSPECT · inspect Hooke handoff"),
+            out["html"].index("INSPECT · recover Hooke handoff"),
         )
         self.assertIn("FO · attention · verify source refresh", out["html"])
         self.assertIn("bounded active-session final-output scan", out["html"])
@@ -1773,8 +1925,8 @@ console.log(JSON.stringify({recovery,
         )
         assert isinstance(out, dict)
 
-        self.assertEqual(1, out["memoEdits"])
-        self.assertIn("+ Add human context · this browser", out["recovery"])
+        self.assertEqual(0, out["memoEdits"])
+        self.assertNotIn("Add human context", out["recovery"])
 
     def test_recovery_reading_order_puts_assignment_action_and_execution_first(self) -> None:
         out = self.run_fixture(
@@ -1788,10 +1940,10 @@ console.log(JSON.stringify({recovery}));
 
         ordered = [
             "ASSIGNMENT",
-            "FO INSPECTING",
             "EXECUTION",
+            "COMMAND",
+            "FO INSPECTING",
             "LATEST EVIDENCE",
-            "+ Add human context · this browser",
         ]
         positions = [out["recovery"].index(label) for label in ordered]
         self.assertEqual(sorted(positions), positions)
@@ -1821,7 +1973,7 @@ console.log(JSON.stringify({html}));
         self.assertNotIn("task, outcome, stage, done condition", out["html"])
         self.assertIn("FO INSPECTING", out["html"])
         self.assertIn("inspect Ohm assignment", out["html"])
-        self.assertIn("inspect Harvey handoff", out["html"])
+        self.assertIn("recover Harvey handoff", out["html"])
         execution = (
             out["html"].split("EXECUTION", maxsplit=1)[1].split("LATEST EVIDENCE", maxsplit=1)[0]
         )
@@ -1839,12 +1991,9 @@ console.log(JSON.stringify({recovery,
         )
         assert isinstance(out, dict)
 
-        self.assertLess(
-            out["recovery"].index("LATEST EVIDENCE"),
-            out["recovery"].index("+ Add human context · this browser"),
-        )
-        self.assertIn("+ Add human context · this browser", out["recovery"])
-        self.assertEqual(1, out["edits"])
+        self.assertIn("LATEST EVIDENCE", out["recovery"])
+        self.assertNotIn("Add human context", out["recovery"])
+        self.assertEqual(0, out["edits"])
         self.assertNotIn("OUTCOME / FOCUS · THIS BROWSER", out["recovery"])
 
     def test_empty_decisions_are_subtracted_from_recovery_primary_cells(self) -> None:
@@ -1928,7 +2077,7 @@ console.log(JSON.stringify({html,recovery,panel,
         assert isinstance(out, dict)
 
         self.assertEqual(1, out["recoveryCount"])
-        self.assertEqual(1, out["memoEdits"])
+        self.assertEqual(0, out["memoEdits"])
         for duplicate in (
             "data-next-cockpit-memos",
             'class="next-cockpit-needs"',

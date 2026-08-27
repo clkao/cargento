@@ -220,10 +220,13 @@ function nextProjectView(project){
   nextCockpitLoadContext(group, null);
   const observation = nextCockpitProjectObservation(group);
   const commandAttention = nextCockpitCommandAttention(group, observation);
+  const multiSession = group.sessions.length > 1;
+  const scopeNavigation = multiSession
+    ? nextCockpitScopeTree(group, focus) + nextCockpitScopeSwitcher(group, focus) : "";
   return `<article class="next-project-detail" data-next-project-detail="${esc(group.label)}">` +
     nextProjectDetailHeader(context) +
-    '<div class="next-cockpit-shell">' + nextCockpitScopeTree(group, focus) +
-    nextCockpitScopeSwitcher(group, focus) +
+    `<div class="next-cockpit-shell${multiSession ? "" : " next-cockpit-shell--single"}">` +
+    scopeNavigation +
     '<div class="next-cockpit-content">' +
     nextProjectCockpit(context, observation, commandAttention) + '</div></div></article>';
 }

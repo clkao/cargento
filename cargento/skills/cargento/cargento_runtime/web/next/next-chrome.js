@@ -17,7 +17,7 @@ function nextBreadcrumb(){
     : '<button type="button" class="next-crumb" data-next-route="overview">Cargento | overview</button>';
   if(nextRoute.view === "overview") return overview;
   const project = esc(nextBreadcrumbProjectLabel(nextRoute.project));
-  if(nextRoute.view === "project") return `${overview}<span aria-hidden="true"> &gt; </span><span>${project}</span>`;
+  if(nextRoute.view === "project") return overview;
   const projectRoute = esc(nextRouteToken({view: "project", project: nextRoute.project}));
   return `${overview}<span aria-hidden="true"> &gt; </span>` +
     `<button type="button" class="next-crumb" data-next-route="${projectRoute}">${project}</button>` +
@@ -85,15 +85,20 @@ function renderNext(){
   const stalled = nextRefreshFailures >= 2
     ? '<div class="next-stalled" data-next-state="stalled" role="status">Refresh stalled</div>'
     : "";
+  const running = `${nextStatusDot("live")} All projects · ${counts.running} running` +
+    (counts.activeChildren ? ` · ${counts.activeChildren} active ` +
+      `${counts.activeChildren === 1 ? "child" : "children"}` : "");
+  const projectDetail = nextRoute.view === "project";
+  const utility = projectDetail && typeof nextCockpitUtilityMenuItems === "function"
+    ? nextCockpitUtilityMenuItems() : "";
   app.innerHTML = '<header class="next-header">' +
     `<nav class="next-breadcrumb" aria-label="Breadcrumb">${nextBreadcrumb()}</nav>` +
     '<div class="next-header-right">' +
-    `<span class="next-running next-live">${nextStatusDot("live")} All projects · ` +
-    `${counts.running} running${counts.activeChildren ? ` · ${counts.activeChildren} active ` +
-      `${counts.activeChildren === 1 ? "child" : "children"}` : ""}</span>` +
+    (projectDetail ? "" : `<span class="next-running next-live">${running}</span>`) +
     gate +
     '<details class="next-menu"><summary aria-label="More">···</summary>' +
     '<div class="next-menu-items">' +
+    (projectDetail ? `<span class="next-menu-status">${running}</span>${utility}` : "") +
     '<button type="button" data-next-action="projects">projects overview <kbd>p</kbd></button>' +
     '<button type="button" data-next-action="sessions">flat session list <kbd>s</kbd></button>' +
     '<button type="button" data-next-action="dashboard">dashboard mode <kbd>d</kbd></button>' +
