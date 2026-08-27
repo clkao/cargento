@@ -454,7 +454,7 @@ Cycle 15 separates the cockpit's two navigation axes: a project-rooted scope tre
 ## Stage Report: shaping (cycle 16)
 
 - DONE: Project-wide and session-specific content use one consistent, non-color-only scope grammar: explicit label, distinct marker shape, and structural position/connector.
-  Commit `e5ef8f5d3fc7fb097ac4f71465662841567bcd35` renders flush-left solid-rule square `PROJECT`, indented branch-connector round `SESSION`, and quiet `SCOPE UNKNOWN` cues; selection remains an independent inset state, and the layout test fails if marker shape, connector, or 760px stack regresses.
+  Commit `e5ef8f557d328d0b7fa610a8513c292e15048bd2` renders flush-left solid-rule square `PROJECT`, indented branch-connector round `SESSION`, and quiet `SCOPE UNKNOWN` cues; selection remains an independent inset state, and the layout test fails if marker shape, connector, or 760px stack regresses.
 - DONE: The cue follows exact scope provenance across the scope tree, selected-scope human memos, Course episodes, Decisions, and Console without relabeling derived or unknown records as exact.
   Renderer tests classify exact `source_session` as session, proven sessionless workflow/task/gate contracts as project, and everything else as unknown; mixed-source derivation stays at one exact session only when all cited facts agree, while `DERIVED COURSE CHANGE` remains a separate epistemic label.
 - DONE: Exact mixed-scope live-payload and narrow-layout falsifiers pass with no duplicate legend/panel, preserved tab/filter permalinks, and the stable server swaps only after focused/static checks.
