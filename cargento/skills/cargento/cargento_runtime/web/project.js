@@ -1557,7 +1557,7 @@ function projectGateApplicationDisposition(fact){
   return `application ${state}`;
 }
 
-function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){
+function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane, options){
   const lane = registry.laneByKey.get(event.lane.key);
   const fact = event.fact || {};
   const first = !firstByLane.has(lane.key);
@@ -1599,6 +1599,8 @@ function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){
     `</div>`;
   const body = projectDisclosure(`timeline-event:${event.eventId}`, visible,
     projectGlobalEventDetails(event, lane), "pc-timeline-event");
+  const prefix = options && typeof options.eventPrefix === "function"
+    ? String(options.eventPrefix(event) || "") : "";
   const attributes = `data-event-id="${esc(event.eventId)}" data-semantic-kind="${esc(event.kind)}"` +
     ` data-inclusion-rationale="${esc(event.rationale || "changes work understanding")}"` +
     (lane.kind === "fo" ? (event.kind === "direction"
@@ -1611,7 +1613,7 @@ function projectGlobalEventRow(d, registry, event, flowKeys, firstByLane){
       (stage ? ` data-work-stage="${esc(stage)}"` : "") +
       (source.binding ? ` data-workflow-binding="${esc(source.binding)}"` : ""));
   return projectGraphRow(d, event.at, event.kind === "direction" ? "steering" : "event",
-    registry, lane, body, attributes, event.meaning, flowKeys);
+    registry, lane, prefix + body, attributes, event.meaning, flowKeys);
 }
 
 function projectUnboundContext(registry){
@@ -1641,7 +1643,7 @@ function projectSemanticTimeline(d, model, workflowLanes, focus, sessionOrigins,
   const flows = projectEventFlows(events);
   const firstByLane = new Set();
   const rows = events.map((event, index) =>
-    projectGlobalEventRow(d, registry, event, flows[index], firstByLane));
+    projectGlobalEventRow(d, registry, event, flows[index], firstByLane, options));
   let splitAt = rows.length;
   let directionCount = 0;
   events.forEach((event, index) => {

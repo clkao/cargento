@@ -138,6 +138,138 @@ console.log(JSON.stringify({html,tabs,panel}));
         self.assertNotIn("EXACT SESSION TERMINAL", out["html"])
         self.assertNotIn('data-next-project-section="workstream"', out["html"])
 
+    def test_scope_tree_and_memos_share_project_session_marker_grammar(self) -> None:
+        out = self.run_fixture(
+            """
+const project=__els.app.innerHTML;
+const narrowest={
+  same:nextCockpitFactSetScope([
+    {type:"result",source_session:{harness:"codex",sid:"focus-1"}},
+    {type:"user_message",source_session:{harness:"codex",sid:"focus-1"}}]),
+  mixed:nextCockpitFactSetScope([
+    {type:"result",source_session:{harness:"codex",sid:"focus-1"}},
+    {type:"result",source_session:{harness:"pi",sid:"pi-idle"}}]),
+  unknown:nextCockpitFactSetScope([
+    {type:"result",source_session:{harness:"codex",sid:"focus-1"}},
+    {type:"result"}])
+};
+nextRoute=nextRouteFromFragment("#n=project:cargento:pi%3Api-idle");
+renderNext();
+await __settle();await __settle();
+const session=__els.app.innerHTML;
+console.log(JSON.stringify({project,session,narrowest}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn(
+            'data-next-cockpit-scope="project" aria-current="page" data-scope-kind="project"',
+            out["project"],
+        )
+        self.assertIn('class="next-scope-marker next-scope-marker--square"', out["project"])
+        self.assertIn('class="next-scope-cue next-scope-cue--project"', out["project"])
+        self.assertIn(">PROJECT</strong>", out["project"])
+        self.assertIn('data-scope-owner="project"', out["project"])
+        self.assertIn('data-scope-owner="pi:pi-idle"', out["session"])
+        self.assertIn('class="next-scope-marker next-scope-marker--round"', out["session"])
+        self.assertIn('class="next-scope-cue next-scope-cue--session"', out["session"])
+        self.assertIn(">SESSION</strong>", out["session"])
+        self.assertEqual("session", out["narrowest"]["same"]["kind"])
+        self.assertEqual("project", out["narrowest"]["mixed"]["kind"])
+        self.assertEqual("unknown", out["narrowest"]["unknown"]["kind"])
+        self.assertIn('data-parent-session="codex:focus-1"', out["project"])
+        self.assertIn('data-scope-owner="codex:focus-1"', out["project"])
+
+    def test_course_interleaves_project_session_and_unknown_provenance_cues(self) -> None:
+        out = self.run_fixture(
+            """
+nextCockpitContexts.clear();
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.facts.push(
+  {fact_id:"unknown-input",at:101.5,type:"user_message",intent_promoted:true,
+    summary:"Unattributed operator note",evidence:{source:"source unavailable",confidence:"unknown"}},
+  {fact_id:"review-result",at:102.5,type:"result",summary:"Review synthesis returned",
+    detail:"Review changed the course:\\n- Keep scope visible.",
+    source_session:{harness:"codex",sid:"focus-1"},work_item_id:__task,
+    evidence:{source:"assistant final answer",confidence:"exact"}}
+);
+__fetchImpl=async()=>({ok:true,json:async()=>({semantic,child_assignments:[],observers:[]})});
+nextRoute=nextRouteFromFragment("#n=project:cargento:course");
+renderNext();await __settle();await __settle();await __settle();
+const html=__els.app.innerHTML;
+const rows=[...html.matchAll(/<article class="next-course-episode"[\\s\\S]*?<\\/article>/g)]
+  .map(match=>match[0]);
+console.log(JSON.stringify({html,rows}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        session_rows = [row for row in out["rows"] if "Newest direction" in row]
+        project_rows = [row for row in out["rows"] if "Shaping cockpit" in row]
+        unknown_rows = [row for row in out["rows"] if "Unattributed operator note" in row]
+        derived_rows = [row for row in out["rows"] if "DERIVED COURSE CHANGE" in row]
+        self.assertEqual(1, len(session_rows))
+        self.assertIn('data-scope-kind="session"', session_rows[0])
+        self.assertEqual(1, len(project_rows))
+        self.assertIn('data-scope-kind="project"', project_rows[0])
+        self.assertEqual(1, len(unknown_rows))
+        self.assertIn('data-scope-kind="unknown"', unknown_rows[0])
+        self.assertIn("SCOPE UNKNOWN", unknown_rows[0])
+        self.assertEqual(1, len(derived_rows))
+        self.assertIn('data-scope-kind="session"', derived_rows[0])
+        self.assertIn("DERIVED COURSE CHANGE", derived_rows[0])
+
+    def test_decisions_use_fact_scope_not_selected_session(self) -> None:
+        out = self.run_fixture(
+            """
+nextCockpitContexts.clear();
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.facts.push({fact_id:"session-decision",at:100.5,type:"gate_decision",
+  source_kind:"gate",scope:"session",by:"person:captain",decision:"hold",stage:"review",
+  application_state:"pending",work_item_id:__task,
+  source_session:{harness:"pi",sid:"pi-idle"},
+  evidence:{source:"session gate",confidence:"exact"}});
+__fetchImpl=async()=>({ok:true,json:async()=>({semantic,child_assignments:[],observers:[]})});
+nextRoute=nextRouteFromFragment("#n=project:cargento:pi%3Api-idle:decisions");
+renderNext();await __settle();await __settle();await __settle();
+const rows=[...__els.app.innerHTML.matchAll(/<article class="pc-graph-row[\\s\\S]*?<\\/article>/g)]
+  .map(match=>match[0]);
+console.log(JSON.stringify({rows,html:__els.app.innerHTML}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        project_rows = [row for row in out["rows"] if 'data-action="approved"' in row]
+        session_rows = [row for row in out["rows"] if 'data-action="held"' in row]
+        self.assertEqual(1, len(project_rows))
+        self.assertIn('data-scope-kind="project"', project_rows[0])
+        self.assertIn(">PROJECT</strong>", project_rows[0])
+        self.assertEqual(1, len(session_rows))
+        self.assertIn('data-scope-kind="session"', session_rows[0])
+        self.assertIn(">SESSION</strong>", session_rows[0])
+
+    def test_console_names_session_scope_and_project_root_stays_non_session(self) -> None:
+        out = self.run_fixture(
+            """
+nextRoute=nextRouteFromFragment("#n=project:cargento:console");
+renderNext();await __settle();
+const project=__els.app.innerHTML;
+nextRoute=nextRouteFromFragment("#n=project:cargento:codex%3Afocus-1:console");
+renderNext();await __settle();
+const session=__els.app.innerHTML;
+console.log(JSON.stringify({project,session}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        project_panel = out["project"][out["project"].index('data-next-cockpit-panel="console"') :]
+        session_panel = out["session"][out["session"].index('data-next-cockpit-panel="console"') :]
+        self.assertIn('data-scope-kind="project"', project_panel)
+        self.assertIn(">PROJECT</strong>", project_panel)
+        self.assertNotIn('data-scope-kind="session"', project_panel)
+        self.assertIn('data-scope-kind="session"', session_panel)
+        self.assertIn(">SESSION</strong>", session_panel)
+
     def test_local_tab_permalink_and_arrow_keys_preserve_project_session_route(self) -> None:
         out = self.run_fixture(
             """
@@ -296,7 +428,11 @@ console.log(JSON.stringify({
 
         self.assertLess(out["header"], out["nav"])
         self.assertLess(out["nav"], out["plan"])
-        self.assertIn("<strong>Codex</strong><span>working</span>", out["sessionNav"])
+        self.assertIn(
+            '<strong class="next-cockpit-scope-name">Codex</strong>'
+            '<span class="next-cockpit-scope-state">working</span>',
+            out["sessionNav"],
+        )
         self.assertIn("<small>Shape project cockpit</small>", out["sessionNav"])
         self.assertNotIn("<strong>Shape project cockpit", out["sessionNav"])
 
@@ -333,7 +469,8 @@ console.log(JSON.stringify({html,requests:[...nextCockpitContexts.keys()]}));
         self.assertTrue(any(key.endswith("\npi:pi-idle") for key in out["requests"]))
         self.assertIn('data-object="Project cockpit"', out["html"])
         self.assertNotIn('data-object="Opaque id"', out["html"])
-        self.assertIn("SESSION EVIDENCE", out["html"])
+        self.assertIn('data-scope-kind="project"', out["html"])
+        self.assertIn(">PROJECT</strong>", out["html"])
         self.assertIn("<h2>Project cockpit <small>· Shaping</small></h2>", out["html"])
         self.assertIn('data-next-cockpit-panel="decisions"', out["html"])
         self.assertNotIn("PROJECT OVERVIEW", out["html"])

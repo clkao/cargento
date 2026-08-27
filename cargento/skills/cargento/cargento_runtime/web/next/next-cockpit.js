@@ -46,14 +46,70 @@ function nextCockpitScopeLabel(group){
   return String(named && named.project_name || group.label).split("/").filter(Boolean).pop() || "Project";
 }
 
+function nextCockpitProjectScopeKind(){
+  return {kind:"project", owner:"project"};
+}
+
+function nextCockpitSessionScopeKind(session){
+  const source = session && session.source_session || session || {};
+  const harness = String(source.harness || "");
+  const sid = String(source.sid || "");
+  if(!harness || !sid) return {kind:"unknown", owner:"unknown"};
+  return {kind:"session", owner:`${harness}:${sid}`,
+    detail:nextHarnessLabels().get(harness) || nextCockpitHumanLabel(harness)};
+}
+
+function nextCockpitFactScope(fact){
+  if(!fact || typeof fact !== "object") return {kind:"unknown", owner:"unknown"};
+  const declared = String(fact.scope || "").toLowerCase();
+  if(declared === "project") return nextCockpitProjectScopeKind();
+  if(fact.type === "gate_decision"){
+    return declared === "session" ? nextCockpitSessionScopeKind(fact.source_session) :
+      nextCockpitProjectScopeKind();
+  }
+  const session = nextCockpitSessionScopeKind(fact.source_session);
+  if(session.kind === "session") return session;
+  if(["prepared_dispatch", "stage_transition"].includes(String(fact.type || ""))){
+    return nextCockpitProjectScopeKind();
+  }
+  return {kind:"unknown", owner:"unknown"};
+}
+
+function nextCockpitFactSetScope(facts){
+  const scopes = (facts || []).map(nextCockpitFactScope);
+  if(!scopes.length || scopes.some(scope => scope.kind === "unknown")){
+    return {kind:"unknown", owner:"unknown"};
+  }
+  const sessions = new Map(scopes.filter(scope => scope.kind === "session")
+    .map(scope => [scope.owner, scope]));
+  if(sessions.size === 1 && scopes.every(scope => scope.kind === "session")){
+    return [...sessions.values()][0];
+  }
+  return nextCockpitProjectScopeKind();
+}
+
+function nextCockpitScopeCue(scope){
+  const kind = ["project", "session"].includes(scope && scope.kind) ? scope.kind : "unknown";
+  const label = kind === "project" ? "PROJECT" : kind === "session" ? "SESSION" : "SCOPE UNKNOWN";
+  const marker = kind === "project" ? "square" : kind === "session" ? "round" : "unknown";
+  const detail = scope && scope.detail ? `<span>${esc(scope.detail)}</span>` : "";
+  return `<span class="next-scope-cue next-scope-cue--${kind}" data-scope-kind="${kind}" ` +
+    `data-scope-owner="${esc(scope && scope.owner || "unknown")}">` +
+    `<i class="next-scope-marker next-scope-marker--${marker}" aria-hidden="true"></i>` +
+    `<strong>${label}</strong>${detail}</span>`;
+}
+
 function nextCockpitScopeTree(group, focus){
   const selected = focus ? sessKey(focus) : "project";
-  const link = (key, label, state, subtitle) => {
+  const link = (key, label, state, subtitle, scope) => {
     const route = {view:"project",project:group.label,focus:key === "project" ? null : key,
       tab:nextRoute && nextRoute.tab || "now"};
     return `<a href="${esc(nextFragmentForRoute(route))}" data-next-cockpit-scope="${esc(key)}"` +
-      (selected === key ? ` aria-current="page"` : "") + `>` +
-      `<strong>${esc(label)}</strong>${state ? `<span>${esc(state)}</span>` : ""}` +
+      (selected === key ? ` aria-current="page"` : "") +
+      ` data-scope-kind="${esc(scope.kind)}">` +
+      nextCockpitScopeCue(Object.assign({}, scope, {detail:""})) +
+      `<strong class="next-cockpit-scope-name">${esc(label)}</strong>` +
+      (state ? `<span class="next-cockpit-scope-state">${esc(state)}</span>` : "") +
       `<small>${esc(String(subtitle || "").replace(/\s+/g, " ").slice(0, 90))}</small></a>`;
   };
   const rows = [...group.sessions].sort((left, right) =>
@@ -61,12 +117,13 @@ function nextCockpitScopeTree(group, focus){
     sessKey(left).localeCompare(sessKey(right)));
   return `<nav class="next-cockpit-scope-tree" aria-label="Project scope">` +
     '<span class="next-cockpit-scope-heading">SCOPE</span>' +
-    link("project", nextCockpitScopeLabel(group), "", `${rows.length} sessions · project`) +
+    link("project", nextCockpitScopeLabel(group), "", `${rows.length} sessions`,
+      nextCockpitProjectScopeKind()) +
     rows.map(session => {
       const harness = nextHarnessLabels().get(String(session.harness || "")) ||
         String(session.harness || "Session");
       return link(sessKey(session), harness, String(session.state || "unknown"),
-        nextCockpitSessionResult(session));
+        nextCockpitSessionResult(session), nextCockpitSessionScopeKind(session));
     }).join("") + `</nav>`;
 }
 
@@ -311,8 +368,11 @@ function nextCockpitMemoFields(group, focus, semantic){
       `<small data-next-cockpit-memo-cue="${kind}">${cue}</small></label>`;
   };
   const task = nextCockpitCurrentTask({semantic});
-  return '<section class="next-cockpit-memos" data-next-cockpit-memos>' +
-    '<header><strong>CAPTAIN MEMO</strong><span>Human-authored · current scope only</span></header>' +
+  const scope = focus ? nextCockpitSessionScopeKind(focus) : nextCockpitProjectScopeKind();
+  return `<section class="next-cockpit-memos" data-next-cockpit-memos ` +
+    `data-scope-owner="${esc(scope.owner)}">` +
+    '<header><strong>CAPTAIN MEMO</strong>' + nextCockpitScopeCue(scope) +
+    '<span>Human-authored · selected scope</span></header>' +
     '<div>' + field("outcome", "OUTCOME", "What result should this scope achieve?") +
     field("focus", "FOCUS", "What are you concentrating on now?") + '</div>' +
     `<p><strong>DERIVED</strong> · ${esc(task.label + " · " + task.stage)} · semantic evidence, never memo text</p>` +
@@ -321,16 +381,16 @@ function nextCockpitMemoFields(group, focus, semantic){
 
 function nextCockpitProjectScope(){
   return '<section class="next-cockpit-scope next-cockpit-scope--project">' +
-    '<strong>PROJECT OVERVIEW</strong>' +
+    nextCockpitScopeCue(nextCockpitProjectScopeKind()) +
+    '<strong>OVERVIEW</strong>' +
     '<span>Session selection filters Course, Decisions, and Console; Now remains project-wide.</span>' +
     '</section>';
 }
 
-function nextCockpitEvidenceScope(focus){
-  const selected = focus ? `${nextHarnessLabels().get(String(focus.harness || "")) ||
-    String(focus.harness || "Session")} · ${String(focus.state || "unknown")}` : "All sessions";
+function nextCockpitConsoleScope(focus){
+  const scope = focus ? nextCockpitSessionScopeKind(focus) : nextCockpitProjectScopeKind();
   return '<header class="next-cockpit-scope next-cockpit-scope--evidence">' +
-    `<strong>SESSION EVIDENCE</strong><span>${esc(selected)}</span></header>`;
+    nextCockpitScopeCue(scope) + '<strong>CONSOLE</strong></header>';
 }
 
 function nextCockpitSemantic(observation){
@@ -393,12 +453,16 @@ function nextCockpitNowState(observation){
   const task = nextCockpitCurrentTask(observation);
   const completed = nextCockpitLatestCompletedResult(semantic);
   const result = completed
-    ? `<div><span>COMPLETED RESULT · EXACT</span><strong>${esc(completed.checkpoint)}</strong>` +
+    ? `<div>${nextCockpitScopeCue(nextCockpitFactScope(completed.fact))}` +
+      `<span>COMPLETED RESULT · EXACT</span><strong>${esc(completed.checkpoint)}</strong>` +
       `<small>${esc(completed.fact.summary || "Exact returned result")}</small></div>`
-    : '<div><span>COMPLETED RESULT</span><strong>No completed result observed</strong></div>';
+    : `<div>${nextCockpitScopeCue(nextCockpitProjectScopeKind())}` +
+      '<span>COMPLETED RESULT</span><strong>No completed result observed</strong></div>';
   return '<section class="next-cockpit-now-state" aria-label="Current task state">' +
-    `<div><span>CURRENT · EXACT WORKFLOW STATE</span><strong>${esc(task.label + " · " + task.stage)}</strong></div>` +
-    '<div><span>CURRENT FOCUS · DERIVED</span><strong>Browser-local operator interpretation</strong></div>' +
+    `<div>${nextCockpitScopeCue(nextCockpitProjectScopeKind())}` +
+    `<span>CURRENT · EXACT WORKFLOW STATE</span><strong>${esc(task.label + " · " + task.stage)}</strong></div>` +
+    `<div>${nextCockpitScopeCue({kind:"unknown",owner:"unknown"})}` +
+    '<span>CURRENT FOCUS · DERIVED</span><strong>Browser-local operator interpretation</strong></div>' +
     result + '</section>';
 }
 
@@ -410,9 +474,14 @@ function nextCockpitActiveDelegation(group, observation){
     return '<section class="next-cockpit-active-delegation"><h2>ACTIVE DELEGATION</h2>' +
       '<p>No active task delegation observed.</p></section>';
   }
-  const rows = lanes.map(lane => `<li data-work-item="${esc(lane.workItemId || "")}" ` +
-    `data-parent-session="${esc(lane.parentSession || "")}"><strong>${esc(lane.worker)}</strong> · ` +
-    `${esc(lane.assignment)}<small>${esc(lane.source || "source unavailable")}</small></li>`).join("");
+  const rows = lanes.map(lane => {
+    const session = group.sessions.find(candidate => sessKey(candidate) === lane.parentSession);
+    const scope = session ? nextCockpitSessionScopeKind(session) : {kind:"unknown",owner:"unknown"};
+    return `<li data-work-item="${esc(lane.workItemId || "")}" ` +
+      `data-parent-session="${esc(lane.parentSession || "")}">${nextCockpitScopeCue(scope)}` +
+      `<strong>${esc(lane.worker)}</strong> · ${esc(lane.assignment)}` +
+      `<small>${esc(lane.source || "source unavailable")}</small></li>`;
+  }).join("");
   return '<section class="next-cockpit-active-delegation" data-next-cockpit-active-delegation>' +
     '<h2>ACTIVE DELEGATION</h2>' +
     `<strong>${esc(task.label)} · ${lanes.length} active ` +
@@ -453,8 +522,10 @@ function nextCockpitCourseRow(episode){
   const body = episode.findings && episode.findings.length
     ? `<ul>${episode.findings.map(finding => `<li>${esc(finding)}</li>`).join("")}</ul>`
     : `<p>${esc(episode.summary)}</p>`;
-  return `<article class="next-course-episode" data-epistemic-kind="${esc(episode.epistemic)}">` +
-    `<header><span>${esc(episode.badge)}</span></header>` +
+  const scope = episode.scope || nextCockpitFactSetScope(episode.sourceFacts || [episode.fact]);
+  return `<article class="next-course-episode" data-epistemic-kind="${esc(episode.epistemic)}" ` +
+    `data-scope-kind="${esc(scope.kind)}">` +
+    `<header>${nextCockpitScopeCue(scope)}<span>${esc(episode.badge)}</span></header>` +
     `<strong>${esc(episode.task + " · " + episode.label)}</strong>${body}` +
     nextCockpitCourseEvidence(episode.fact, episode.contributors || []) + '</article>';
 }
@@ -476,14 +547,14 @@ function nextCockpitCourseEpisodes(semantic, lanes){
   const review = results.find(fact => nextCockpitReviewFindings(fact.detail).length);
   if(review){
     used.add(String(review.fact_id || ""));
-    episodes.push({at:Number(review.at || 0),fact:review,task:taskFor(review),
+    episodes.push({at:Number(review.at || 0),fact:review,sourceFacts:[review],task:taskFor(review),
       label:"Course change",badge:"DERIVED COURSE CHANGE",epistemic:"derived-course-change",
       findings:nextCockpitReviewFindings(review.detail),contributors:contributorNames(review)});
   }else{
     const unavailable = results.find(fact => /\breview\b/i.test(String(fact.summary || fact.detail || "")));
     if(unavailable){
       used.add(String(unavailable.fact_id || ""));
-      episodes.push({at:Number(unavailable.at || 0),fact:unavailable,task:taskFor(unavailable),
+      episodes.push({at:Number(unavailable.at || 0),fact:unavailable,sourceFacts:[unavailable],task:taskFor(unavailable),
         label:"Course change",badge:"DERIVED COURSE CHANGE",epistemic:"derived-course-change",
         summary:"Review outcome unavailable from collected result detail.",
         contributors:contributorNames(unavailable)});
@@ -494,7 +565,7 @@ function nextCockpitCourseEpisodes(semantic, lanes){
     if(!fact || fact.type === "gate_decision" || used.has(String(fact.fact_id || ""))) continue;
     if(fact.type === "user_message"){
       if(fact.intent_promoted !== true && !intentIds.has(String(fact.fact_id || ""))) continue;
-      episodes.push({at:Number(fact.at || 0),fact,task:taskFor(fact),label:"User direction",
+      episodes.push({at:Number(fact.at || 0),fact,sourceFacts:[fact],task:taskFor(fact),label:"User direction",
         badge:"EXACT INPUT",epistemic:"exact-input",summary:String(fact.summary || "Direction unavailable")});
       continue;
     }
@@ -507,7 +578,7 @@ function nextCockpitCourseEpisodes(semantic, lanes){
       ? nextCockpitLatestCompletedResult({facts:[fact]}) : null;
     const summary = String(fact.summary || fact.stage || "Work observed") +
       (completed ? ` · checkpoint ${completed.checkpoint}` : "");
-    episodes.push({at:Number(fact.at || 0),fact,task:taskFor(fact),label:"Observed work",
+    episodes.push({at:Number(fact.at || 0),fact,sourceFacts:[fact],task:taskFor(fact),label:"Observed work",
       badge:"EXACT WORK",epistemic:"exact-work",summary,
       contributors:contributorNames(fact)});
   }
@@ -555,7 +626,8 @@ function nextCockpitTimeline(group, focus, mode = "active"){
       '<p class="next-cockpit-empty">No explicit captain decisions observed.</p></section>';
   }
   const timeline = projectSemanticTimeline(nextData, semantic, lanes, focus, group.sessions,
-    mode === "decisions" ? {mode:"decisions",controls:false} : null)
+    mode === "decisions" ? {mode:"decisions",controls:false,
+      eventPrefix:event => nextCockpitScopeCue(nextCockpitFactScope(event.fact))} : null)
     .replaceAll('data-calm="project-graph-mode"', 'data-next-cockpit-action="graph-mode"');
   return '<section class="next-cockpit-semantic" data-next-cockpit-semantic>' +
     `<h2>${mode === "decisions" ? "CAPTAIN DECISIONS" : "SEMANTIC TIMELINE"}</h2>` +
@@ -609,11 +681,11 @@ function nextCockpitPanel(context, focus, observation, commandAttention, status)
       '<aside class="next-project-detail-rail" data-next-project-rail>' +
       `${nextProjectDelegation(context)}${nextProjectControls(context)}</aside></div>`;
   }else if(tab === "course"){
-    body = nextCockpitEvidenceScope(focus) + nextCockpitCoursePanel(context.group, focus);
+    body = nextCockpitCoursePanel(context.group, focus);
   }else if(tab === "decisions"){
-    body = nextCockpitEvidenceScope(focus) + nextCockpitTimeline(context.group, focus, "decisions");
+    body = nextCockpitTimeline(context.group, focus, "decisions");
   }else{
-    body = nextCockpitEvidenceScope(focus) + (focus
+    body = nextCockpitConsoleScope(focus) + (focus
       ? nextCockpitTerminal(context.group, focus)
       : '<p class="next-cockpit-empty">Select one exact session to open its read-only console.</p>');
   }
