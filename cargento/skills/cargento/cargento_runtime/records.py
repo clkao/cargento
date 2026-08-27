@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 
 # C0 and DEL, the zero-width space, the two directional marks, and the bidi
 # embedding and isolate ranges. Listed one by one across U+200B to U+200F rather
@@ -494,3 +494,127 @@ def injected_prompt(text: str, harness: str) -> bool:
     if tag:
         return tag.group(1).casefold() in _INJECTED_TAGS.get(harness, _ANY_INJECTED_TAG)
     return body in _INJECTED_PROMPTS or body.startswith(_INJECTED_PROMPT_PREFIXES)
+
+
+# ---------------------------------------------------------------------------
+# The instruction line
+#
+# Widths first, in one place, because they were in two and drifted: the 80 was
+# applied inside `transcripts.analyze_codex_transcript` and the 140 at
+# `collectors/codex.py`, so no reader could see both at once.
+#
+# 140 is the width `last_prompt` has always been clipped to and is kept rather
+# than rederived; 80 is the width `transcripts.prompt_title` already defaults to.
+PROMPT_TITLE_CAP_CHARS: Final = 80
+LAST_PROMPT_CAP_CHARS: Final = 140
+# The line-2 cap. It lives here rather than in `config` because the width is not
+# a tuning knob — it is the same untrusted-text bound `last_prompt` carries, on a
+# field published beside it — and `config.py` is a documented merge hotspot.
+INSTRUCTION_CAP_CHARS: Final = 140
+
+# A prompt this short states no work. Measured on Claude's 204-session cohort
+# (DRC-4266): 60 of 204 newest real prompts are six words or fewer — "proceed",
+# "commit, push, and create a PR" — and 24 are three or fewer.
+#
+# Six, not a character count, and the distinction is the whole finding. A "<40
+# characters" rule was measured and rejected: it would replace 402 good lines to
+# fix 81 bad ones, because most short prompts are short AND informative
+# ("create a pr"). This threshold never substitutes for the newest prompt; it
+# only decides whether a SECOND, labelled line is worth adding beneath it, which
+# is the one use a length rule survives.
+_CONTINUATION_MAX_WORDS: Final = 6
+
+
+def bare_continuation(text: str) -> bool:
+    """Does this prompt carry an instruction, or only tell the agent to go on?
+
+    True for "proceed" and "yes, do that"; false for "resolve the blocker and
+    create the pr". Callers use it to decide whether a labelled second line
+    earns its space, never to replace what the operator actually said.
+
+    Give it a RENDERED line, not a raw record. A slash command arrives as sixty
+    characters of markup that counts as six words and reads as a continuation,
+    while the line a person sees is `/burndown DRC-4266 and the board`.
+    `transcripts.states_work` is the pairing that gets this right.
+    """
+    return len(strip_prompt_wrappers(text).split()) <= _CONTINUATION_MAX_WORDS
+
+
+# A rendered directive that is one slash-command token and nothing else. The
+# name is matched against the set below; the shape only isolates it.
+_BARE_COMMAND_RE = re.compile(r"^/([A-Za-z0-9][A-Za-z0-9:._-]*)$")
+
+# Slash commands that drive the harness rather than the work, with their
+# occurrence counts as the last published goal in the local corpus. Shared
+# across harnesses rather than split per harness, on the same reasoning as the
+# injected-prose prefixes above: `clear` and `login` were measured in both, and
+# none of the rest is a name one harness could mean differently.
+_HARNESS_CONTROL_COMMANDS: Final = frozenset(
+    {
+        "add-dir",  # claude 2
+        "clear",  # claude 72, codex 1
+        "context",  # claude 2
+        "exit",  # claude 7
+        "insights",  # claude 1
+        "login",  # claude 70, codex 3
+        "mcp",  # claude 11
+        "model",  # claude 5
+        "plugin",  # claude 21
+        "reload-plugins",  # claude 7
+        "reload-skills",  # claude 1
+        "stickers",  # claude 1
+    }
+)
+
+
+def harness_control(rendered: str | None) -> bool:
+    """Whether a *rendered* directive drives the harness rather than the work.
+
+    Applied to what `transcripts.prompt_title` produces, not to the raw record:
+    the raw spelling is `<command-name>/clear</command-name>` and the value
+    actually published is `/clear`, so a predicate reading the raw text never
+    meets the one the page shows.
+
+    A measured name list and NOT the structural rule "a bare command carries no
+    arguments, so it carries no goal". That rule was checked against the same
+    corpus and is wrong: bare-command goals are also skill invocations —
+    `/create-pr`, `/cargento:cargento`, `/security-review` — and a skill invoked
+    with no arguments is exactly what the operator asked for. Argument-carrying
+    commands are untouched either way; `prompt_title` renders those as
+    `/code-review 1287 with fresh eyes`, which never matches here.
+
+    Lives in `records` rather than in either caller because two surfaces publish
+    the same reading of the same directive: `observer.py` picks a session goal
+    and `transcripts.states_work` picks the instruction line beneath a session
+    title. Two lists would be two chances to disagree about whether `/clear` is
+    an objective.
+    """
+    match = _BARE_COMMAND_RE.match(rendered or "")
+    return match is not None and match.group(1).casefold() in _HARNESS_CONTROL_COMMANDS
+
+
+def instruction_line(
+    label: str,
+    text: str | None,
+    at: float | None,
+    *,
+    limit: int = INSTRUCTION_CAP_CHARS,
+) -> dict[str, Any] | None:
+    """One published line-2 reading, bounded, or nothing.
+
+    ``label`` is what the page prefixes the line with — the reason a stale or
+    second-hand line is survivable at all — so a reading with no label is not
+    published. ``at`` is the record's own stamp; the page renders the age from
+    it, and 0 means unstamped rather than "now".
+
+    The bound is the cap plus one because `transcripts.clip` appends its ellipsis
+    AFTER cutting to the cap, so a clipped title is cap + 1 characters and a
+    scrub at the cap takes the `…` back off — 29 of 1,906 published Claude lines
+    ended in an unmarked mid-token cut that way. `safe_text` only ever shortens,
+    so this cannot truncate what rendering already bounded. The same reasoning,
+    and the same `+ 1`, guards line 1 in `transcripts.codex_instruction`.
+    """
+    bounded = safe_text(text, limit + 1).strip()
+    if not bounded or not label:
+        return None
+    return {"label": label, "text": bounded, "at": at if at and at > 0 else 0}

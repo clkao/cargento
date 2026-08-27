@@ -474,6 +474,24 @@ class NextPageAssetContractTest(unittest.TestCase):
         self.assertIn("min-width:0", name.group(1) if name else "")
         self.assertIn("overflow-wrap:anywhere", name.group(1) if name else "")
 
+    def test_instruction_lines_break_an_unbreakable_token(self) -> None:
+        # The instruction line quotes what the operator typed, and 50 of 1,789
+        # published lines carry a single token over 80 characters (longest 113) —
+        # pasted URLs, which `shorten_paths` leaves whole on purpose because the
+        # repo and issue number in them are the informative part. Under
+        # `max-width:760px` the detail padding drops to 0, so one such token
+        # gives the whole page a horizontal scrollbar. Every comparable surface
+        # in this stylesheet already guards it.
+        styles = (frontend_page.WEB_DIR / "next" / "styles.css").read_text(encoding="utf-8")
+        for selector in (
+            r"\.next-session-row-instruction",
+            r"\.next-session-detail-instruction",
+        ):
+            with self.subTest(selector=selector):
+                rule = re.search(selector + r"\{([^}]*)\}", styles)
+                self.assertIsNotNone(rule)
+                self.assertIn("overflow-wrap:anywhere", rule.group(1) if rule else "")
+
     def test_session_detail_state_rails_use_the_fixed_palette(self) -> None:
         styles = (frontend_page.WEB_DIR / "next" / "styles.css").read_text(encoding="utf-8")
         inset = re.search(
@@ -504,16 +522,16 @@ class NextPageAssetContractTest(unittest.TestCase):
         # is the more useful failure of the two.
         expected_parts = {
             "next-boot.js": (
-                4_918,
-                "4b801dc5c185732eaddd86501f1e866cb062d11a739e2696df5a45044aac9a3f",
+                7_200,
+                "d5f40852df06672c64377315977c902605d5d538d2ee268c7d4ce828921040d4",
             ),
             "next-chrome.js": (
                 6_990,
                 "a1937f422d61aba21c0f96d11731649705d1b5aac1889220759d0f61c2f9010a",
             ),
             "next-sessions.js": (
-                3_961,
-                "6e2fd02868a09b1437cd719192da8da08b4fabe4c352b351e0d9c37f94fc0e32",
+                4_049,
+                "32d5c41372d380af6b1ea44904af4af79b6cee49a47f7e734b39a2a6773318f8",
             ),
             "next-projects.js": (
                 4_450,
@@ -528,8 +546,8 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "0c3cb4fca08ba93793e746b466cbd323bf13668c6941062bdfe4e79cda21c657",
             ),
             "next-session.js": (
-                11_338,
-                "7d827a707f187d3673a88b3c73c6ac9fa104c2c3640ead9305604f6590d62b70",
+                11_469,
+                "b444364d6365c4a2ba89354d4e58b55dad16fb3ef87541bf60fc387efd461836",
             ),
             "next-workstream.js": (
                 11_858,
@@ -560,16 +578,16 @@ class NextPageAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.next_asset_path("styles.css").read_bytes()
-        self.assertEqual(24_200, len(styles))
+        self.assertEqual(24_597, len(styles))
         self.assertEqual(
-            "2ae8e188d4fbe009b6eacf28e8396b5dbd1b98b02a7984baf0ed1328b94cd249",
+            "ab81bb508c578348e98355d6ff470d54d05b0c1790fd133bf540ca0a15009aae",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_next_page()
-        self.assertEqual(225_179, len(assembled))
+        self.assertEqual(228_077, len(assembled))
         self.assertEqual(
-            "443c083e0d50fe75a2d60f40df66a63c7d12d6dc5bb8af439e83924dffb259ed",
+            "418082f56063457b848f07964a8fe12fb0ba1219addb3285678004cb54cb3701",
             hashlib.sha256(assembled).hexdigest(),
         )
 

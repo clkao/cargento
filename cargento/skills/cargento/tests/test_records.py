@@ -447,5 +447,74 @@ class InjectedPromptTest(unittest.TestCase):
                 self.assertFalse(records.injected_prompt(text, "claude"))
 
 
+class InstructionLineTest(unittest.TestCase):
+    """The line-2 primitives: what counts as a continuation, and what publishes."""
+
+    def test_a_short_acknowledgement_is_a_continuation_and_a_short_order_is_not(self) -> None:
+        # The whole reason this is a word count rather than a character count.
+        # "create a pr" is 11 characters and states work; "yes, go ahead and do
+        # that" is 27 and states none. A character threshold picks the wrong one
+        # of those two, which is how a "<40 chars" rule came to replace 402 good
+        # lines to fix 81 bad ones.
+        for text in ("proceed", "continue", "yes, do that", "1 and 2", "sure, proceed"):
+            with self.subTest(text=text):
+                self.assertTrue(records.bare_continuation(text))
+        for text in (
+            "resolve the blocker and create the pr",
+            "Fix the flaky Windows test and report what moved",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(records.bare_continuation(text))
+
+    def test_a_reading_with_no_label_is_never_published(self) -> None:
+        # The label is what makes a second-hand or stale line survivable, so an
+        # unlabelled one is not a degraded reading — it is a claim the runtime
+        # cannot support, and there is no branch that may emit one.
+        self.assertIsNone(records.instruction_line("", "real text", 100.0))
+        self.assertIsNone(records.instruction_line("agent", "", 100.0))
+        self.assertIsNone(records.instruction_line("agent", None, 100.0))
+        self.assertIsNone(records.instruction_line("agent", "   ", 100.0))
+
+    def test_the_text_is_bounded_and_scrubbed_like_every_other_vendor_string(self) -> None:
+        # `last_prompt` beside it is published raw at the collector; this field
+        # is not, and the difference is deliberate. The value is untrusted
+        # transcript text on its way to the DOM.
+        hostile = "drop\u202ethe bidi\x07 override " + "x" * 400
+        line = records.instruction_line("earlier", hostile, 12.0)
+
+        assert line is not None
+        # Cap plus one, not the cap: the ellipsis `clip` appends sits one past
+        # the width it cut to, and scrubbing at the cap takes it back off. This
+        # is the bound, not the rendered width \u2014 every real caller hands this
+        # already-clipped text, so one character of headroom is what keeps the
+        # truncation marked. See the docstring, and line 1's identical `+ 1`.
+        self.assertEqual(records.INSTRUCTION_CAP_CHARS + 1, len(line["text"]))
+        self.assertNotIn("\u202e", line["text"])
+        self.assertNotIn("\x07", line["text"])
+        self.assertEqual("earlier", line["label"])
+        self.assertEqual(12.0, line["at"])
+
+    def test_a_clipped_line_keeps_the_ellipsis_that_marks_it_clipped(self) -> None:
+        # 29 of 1,906 published Claude lines ended in an unmarked mid-token cut,
+        # because `clip` appends `\u2026` AFTER cutting to the cap and the scrub then
+        # trimmed exactly that character off. A cut with no marker reads as the
+        # operator having written a truncated sentence.
+        clipped = "x" * records.INSTRUCTION_CAP_CHARS + "\u2026"
+        line = records.instruction_line("asked", clipped, 12.0)
+
+        assert line is not None
+        self.assertTrue(line["text"].endswith("\u2026"), line["text"][-20:])
+
+    def test_an_unusable_stamp_is_published_as_zero_rather_than_as_now(self) -> None:
+        # The page renders an age from this. A missing stamp read as the current
+        # time would label a two-hour-old line "earlier, 0s", which is the one
+        # reading the label exists to prevent.
+        for stamp in (None, 0, -5.0):
+            with self.subTest(stamp=stamp):
+                line = records.instruction_line("agent", "text", stamp)
+                assert line is not None
+                self.assertEqual(0, line["at"])
+
+
 if __name__ == "__main__":
     unittest.main()
