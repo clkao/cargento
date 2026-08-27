@@ -134,7 +134,7 @@ console.log(JSON.stringify({html,tabs,panel}));
         self.assertEqual(1, out["html"].count('role="tabpanel"'))
         self.assertIn('data-next-cockpit-panel="now"', out["html"])
         self.assertIn("OUTCOME / FOCUS · THIS BROWSER", out["html"])
-        self.assertIn("No captain action observed", out["html"])
+        self.assertIn("Captain · none observed", out["html"])
         self.assertIn("Banach · active", out["html"])
         self.assertIn("Show project plan", out["html"])
         self.assertNotIn("CURRENT FOCUS · DERIVED", out["html"])
@@ -185,7 +185,7 @@ console.log(JSON.stringify({html,panel,mirror,visible,visibleWords:visible ? vis
         self.assertIn("Fix the completion guard", out["mirror"])
         self.assertIn("OUTCOME", out["mirror"])
         self.assertIn("FOCUS", out["mirror"])
-        self.assertIn("Not set", out["mirror"])
+        self.assertIn("Outcome/focus not set", out["mirror"])
         self.assertIn('data-next-cockpit-action="memo-edit"', out["mirror"])
         for old_surface in (
             "Latest decisions",
@@ -1203,7 +1203,7 @@ console.log(JSON.stringify({text:briefing.text,
 
         for value in (out["text"], out["html"]):
             self.assertIn("bounded active-session final-output scan", value)
-        self.assertIn("No captain action observed", out["html"])
+        self.assertIn("Captain · none observed", out["html"])
 
     def test_failed_refresh_marks_retained_exact_facts_stale(self) -> None:
         out = self.run_fixture(
@@ -1258,6 +1258,144 @@ console.log(JSON.stringify({items,html}));
         self.assertTrue(all(row["owner"] == "FO" for row in out["items"][1:]))
         self.assertLess(out["html"].index("CAPTAIN ·"), out["html"].index("FO ·"))
 
+    def test_recovery_excludes_non_promotable_acknowledgment_from_actionable_direction(
+        self,
+    ) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.facts.push(
+  {fact_id:"actionable",at:111,type:"user_message",summary:"Verify the live candidate",
+    intent_promoted:true,source_session:{harness:"codex",sid:"focus-1"},
+    evidence:{source:"root transcript",confidence:"exact"}},
+  {fact_id:"ack",at:112,type:"user_message",summary:"great.",intent_promoted:false,
+    source_session:{harness:"codex",sid:"focus-1"},
+    evidence:{source:"root transcript",confidence:"exact"}}
+);
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+nextCockpitContexts.set(nextCockpitContextKey(group,null),{data:observation,
+  revision:nextData.generated});
+const briefing=nextCockpitRecoveryBriefing(group,null,observation,[]);
+console.log(JSON.stringify({text:briefing.text,
+  html:nextCockpitRecoveryStrip(group,observation,[])}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        for value in (out["text"], out["html"]):
+            self.assertIn("Verify the live candidate", value)
+            self.assertNotIn("great.", value)
+        self.assertIn("LATEST ACTIONABLE DIRECTION", out["html"])
+
+    def test_recovery_uses_attributable_session_output_when_semantic_result_is_absent(
+        self,
+    ) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+group.sessions[0].last_output="Candidate verification completed";
+group.sessions[0].last_activity=120;
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.facts=semantic.facts.filter(fact=>fact.type!=="result");
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+nextCockpitContexts.set(nextCockpitContextKey(group,null),{data:observation,
+  revision:nextData.generated});
+const briefing=nextCockpitRecoveryBriefing(group,null,observation,[]);
+console.log(JSON.stringify({text:briefing.text,
+  html:nextCockpitRecoveryStrip(group,observation,[])}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        for value in (out["text"], out["html"]):
+            self.assertIn("Candidate verification completed", value)
+            self.assertIn("latest session result", value.casefold())
+        self.assertIn("codex:focus-1", out["text"])
+        self.assertIn("session output; semantic result not captured", out["text"])
+        start = out["html"].index("LATEST ACTIONABLE DIRECTION")
+        disclosure = out["html"].find("<details", start)
+        self.assertGreater(disclosure, start)
+        primary = out["html"][start:disclosure]
+        evidence = out["html"][disclosure : out["html"].index("</details>", disclosure)]
+        self.assertNotIn("codex:focus-1", primary)
+        self.assertIn("Evidence", evidence)
+        self.assertIn("codex:focus-1", evidence)
+        self.assertIn("session output; semantic result not captured", evidence)
+
+    def test_recovery_promotes_first_fo_action_when_captain_is_empty(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+for(const session of group.sessions){
+  session.state="working";session.last_activity=1000;
+  session.subagent_hierarchy=[];session.subagent_events=[];
+}
+group.sessions[0].subagent_events=[
+  {at:112,kind:"subagent_complete",name:"Hooke",source:"Codex child rollout lifecycle"}
+];
+const observation={semantic:__semantic,workflow_discovery:{state:"observed"},sources:{}};
+const items=nextCockpitCommandAttention(group,observation);
+items.push({owner:"FO",label:"verify source refresh",
+  evidence:{source:"context",confidence:"exact"}});
+const html=nextCockpitRecoveryAttention(group,observation,items);
+console.log(JSON.stringify({items,html}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual(
+            "verify Hooke return — assignment/result missing", out["items"][0]["label"]
+        )
+        self.assertLess(
+            out["html"].index("FO · verify Hooke return"),
+            out["html"].index("Captain · none observed"),
+        )
+        self.assertIn("System details · 1", out["html"])
+        self.assertIn("bounded active-session final-output scan", out["html"])
+
+    def test_empty_recovery_memos_collapse_to_one_add_context_action(self) -> None:
+        out = self.run_fixture(
+            """
+const html=__els.app.innerHTML;
+const recovery=(html.match(/<section class="next-cockpit-recovery"[\\s\\S]*?<\\/section>/)||[""])[0];
+console.log(JSON.stringify({recovery,
+  memoEdits:(recovery.match(/data-next-cockpit-action="memo-edit"/g)||[]).length}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual(1, out["memoEdits"])
+        self.assertIn("Outcome/focus not set", out["recovery"])
+        self.assertIn("Add context", out["recovery"])
+
+    def test_returned_child_primary_hides_identifiers_and_discloses_evidence(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+for(const session of group.sessions){session.subagent_hierarchy=[];session.subagent_events=[];}
+group.sessions[0].subagent_events=[
+  {at:112,kind:"subagent_complete",name:"Harvey",source:"Codex child rollout lifecycle"}
+];
+const observation={semantic:__semantic,workflow_discovery:{state:"observed"},sources:{}};
+const html=nextCockpitRecoveryStrip(group,observation,
+  nextCockpitCommandAttention(group,observation));
+const start=html.indexOf("Harvey · returned");
+const disclosure=html.indexOf("<details",start);
+const end=html.indexOf("</details>",disclosure);
+console.log(JSON.stringify({primary:html.slice(start,disclosure),
+  evidence:html.slice(disclosure,end)}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("assignment/result missing", out["primary"])
+        self.assertNotIn("codex:focus-1", out["primary"])
+        self.assertIn("Evidence", out["evidence"])
+        self.assertIn("assignment unavailable", out["evidence"])
+        self.assertIn("result unavailable", out["evidence"])
+        self.assertIn("codex:focus-1", out["evidence"])
+
     def test_mounted_briefing_subtracts_duplicate_now_cards(self) -> None:
         out = self.run_fixture(
             """
@@ -1272,7 +1410,7 @@ console.log(JSON.stringify({html,recovery,panel,
         assert isinstance(out, dict)
 
         self.assertEqual(1, out["recoveryCount"])
-        self.assertEqual(2, out["memoEdits"])
+        self.assertEqual(1, out["memoEdits"])
         for duplicate in (
             "data-next-cockpit-memos",
             'class="next-cockpit-needs"',
@@ -1282,7 +1420,7 @@ console.log(JSON.stringify({html,recovery,panel,
             "<h2>Active work</h2>",
         ):
             self.assertNotIn(duplicate, out["panel"])
-        self.assertIn("System details", out["recovery"])
+        self.assertIn("FO · owner idle", out["recovery"])
 
     def test_prepared_trail_is_fo_follow_up_not_current_task(self) -> None:
         out = self.run_fixture(
@@ -1362,7 +1500,7 @@ console.log(JSON.stringify({copied:__copied,html:__els.app.innerHTML,before,
             "Outcome (browser-local): Recover operator context",
             "Focus (browser-local): Check exact handoff",
             "Active: 1 active session · 2 exact assignments",
-            "Latest exact direction: Copy this direction",
+            "Latest actionable direction: Copy this direction",
             "Latest exact result: Copy this exact result",
             "Decisions: consumed/applied 1",
             "Attention coverage: Coverage complete · 3 of 3 active sessions",
