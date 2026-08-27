@@ -613,3 +613,36 @@ Cycle 21 makes the existing recovery strip a truthful crash handoff without addi
 ### Summary
 
 Cycle 22 turns the recovery briefing into the canonical project mirror: exact workflow-task truth, active and returned child lifecycle, source sessions, bounded attention coverage, browser-local intent, and decision state now share one authority-ordered region. Missing assignments and results remain visibly unavailable, cached facts become visibly stale after refresh failure, CAPTAIN always precedes FO, and duplicate Now cards are removed. Checkpoint `f834227` is live on 8766 with the exact root console renewed read-only; candidate 8767 is stopped and the final mirror correction is ready for first-officer review.
+
+## Stage Report: shaping (cycle 23)
+
+- DONE: Make the five-second briefing lead with the first actionable FO recovery when no captain action exists, while keeping captain emptiness and coverage secondary.
+  Commits `943248c761c99bbaeb4fc80523036bc2176a76e3` and `5fc6b6b5c7bc0498b2121beed5e2d0b2686226c5` promote `FO · verify Harvey assignment — assignment missing` into ATTENTION when the captain list is empty. `Captain · none observed` and exact bounded coverage remain smaller secondary evidence. A separate payload-order falsifier proves that any CAPTAIN row still leads every FO row.
+- DONE: Exclude acknowledgement-only text from latest actionable direction and distinguish semantic results from attributable session output.
+  `intent_promoted:false` text such as `great.` cannot become direction. A semantic result remains `Latest exact result`; otherwise attributable `last_output` is labeled `Latest session result` with source and uncertainty, or the briefing says `Result evidence not captured`. The visible fallback is one bounded line, while Copy briefing preserves its full text.
+- DONE: Compress empty memo and returned-child uncertainty without hiding ownership or evidence.
+  Empty Outcome/Focus is one line, `Outcome/focus not set · Add context`; existing context retains separate edit controls. Active and returned rows lead with the child's name and lifecycle state, name missing assignment/result evidence next, and disclose exact IDs and sources only under Evidence and in copied briefing.
+- DONE: Preserve the canonical mirror's task, scope, stale-evidence, and control boundaries.
+  Workflow task remains `Not observed`; unavailable and stale evidence remain qualified; FO owns recovery checks; bounded captain coverage guards remain intact. Project/session scope, four tabs, read-only Console, client-only memo copy, and prepared-only course admission remain unchanged.
+- DONE: Establish six targeted mutation-sensitive falsifiers for the correction.
+  The tests fail if a non-promotable acknowledgement becomes direction, if attributable output lacks honest result labeling/source/uncertainty, if empty-captain FO is not primary, if CAPTAIN-first depends on payload order, if empty memos expand, or if returned-child IDs become primary copy. All six pass; the cockpit module passes 50/50 and the focused cockpit/project/page/context/semantic group passes 191/191.
+- DONE: Complete static and full-suite verification without hiding contention or unrelated baselines.
+  Ruff check, Ruff format over 156 files, strict mypy over 116 source files, embedded lint, plugin validation, version parity at 0.16.0, version-diff guard, byte oracles, and `git diff --check` pass. The completed full discovery ran 1,946 tests in 551.752 seconds with three failures, ten errors, one skip, and 84.1% coverage; its long runtime matches documented contention. All five loopback/timeout cases pass 5/5 in immediate isolation. Remaining failures are the untouched CapturingServer, Python 3.13 surrogate, stale Codex state, runtime allowlist, Droid timestamp, and runtime inventory baselines; no cockpit regression appears.
+- DONE: Inspect the authoritative before image, apply the dispatched review criterion, and verify the corrected live hierarchy.
+  `/tmp/cargento-mirror-round1-before.png` showed captain emptiness hiding the FO recovery, `great.` masquerading as direction, verbose empty memos, and ID-heavy child rows. The resulting criterion was subtractive: preserve uncertainty, rank action authority correctly, and disclose evidence without making it primary. A live Playwright probe across the exact payload confirmed the FO action, acknowledgement exclusion, attributable result fallback, collapsed IDs, all four tabs, and output-only Console.
+- DONE: Capture and inspect the required 1440×1000 full-page after screenshot.
+  `/tmp/cargento-mirror-round1-after.png` is 101,733 bytes at SHA-256 `b439c88570fe59ff4686a18c42463c3fff989285b65afb7cb926b7989845bbd5`. Inspection confirms the FO recovery is the primary ATTENTION line; captain emptiness/coverage is secondary; `great.` is absent; the latest session result is one sentence; the empty memo is one line; child IDs are collapsed; and the four-tab hierarchy fits without overflow.
+- DONE: Serve the committed checkpoint and preserve the exact read-only interaction origin.
+  Candidate 8767 served the verified checkpoint and is stopped. Stable `http://127.0.0.1:8766/?next=true#n=project:spacedock-research%2Fcargento` runs PID `66025`, serving 412,740 bytes at SHA-256 `3c73fb0457c534e53b271c79e797cac0e85edbbd8e5f864604996c494083dbd8`. Exact root `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` remains registered at tmux `$4/@4/%10`, connected and stream connected, `read-only-control-stream`, keyboard input `not-exposed`, with 26 renewals observed after the swap.
+- DONE: Preserve the authorized prototype-only boundary.
+  The code commits remain local to `spacedock-ensign/project-cockpit`; no code ref was pushed or integrated, no version or workflow status changed, no other report content was modified, and `.spacedock/dev` was neither read nor mutated.
+
+### Completion checklist
+
+- [x] The five-second briefing exposes the first FO-owned recovery action whenever no captain action is observed, while captain emptiness and scan coverage remain secondary and exact.
+- [x] The latest-direction/result region excludes non-promotable acknowledgments, uses the latest actionable direction and attributable session result with honest labels, and never presents an acknowledgment such as great. as work direction.
+- [x] Empty Outcome/Focus and returned-child uncertainty are compressed into minimal actionable lines; identifiers move to copied or expanded evidence, and the post-swap Playwright-Chrome screenshot proves the hierarchy visually.
+
+### Summary
+
+Cycle 23 makes the recovery hierarchy visually undeniable without adding another surface. When captain evidence is empty, the first FO recovery becomes the action; captain coverage remains supporting evidence. Acknowledgements cannot impersonate direction, attributable output stays explicitly uncertain, and empty memo/child evidence is compressed behind clear ownership. Checkpoint `5fc6b6b` is live on 8766 with the exact root console renewed read-only; candidate 8767 is stopped and the inspected Round-1 screenshot records the accepted correction.
