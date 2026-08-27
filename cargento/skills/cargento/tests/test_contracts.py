@@ -876,6 +876,50 @@ class HarnessRegistryTest(RuntimeTestCase):
         )
 
 
+class PublishedTextSweepTest(unittest.TestCase):
+    """Every hand-built row field reaches `records.redact_secrets`.
+
+    The cross-harness `test_no_harness_publishes_a_credential_out_of_a_prompt`
+    covers the fields the fixtures happen to fill. It passed while
+    `state_detail` and `subagents[].name` published a key, because no fixture
+    routes the prompt into either. This asserts the sweep's list directly.
+    """
+
+    # A real prefix and a run of one letter, which is the only kind of
+    # credential value this repository may hold.
+    FAKE: ClassVar[str] = "sk-ant-api03-" + "A" * 95
+    MARKER: ClassVar[str] = "sk-ant-…REDACTED"
+
+    def test_the_state_detail_line_carries_no_credential(self) -> None:
+        # The measured leak: an in-progress task's `activeForm` is copied into
+        # `state_detail` by the collector BEFORE the sweep runs, so redacting
+        # the task and not the line published the key twice over — once on the
+        # card and once in the browser notification body, which is the one
+        # published string that leaves the page.
+        row: Any = {
+            "state_detail": f"{self.FAKE}…",
+            "tasks": [{"subject": self.FAKE, "activeForm": self.FAKE, "status": "in_progress"}],
+        }
+        aggregate._redact_published_text([row])
+        self.assertNotIn("A" * 20, json.dumps(row))
+        self.assertIn(self.MARKER, row["state_detail"])
+
+    def test_a_subagent_name_carries_no_credential(self) -> None:
+        # On opencode this is the child session's own TITLE, which is the same
+        # string the sweep redacts when that session is a parent row.
+        row: Any = {"subagents": [{"name": f"reviewing {self.FAKE}", "model": None}]}
+        aggregate._redact_published_text([row])
+        self.assertNotIn("A" * 20, json.dumps(row))
+        self.assertIn(self.MARKER, row["subagents"][0]["name"])
+
+    def test_a_malformed_row_does_not_stop_the_sweep(self) -> None:
+        # Collectors are a failure boundary, so the sweep has to survive a row
+        # whose lists hold something other than dicts.
+        row: Any = {"tasks": ["not a task", None], "subagents": [42], "title": self.FAKE}
+        aggregate._redact_published_text([row])
+        self.assertIn(self.MARKER, row["title"])
+
+
 class RuntimeImportGraphTest(unittest.TestCase):
     """Every runtime dependency is reviewed in the task that introduces it."""
 
@@ -895,6 +939,14 @@ class RuntimeImportGraphTest(unittest.TestCase):
         # holds that. The alternative was one caller per collector, which is the
         # arrangement that left nine harnesses notifying nobody. `notifications`
         # imports no module that imports aggregate, so this stays inward.
+        # `records` arrived with the credential filter (DRC-4267). `safe_text`
+        # redacts every string that passes through it, and the hand-built row
+        # fields do not: the collectors slice `title`, `last_prompt`,
+        # `state_detail` and a subagent name straight out of the transcript.
+        # Aggregate is the one place that holds every row from every harness
+        # before it is published, so the sweep lives there rather than in ten
+        # collectors and whichever one is added next. `records` is a leaf, so
+        # this stays inward.
         "cargento_runtime.aggregate": {
             "cargento_runtime.collectors",
             "cargento_runtime.config",
@@ -903,6 +955,7 @@ class RuntimeImportGraphTest(unittest.TestCase):
             "cargento_runtime.io",
             "cargento_runtime.notifications",
             "cargento_runtime.quota",
+            "cargento_runtime.records",
             "cargento_runtime.sessions",
             "cargento_runtime.snapshot",
             "cargento_runtime.state",
@@ -1651,6 +1704,33 @@ class HarnessContractTest(HarnessContractTestCase):
                 sessions = self.sessions_for(data, key)
                 self.assertEqual(1, len(sessions), f"expected one session, got {sessions}")
                 self.assertEqual("working", sessions[0]["state"])
+
+    def test_no_harness_publishes_a_credential_out_of_a_prompt(self) -> None:
+        # DRC-4267. Every row here is built from what the operator typed, and on
+        # the machine this was found on that text held seven live Anthropic
+        # keys. The fake is a real prefix and a run of one letter, which is the
+        # only kind of credential value this repository may hold.
+        #
+        # Asserted over the serialized row rather than over `title`, because the
+        # same prompt reaches `last_prompt` and the instruction line as well, and
+        # the requirement is about the DOM rather than about one field.
+        fake = "sk-ant-api03-" + "A" * 95
+        self.TITLE = f"deploy with {fake} and report back"
+        for key, build in HARNESSES:
+            with self.subTest(harness=key, fixture=build.__name__):
+                data = self.collect(build, when=self.NOW)
+                rows = self.sessions_for(data, key)
+                self.assertEqual(1, len(rows))
+                # `project` is dropped, and only `project`: three fixtures spell
+                # the working directory out of the same string they use for the
+                # prompt, so it carries the fake here in a way no real store
+                # does. A path is not prompt-derived text and is not in scope.
+                row = {k: v for k, v in rows[0].items() if k != "project"}
+                serialized = json.dumps(row, ensure_ascii=False)
+                self.assertNotIn("A" * 20, serialized)
+                published = (row["title"] or "") + (row["last_prompt"] or "")
+                if published:
+                    self.assertIn("sk-ant-\u2026REDACTED", serialized)
 
     def test_a_stale_store_reads_idle_but_still_appears(self) -> None:
         for key, build in HARNESSES:

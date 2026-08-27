@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Protocol, TypeAlias
 
-from . import dismissals, notifications, quota, sessions
+from . import dismissals, notifications, quota, records, sessions
 from . import events as runtime_events
 from . import io as runtime_io
 from . import snapshot as runtime_snapshot
@@ -328,6 +328,79 @@ def default_harnesses(*, usage_fetch_enabled: bool = True) -> tuple[HarnessSpec,
     )
 
 
+# The published fields that never pass through `records.safe_text`, and the
+# nested lists that hold more of them. A table rather than a block per field:
+# four blocks are what let `state_detail` and `subagents[].name` be forgotten,
+# and a line in a list is harder to leave out than a paragraph of loop.
+#
+# `state_detail` earns its place twice over. It is built by hand from the same
+# transcript text — an in-progress task's `activeForm` is copied into it BEFORE
+# the sweep runs — and it is read at ten render sites across six web files,
+# including the browser notification body, which is the one published string
+# that leaves the page.
+_RAW_ROW_TEXT: Final = ("title", "last_prompt", "state_detail")
+
+# `(the row field holding a list of dicts, the keys inside each one)`.
+#
+# A task subject is the agent's wording rather than the operator's, so it is not
+# prompt-derived in the sense DRC-4267 uses; it is here because a todo written
+# from a prompt that held a key can quote it. A subagent name is operator text
+# outright on four harnesses: opencode publishes the child session's own TITLE
+# there, the same string this sweep redacts when that session is a parent row,
+# and goose, codex and claude slice theirs out of the record with no `safe_text`
+# in the way.
+_RAW_NESTED_TEXT: Final = (
+    ("tasks", ("subject", "activeForm")),
+    ("subagents", ("name",)),
+)
+
+
+def _redact_in_place(holder: dict[str, Any], keys: tuple[str, ...]) -> None:
+    for key in keys:
+        value = holder.get(key)
+        if isinstance(value, str) and value:
+            holder[key] = records.redact_secrets(value)
+
+
+def _redact_published_text(rows: list[Session]) -> list[Session]:
+    """Credential shapes out of the row fields that carry operator text.
+
+    `records.safe_text` redacts on the way through and most published strings
+    pass through it, but the fields swept here do not: the collectors build them
+    out of the transcript by hand and bound them with a slice. Ten call sites
+    would be ten chances for the eleventh harness to be forgotten, which is how
+    `last_prompt` came to be published raw in the first place, so the sweep runs
+    once over the assembled rows instead. A collector added later is covered
+    without being asked.
+
+    Adding a field to the tables above is cheap and leaving one out is not, so
+    the bar is "could a collector ever put transcript text in it", not "does one
+    today". `state_detail` and `subagents[].name` were both left out on that
+    second reading and both were measured publishing a credential run unmarked.
+
+    Placed before the overlays only because it can be: an overlay patches state,
+    never a title (see `events`). It is before `_notify_waits` deliberately — a
+    native popup is a screen exposure exactly as the card is.
+
+    `redact_secrets` rather than `safe_text`, because these fields are published
+    raw by design and this is not the change that starts scrubbing their control
+    characters.
+
+    It mutates, and returns the list it was handed so the caller can chain. The
+    return value exists for that and nothing else.
+    """
+    for row in rows:
+        _redact_in_place(row, _RAW_ROW_TEXT)
+        instruction = row.get("instruction")
+        if isinstance(instruction, dict):
+            _redact_in_place(instruction, ("text",))
+        for field, keys in _RAW_NESTED_TEXT:
+            for item in row.get(field) or ():
+                if isinstance(item, dict):
+                    _redact_in_place(item, keys)
+    return rows
+
+
 def _hide_unmeasured_rates(rows: list[Session], harnesses: tuple[HarnessSpec, ...]) -> None:
     """Replace a rate-blind collector's numeric placeholder with wire-level unknown."""
     reporting = {spec.key for spec in harnesses if spec.reports_rate}
@@ -445,7 +518,7 @@ class Application:
                     self.diagnostic_sink,
                 )
 
-        out_sessions = sessions.dedupe_sessions(out_sessions)
+        out_sessions = _redact_published_text(sessions.dedupe_sessions(out_sessions))
         _hide_unmeasured_rates(out_sessions, self.harnesses)
         self._mark_unreachable_by_events(out_sessions)
         # Between dedupe and the sort, deliberately. Dedupe keys on

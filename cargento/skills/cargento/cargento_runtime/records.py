@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import string
 from datetime import UTC, datetime
 from typing import Any, Final
 
@@ -18,17 +19,294 @@ from typing import Any, Final
 _UNSAFE_CHARS = re.compile("[\\x00-\\x1f\\x7f\\u200b\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]+")
 
 
+# ---------------------------------------------------------------------------
+# Credential shapes
+#
+# A transcript records what the operator typed, verbatim, and sometimes what they
+# typed was a key. Seven distinct live Anthropic credentials sit in the local
+# Claude store in ordinary prompt history, and every prompt-derived surface on
+# the dashboard — the instruction line, `last_prompt`, `prompt_title`, the
+# observer goal, a Codex title — publishes that text. `127.0.0.1` is not the
+# exposure; a screenshot is.
+#
+# The list below was derived rather than guessed, the way `injected_prompt` and
+# `harness_control` were, and by COUNTING rather than by reading: 12,685
+# transcripts and 1,982,123 records, the whole local Claude and Codex store.
+# Each entry carries its occurrence count and the number of files it appears in.
+# Of 21,076 genuine operator prompts — the gate the instruction line already uses
+# — 13 carry one of these, and those 13 are what the dashboard publishes today.
+#
+# `docs/design-credential-redaction.md` holds the false-positive classification
+# of those 13, the two thresholds it set, and every alternative rejected here.
+#
+# Redacted **in place**, keeping the words around the match, because the words
+# are the instruction and the point of the line. The marker is deliberately
+# visible: an operator who sees `sk-ant-…REDACTED` on their own card learns their
+# prompt history holds a live key, which is how a rotation ever happens. A silent
+# scrub protects the screenshot and tells them nothing.
+
+_SECRET_MARKER: Final = "…REDACTED"  # noqa: S105 - the marker replaces a secret, it is not one
+
+# `(name, characters of the match kept in front of the marker, anchored, pattern)`.
+#
+# `anchored` shapes must start a token: without it `dask-<40 chars>` reads as an
+# OpenAI key and `mask-ant-…` as an Anthropic one. A hyphen counts as inside a
+# token, and that one decision rejects 78 of the 177 `sk-` candidates in the
+# local store.
+#
+# It is checked in the replacer rather than written as a lookbehind on each
+# alternative, and that is a measured choice, not a style one: a leading
+# lookbehind leaves no literal for `re` to build its first-character skip from,
+# and the substitution cost on a 140-character line goes from 21.5 us to 36.5 us.
+#
+# `pem` and `urlcred` are unanchored because their own first character is the
+# separator: a URL credential is always preceded by a scheme, and a PEM header by
+# whatever line came before it.
+_SECRET_SHAPES: Final = (
+    # `sk-ant-api03-`, `sk-ant-oat01-`, `sk-ant-ort01-` are the three variants in
+    # the store; the shared prefix is matched rather than the three, so the
+    # fourth is covered before anyone notices it exists.
+    ("anthropic", 7, True, r"sk-ant-[A-Za-z0-9_-]{16,}"),  # 89 in 35 files
+    # 32, not the 20 an OpenAI key's body needs. 20 was measured and rejected:
+    # it alters 25 further genuine prompts, and every one is a hyphenated
+    # identifier that merely opens a token with `sk-`.
+    #
+    # 32 does not clear that entirely. One 42-character all-lowercase identifier
+    # still matches, in two prompts. Requiring an uppercase character in the body
+    # would clear it, and was rejected too: OpenRouter spells its key `sk-or-v1-`
+    # plus 64 lowercase hex, so the rule that fixes two prompts loses a vendor.
+    ("openai", 3, True, r"sk-[A-Za-z0-9_-]{32,}"),  # 99 in 14 files
+    # Stripe's secret and restricted keys. `pk_live_` is deliberately absent: a
+    # publishable key is published on purpose.
+    ("stripe", 8, True, r"(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}"),  # 74 in 19 files
+    ("aws", 4, True, r"(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9_-])"),  # 246 in 50 files
+    ("github", 4, True, r"gh[pousr]_[A-Za-z0-9]{36,}"),  # 57 in 17 files
+    # Zero in the store, and on the list anyway: `github_pat_` is the format
+    # GitHub issues today and `ghp_` above is the one it replaced. A filter that
+    # covers only the legacy spelling of a token still in circulation is the
+    # false confidence this whole change exists to avoid.
+    ("github_fine", 11, True, r"github_pat_[A-Za-z0-9_]{40,}"),  # 0
+    ("gitlab", 6, True, r"glpat-[A-Za-z0-9_-]{20,}"),  # 16 in 3 files
+    ("npm", 4, True, r"npm_[A-Za-z0-9]{36}"),  # 12 in 4 files
+    # `xapp-` is the app-level token beside the four `xox` bot and user ones. It
+    # was found by sweeping past the candidate list, which is the only reason it
+    # is here: nothing about `xox` would have suggested it.
+    ("slack", 5, True, r"(?:xox[baprs]|xapp)-[A-Za-z0-9-]{15,}"),  # 22 in 3 files
+    ("posthog", 4, True, r"phc_[A-Za-z0-9]{32,}"),  # 507 in 343 files
+    # Zero values, and 45 mentions of the bare prefix across 22 files — a
+    # guidance list naming the shape, never a key of the right length behind it.
+    # Kept for the reason `github_fine` is: absence today is not a contract.
+    ("google", 4, True, r"AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"),  # 0
+    # Three base64url segments, not one. A lone `eyJ…` run is base64 for `{"` and
+    # turns up in any pasted payload; the two dots are what make it a token.
+    ("jwt", 3, True, r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),  # 852 in 126
+    # The body is swallowed with the header, because redacting the header alone
+    # leaves the key on the row one line further down. The body class excludes
+    # the space that `\s` would have allowed, so a prompt that merely names the
+    # header loses the word after it rather than the sentence: a PEM body is
+    # base64 and line breaks, never a space.
+    (
+        "pem",  # 1,058 in 46 files, every one header-only
+        11,
+        False,
+        (
+            r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[A-Za-z0-9+/=\r\n]*"
+            r"(?:-----END[^\n]*-----)?"
+        ),
+    ),
+    # The username goes with the password. It is not itself a secret, but half a
+    # pair is still a name someone can try, and `://…REDACTED@host` keeps the
+    # host, which is the part that identifies the line.
+    # The username half is `*` and not `+`: `redis://:password@host` is the form
+    # Redis documents, and with `+` all 24 characters of the password published
+    # unmarked on all seven schemes tried.
+    #
+    # Two ends, not one. `(?=@)` alone means a clip that lands between the
+    # password and the `@` kills the match and publishes what it cut to — 6, 11
+    # and 12 password characters at three measured clip points, with no marker,
+    # and 2 corpus records sit at the 80-character title cap. The `$` arm
+    # catches those, and `(?![0-9]+$)` is what keeps it from eating a bare
+    # `host:port` that ends the line: the dashboard's own `http://127.0.0.1:4553`
+    # is the false positive that would have cost the most instruction lines here.
+    (
+        "urlcred",  # 1,572 in 251 files
+        3,
+        False,
+        r"://[^\s/:@]*:(?:[^\s/@]+(?=@)|(?![0-9]+$)[^\s/@]+$)",
+    ),
+)
+
+_SECRET_RE: Final = re.compile(
+    "|".join(f"(?P<{name}>{pattern})" for name, _, _, pattern in _SECRET_SHAPES)
+)
+_SECRET_KEEP: Final = {name: keep for name, keep, _, _ in _SECRET_SHAPES}
+_SECRET_ANCHORED: Final = frozenset(name for name, _, anchored, _ in _SECRET_SHAPES if anchored)
+_TOKEN_CHARS: Final = frozenset(string.ascii_letters + string.digits + "_-")
+
+# The match length at or above which a shape needs no anchor: `name -> length`.
+#
+# The anchor above fails OPEN, and that is a bypass rather than a rough edge. One
+# character in front of a key — `x`, a digit, `_`, `-` — and `sk-ant-api03-` plus
+# a hundred characters publishes verbatim, with the length unchanged and no
+# marker. Anyone who has ever pasted a key at the end of a word has published it.
+#
+# Dropping the anchor outright is the wrong repair: it is what rejects 78 of the
+# 177 `sk-` candidates in the local store, and those are hyphenated identifiers,
+# not keys. So the anchor is kept and made conditional on the one thing that
+# separates the two — length. A `sk-ant-` run of 90 characters, `AKIA`/`ASIA`
+# plus exactly its 16 and nothing token-shaped behind, or `github_pat_` plus its
+# 40 has no plausible innocent reading whatever sits in front of it. Below the
+# threshold the anchor still applies and the measured rejection is unchanged.
+#
+# `openai` is deliberately absent. Its 32-character body is exactly the length
+# class the false positives live in, so a threshold there would trade the
+# rejection this list exists to keep.
+_SECRET_UNAMBIGUOUS: Final = {
+    "anthropic": 90,
+    "aws": 20,  # `AKIA` plus 16 is the whole shape; it has no longer form.
+    "github_fine": 51,  # `github_pat_` plus its 40.
+}
+
+# The literal every shape opens with, scanned with `in` before the alternation
+# runs. `str.__contains__` is a C substring search and the alternation is not,
+# and nearly all published text carries none of these: on a 140-character line
+# the gated path adds 1.8 us to `safe_text` where the bare substitution adds
+# 21.5 us, and on a 2,000-character observer blob 28 us against 302 us.
+#
+# An optimization in front of a security filter is a way to ship a shape
+# switched off, so `RedactSecretsTest` asserts every alternative is still
+# reachable through it.
+#
+# The five GitHub prefixes are spelled out rather than gated on `gh`, which
+# appears inside "highlight" and "tonight" and put ordinary English on the slow
+# path. `://` is absent for the same reason: alone it sends every prompt that
+# mentions a URL through the alternation for nothing. It is paired below with a
+# colon somewhere after it — what both halves of `urlcred` need, and what an
+# ordinary `https://host/path` does not have. `@` alone is not enough, because
+# the `@` is exactly what a clip at the title cap removes.
+_SECRET_HINTS: Final = (
+    "sk-",
+    "sk_",
+    "rk_",
+    "AKIA",
+    "ASIA",
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "glpat-",
+    "npm_",
+    "xox",
+    "xapp-",
+    "phc_",
+    "AIza",
+    "eyJ",
+    "-----BEGIN ",
+)
+
+# The shortest thing any hinted shape can match: `AKIA` plus its 16. Below it the
+# alternation cannot succeed, so the hint scan is skipped as well. `urlcred` is
+# shorter than this and is why the scheme test comes first.
+_SECRET_MIN_CHARS: Final = 20
+
+
+def _mark_secret(match: re.Match[str]) -> str | None:
+    """The marked replacement for a match, or None if the anchor rejects it.
+
+    None rather than the match text, because the caller has to tell the two
+    apart: a rejected span must be re-entered one character in (see
+    `_redact_scan`), and `re.sub` cannot express that.
+    """
+    name = match.lastgroup or ""
+    body = match.group()
+    unambiguous = _SECRET_UNAMBIGUOUS.get(name)
+    anchored = name in _SECRET_ANCHORED and (unambiguous is None or len(body) < unambiguous)
+    if anchored and match.start() and match.string[match.start() - 1] in _TOKEN_CHARS:
+        return None
+    return body[: _SECRET_KEEP.get(name, 0)] + _SECRET_MARKER
+
+
+def _redact_scan(text: str) -> str:
+    """Every shape on the list marked, scanning left to right.
+
+    Hand-rolled instead of `re.sub` for one reason: `sub` resumes at
+    `match.end()`, so a span the anchor rejects is both left unmarked and
+    skipped over, and a valid key that starts inside it is never looked at. That
+    is not theoretical — `x` plus a near-miss `sk-ant-` run plus a correctly
+    anchored key published all 142 characters, where the same key one space
+    later redacted to 45. This resumes at `match.start() + 1`.
+    """
+    out: list[str] = []
+    pos = 0
+    while (match := _SECRET_RE.search(text, pos)) is not None:
+        marked = _mark_secret(match)
+        if marked is None:
+            resume = match.start() + 1
+            out.append(text[pos:resume])
+            pos = resume
+            continue
+        out.append(text[pos : match.start()])
+        out.append(marked)
+        pos = match.end()
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def redact_secrets(text: str) -> str:
+    """Credential-shaped runs replaced by a visible marker, everything else kept.
+
+    One filter for every published surface rather than a guard per render site,
+    because a guard per render site is a list that the next surface forgets to
+    join. Called from `safe_text`, which is the layer nearly every untrusted
+    string passes through on its way to the DOM — the ask question and its
+    options included, since the HTTP ingress bounds those through it. An answer
+    needs no cover: it is an index into the options, never text (see `asks`).
+
+    The hand-built row fields are the exception and do not reach `safe_text` at
+    all; the collectors slice `title`, `last_prompt`, `state_detail` and a
+    subagent name straight out of the transcript. Those are caught by
+    `aggregate._redact_published_text`, which calls this directly over the
+    assembled rows and owns the list of them.
+    """
+    scheme = text.find("://")
+    if scheme != -1 and ("@" in text or ":" in text[scheme + 3 :]):
+        return _redact_scan(text)
+    if len(text) < _SECRET_MIN_CHARS:
+        return text
+    for hint in _SECRET_HINTS:
+        if hint in text:
+            return _redact_scan(text)
+    return text
+
+
 def safe_text(value: Any, limit: int) -> str:
-    """Untrusted text, safe to put on a row: no control characters, bounded.
+    """Untrusted text, safe to put on a row: no control characters, no
+    credentials, bounded.
 
     The bidi and isolate ranges are stripped alongside the C0 set, and not for
     tidiness: those characters reorder how the text after them renders, so a
     harness record could make a row read as something it does not say. Legitimate
     right-to-left text does not need them, since bidi resolves implicitly.
+
+    Redaction runs **before** the bound, not after. A key cut at the cap is still
+    a hundred usable characters of key, and a shape whose tail fell off no longer
+    matches, so bounding first would publish exactly the values this is here to
+    catch. A control character struck through the middle of a key defeats the
+    match in either order; that is a limit of shape matching, not of the ordering.
+
+    This is a hot path — a tool name, a model id and a title each pass through it
+    on every collect — so the redaction is gated. Measured on the shipped
+    alternation: 366 to 412 ns on a four-character tool name, 1.70 to 3.49 us on
+    a 140-character prompt line, 18.9 to 46.6 us on a 2,000-character observer
+    blob. `_SECRET_HINTS` carries what the gate buys and why. End to end that is
+    a whole collect moving from 32.3 ms to 33.9 ms on
+    `bench_collect --simulate balanced-five`, which is what the 4.8% buys.
     """
     text = str(value or "").encode("utf-8", "replace").decode("utf-8")
     text = _UNSAFE_CHARS.sub(" ", text)
-    return text[:limit]
+    return redact_secrets(text)[:limit]
 
 
 def iso_epoch(value: Any) -> float | None:
