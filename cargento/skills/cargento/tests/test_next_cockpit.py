@@ -63,6 +63,8 @@ relations:[{type:"dispatches_to", from:"fo:codex:focus-1",
     {projection_id:"intent-b", at:102, summary:"Correct the lane order", derived_from:"fo-b"}
   ], steering_episodes:[], trail_heads:[{work_item_id:__task, status:"current stage",
     stage:"shaping", latest_meaningful_event:"task-b"}],
+  command_attention:[],command_attention_coverage:{state:"complete",scanned:3,total:3,
+    omitted:0,source:"bounded active-session final-output scan"},
   activity:{nodes:[{kind:"work", at:103, work_item_ids:[__task]}]}}};
 __fetchImpl = async url => ({ok: true, json: async () =>
   String(url).startsWith("/api/project-context")
@@ -95,7 +97,8 @@ console.log(JSON.stringify({html, rows}));
         self.assertIn('data-next-cockpit-panel="course"', html)
         self.assertIn("Other directions (2)", html)
         self.assertIn("Project cockpit · State change", html)
-        self.assertNotIn("FOCUS · THIS BROWSER", html)
+        self.assertIn("OUTCOME / FOCUS · THIS BROWSER", html)
+        self.assertNotIn("Outcome &amp; Focus", html)
         self.assertNotIn("SEMANTIC TIMELINE", html)
         self.assertNotIn('data-next-cockpit-action="graph-mode"', html)
         self.assertNotIn('data-calm="project-graph-mode"', html)
@@ -998,7 +1001,7 @@ console.log(JSON.stringify({items,html:nextCockpitRecoveryStrip(group, observati
         self.assertTrue(all(row["owner"] == "FO" for row in out["items"][1:]))
         self.assertIn("assistant final_answer followed by terminal turn state", out["html"])
         self.assertIn("exact", out["html"])
-        self.assertLess(out["html"].index("CAPTAIN"), out["html"].index("FO"))
+        self.assertLess(out["html"].index("CAPTAIN ·"), out["html"].index("FO ·"))
 
     def test_incomplete_attention_coverage_suppresses_nothing_needs_you(self) -> None:
         out = self.run_fixture(
@@ -1019,6 +1022,185 @@ console.log(JSON.stringify({items,html:nextCockpitNeedsYou(items)}));
         self.assertEqual("Captain-attention coverage incomplete", out["items"][0]["label"])
         self.assertIn("Captain-attention coverage incomplete", out["html"])
         self.assertNotIn("Nothing needs you", out["html"])
+
+    def test_attention_empty_state_requires_authoritative_complete_context(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const key=nextCockpitContextKey(group,null);
+const semantic=JSON.parse(JSON.stringify(__semantic));
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+nextCockpitContexts.clear();nextCockpitRequests.set(key,nextData.generated);
+const loading=nextCockpitCommandAttention(group,null);
+nextCockpitRequests.clear();nextCockpitContexts.set(key,{data:observation,
+  revision:nextData.generated,error:true});
+const failed=nextCockpitCommandAttention(group,observation);
+const missingObservation={semantic:{facts:[],work_items:[],projections:{command_attention:[]}},
+  workflow_discovery:{state:"observed"},sources:{}};
+nextCockpitContexts.set(key,{data:missingObservation,revision:nextData.generated});
+const missing=nextCockpitCommandAttention(group,missingObservation);
+semantic.projections.command_attention_coverage={state:"incomplete",scanned:64,total:65,
+  omitted:1,source:"bounded active-session final-output scan"};
+nextCockpitContexts.set(key,{data:observation,revision:nextData.generated});
+const incomplete=nextCockpitCommandAttention(group,observation);
+semantic.projections.command_attention_coverage={state:"complete",scanned:3,total:3,
+  omitted:0,source:"bounded active-session final-output scan"};
+const complete=nextCockpitCommandAttention(group,observation);
+console.log(JSON.stringify({loading,failed,missing,incomplete,complete,
+  loadingHtml:nextCockpitNeedsYou(loading),failedHtml:nextCockpitNeedsYou(failed),
+  missingHtml:nextCockpitNeedsYou(missing),incompleteHtml:nextCockpitNeedsYou(incomplete),
+  completeHtml:nextCockpitNeedsYou(complete),
+  completeRecovery:nextCockpitRecoveryAttention(group,observation,complete)}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        for key in ("loading", "failed", "missing"):
+            captain = [row for row in out[key] if row["owner"] == "CAPTAIN"]
+            self.assertEqual("Captain attention unavailable", captain[0]["label"])
+            self.assertIn("Captain attention unavailable", out[f"{key}Html"])
+            self.assertNotIn("Nothing needs you", out[f"{key}Html"])
+        self.assertTrue(
+            any(
+                row["label"] == "Captain-attention coverage incomplete" for row in out["incomplete"]
+            )
+        )
+        self.assertNotIn("Nothing needs you", out["incompleteHtml"])
+        self.assertEqual([], [row for row in out["complete"] if row["owner"] == "CAPTAIN"])
+        self.assertIn("Nothing needs you", out["completeHtml"])
+        self.assertIn("Coverage complete", out["completeRecovery"])
+        self.assertIn("3 of 3 active sessions", out["completeRecovery"])
+
+    def test_recovery_briefing_is_mounted_above_tabs_with_observed_handoff(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.facts.push(
+  {fact_id:"latest-direction",at:111,type:"user_message",summary:"Keep exact recovery",
+    evidence:{source:"root transcript",confidence:"exact"}},
+  {fact_id:"latest-result",at:112,type:"result",summary:"Checkpoint c510e61 is live",
+    evidence:{source:"assistant final",confidence:"exact"}},
+  {fact_id:"pending-decision",at:113,type:"gate_decision",by:"person:captain",
+    application_state:"pending",work_item_id:__task}
+);
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+nextCockpitMemoDrafts.set(nextCockpitMemoKey(group,null,"outcome"),"Recover after a crash");
+nextCockpitMemoDrafts.set(nextCockpitMemoKey(group,null,"focus"),"Verify authoritative state");
+nextCockpitContexts.set(nextCockpitContextKey(group,null),{data:observation,
+  revision:nextData.generated});
+renderNext();
+const html=__els.app.innerHTML;
+const recovery=(html.match(/<section class="next-cockpit-recovery"[\\s\\S]*?<\\/section>/)||[""])[0];
+console.log(JSON.stringify({html,recovery,strip:html.indexOf("next-cockpit-recovery"),
+  tabs:html.indexOf("next-cockpit-tabs"),tabCount:(html.match(/role="tab"/g)||[]).length,
+  copyCount:(html.match(/data-next-cockpit-action="copy-briefing"/g)||[]).length}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertGreaterEqual(out["strip"], 0)
+        self.assertLess(out["strip"], out["tabs"])
+        self.assertEqual(4, out["tabCount"])
+        self.assertEqual(1, out["copyCount"])
+        for text in (
+            "Recover after a crash",
+            "Verify authoritative state",
+            "1 active session",
+            "2 exact assignments",
+            "Keep exact recovery",
+            "Checkpoint c510e61 is live",
+            "pending 1",
+            "consumed/applied 1",
+            "Coverage complete",
+        ):
+            self.assertIn(text, out["recovery"])
+
+    def test_prepared_trail_is_fo_follow_up_not_current_task(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+for(const session of group.sessions){session.state="idle";session.subagent_hierarchy=[];}
+const semantic={facts:[{fact_id:"prepared",at:100,type:"prepared_dispatch",
+  summary:"Prepare recovery",work_item_id:__task,
+  evidence:{source:"dispatch artifact",confidence:"exact"}}],
+  work_items:[{work_item_id:__task,label:"project-cockpit",kind:"workflow_item"}],
+  projections:{trail_heads:[{work_item_id:__task,status:"prepared",stage:"shaping",
+    latest_meaningful_event:"prepared"}],command_attention:[],
+    command_attention_coverage:{state:"complete",scanned:3,total:3,omitted:0,
+      source:"bounded active-session final-output scan"}}};
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+const task=nextCockpitTaskSubject(observation);
+const attention=nextCockpitCommandAttention(group,observation);
+console.log(JSON.stringify({task,attention,active:nextCockpitRecoveryActive(group)}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("WORKFLOW TASK", out["task"])
+        self.assertIn("Not observed", out["task"])
+        self.assertNotIn("CURRENT TASK", out["task"])
+        self.assertTrue(
+            any(
+                row["owner"] == "FO" and "assignment return not observed" in row["label"]
+                for row in out["attention"]
+            )
+        )
+        self.assertEqual("No active sessions or exact assignments observed", out["active"])
+
+    def test_copy_briefing_exports_browser_memos_and_exact_observed_payload_only(self) -> None:
+        storage = {
+            "cargento.cockpit.memo.v2:spacedock-research%2Fcargento:project:outcome": (
+                "Recover operator context"
+            ),
+            "cargento.cockpit.memo.v2:spacedock-research%2Fcargento:project:focus": (
+                "Check exact handoff"
+            ),
+        }
+        out = self.run_fixture(
+            """
+let __copied="";
+navigator.clipboard={writeText:async value=>{__copied=String(value);}};
+const group=nextProjectGroups()[0];
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.facts.push(
+  {fact_id:"copy-direction",at:111,type:"user_message",summary:"Copy this direction",
+    evidence:{source:"root transcript",confidence:"exact"}},
+  {fact_id:"copy-result",at:112,type:"result",summary:"Copy this exact result",
+    evidence:{source:"assistant final",confidence:"exact"}}
+);
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+nextCockpitContexts.set(nextCockpitContextKey(group,null),{data:observation,
+  revision:nextData.generated});
+renderNext();
+const before=__fetchCalls.length;
+const target={dataset:{nextCockpitAction:"copy-briefing"},
+  closest(selector){return selector==="[data-next-cockpit-action]"?this:null;}};
+__fire("click",{target,preventDefault(){}});
+await __settle();await __settle();
+console.log(JSON.stringify({copied:__copied,html:__els.app.innerHTML,before,
+  after:__fetchCalls.length,copyCount:(__els.app.innerHTML.match(
+    /data-next-cockpit-action="copy-briefing"/g)||[]).length}));
+""",
+            storage=storage,
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual(out["before"], out["after"])
+        self.assertEqual(1, out["copyCount"])
+        self.assertIn("Copied", out["html"])
+        for text in (
+            "Project: cargento",
+            "Outcome (browser-local): Recover operator context",
+            "Focus (browser-local): Check exact handoff",
+            "Active: 1 active session · 2 exact assignments",
+            "Latest exact direction: Copy this direction",
+            "Latest exact result: Copy this exact result",
+            "Decisions: consumed/applied 1",
+            "Attention coverage: Coverage complete · 3 of 3 active sessions",
+        ):
+            self.assertIn(text, out["copied"])
+        self.assertNotIn("undefined", out["copied"])
 
     def test_human_outcome_and_focus_autosave_per_exact_scope(self) -> None:
         out = self.run_fixture(

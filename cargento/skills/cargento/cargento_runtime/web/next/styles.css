@@ -320,11 +320,14 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
 .next-cockpit-project-status details>summary{cursor:pointer;color:var(--ink3)}
 .next-cockpit-status-empty{color:var(--ink3)}
 .next-cockpit-recovery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-bottom:1px solid var(--line)}
+.next-cockpit-recovery>header{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 12px;border-bottom:1px solid var(--line);font:var(--fs-2xs) var(--mono);letter-spacing:.08em}
+.next-cockpit-recovery>header button{padding:4px 7px;border:1px solid var(--line2);background:transparent;color:var(--ink2);font:inherit;letter-spacing:0;cursor:pointer}
 .next-cockpit-recovery>div{min-width:0;padding:10px 12px;border-right:1px solid var(--line);font:var(--fs-xs) var(--mono)}
 .next-cockpit-recovery>div:last-child{border-right:0}
-.next-cockpit-recovery span,.next-cockpit-recovery strong{display:block}
+.next-cockpit-recovery span,.next-cockpit-recovery strong,.next-cockpit-recovery small{display:block}
 .next-cockpit-recovery span{margin-bottom:5px;color:var(--ink3);font-size:var(--fs-2xs);letter-spacing:.08em}
 .next-cockpit-recovery strong{font-weight:500;overflow-wrap:anywhere}
+.next-cockpit-recovery small{margin-top:4px;color:var(--ink3);overflow-wrap:anywhere}
 .next-cockpit-recovery details{margin-top:5px;color:var(--ink3)}
 .next-cockpit-recovery summary{cursor:pointer}
 .next-cockpit-recovery ul{margin:5px 0 0;padding-left:18px;color:var(--ink2)}
