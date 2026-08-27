@@ -297,19 +297,28 @@ function nextCockpitCommandAttention(group, observation){
     ? semantic.projections.command_attention : [];
   for(const item of projected){
     if(!item || !["CAPTAIN", "FO"].includes(item.owner)) continue;
-    const label = String(item.question || item.label || "resolve system follow-up");
-    attention.push({owner:item.owner,label,question:String(item.question || ""),
+    const kind = String(item.kind || "");
+    const question = String(item.question || "").trim();
+    const blockedStep = String(item.blocked_step || "").trim();
+    if(item.owner === "CAPTAIN" && !question){
+      const recorded = kind.replaceAll("_", " ").trim() || "decision";
+      attention.push({owner:"FO",kind:"decision_application",
+        label:`apply recorded ${recorded}`,question:"",blockedStep,
+        evidence:item.evidence || {}});
+      continue;
+    }
+    const label = question || String(item.label || "resolve system follow-up");
+    attention.push({owner:item.owner,label,question,kind,blockedStep,
       evidence:item.evidence || {}});
   }
   const coverage = nextCockpitAttentionCoverage(group, observation);
   if(coverage.state === "unavailable"){
-    attention.push({owner:"SOURCE",kind:"coverage_unavailable",
-      label:"Captain attention unavailable",question:"Captain attention unavailable",
+    attention.push({owner:"FO",kind:"coverage_inspection",
+      label:"refresh captain-attention scan",question:"",
       evidence:{source:coverage.source,confidence:"unavailable"}});
   }else if(coverage.state === "incomplete"){
-    attention.push({owner:"SOURCE",kind:"coverage_incomplete",
-      label:"Captain-attention coverage incomplete",
-      question:"Captain-attention coverage incomplete",
+    attention.push({owner:"FO",kind:"coverage_inspection",
+      label:"complete captain-attention scan",question:"",
       evidence:{source:coverage.source,
         confidence:"bounded"}});
   }
@@ -322,7 +331,7 @@ function nextCockpitCommandAttention(group, observation){
     const question = String(ask && ask.question || "").trim();
     if(!question) continue;
     askedSessions.add(`${String(ask.harness || "")}:${String(ask.session_id || "")}`);
-    add("CAPTAIN", question, "AskRegistry exact question");
+    add("CAPTAIN", question, "AskRegistry exact question", "exact", "ask");
   }
   for(const session of group.sessions.filter(row => row.state === "needs_input" &&
     !askedSessions.has(sessKey(row)))){
@@ -374,13 +383,8 @@ function nextCockpitCommandAttention(group, observation){
   const children = nextCockpitRecoveryChildren(group);
   for(const child of children.active){
     if(child.assignment !== "assignment unavailable") continue;
-    if(/source unavailable/i.test(child.assignmentSource)){
-      add("SOURCE", `Source unavailable · ${child.worker} assignment`, child.assignmentSource,
-        "unavailable", "child_evidence_gap");
-    }else{
-      add("FO", `inspect ${child.worker} assignment`, child.assignmentSource,
-        "unavailable", "child_evidence_gap");
-    }
+    add("FO", `inspect ${child.worker} assignment`, child.assignmentSource,
+      "unavailable", "child_evidence_gap");
   }
   const returned = children.latestReturn;
   if(returned && (returned.assignment === "assignment unavailable" ||
@@ -388,14 +392,14 @@ function nextCockpitCommandAttention(group, observation){
     if(/source unavailable/i.test(returned.assignmentSource)){
       const gaps = [returned.assignment === "assignment unavailable" ? "assignment" : "",
         returned.result === "result unavailable" ? "result" : ""].filter(Boolean);
-      add("SOURCE", `Source unavailable · ${returned.worker} ${gaps.join("/")}`,
+      add("FO", `inspect ${returned.worker} ${gaps.join("/")}`,
         returned.assignmentSource, "unavailable", "child_evidence_gap");
     }else{
       add("FO", `inspect ${returned.worker} handoff`, returned.assignmentSource,
         "unavailable", "child_evidence_gap");
     }
   }
-  const rank = owner => owner === "CAPTAIN" ? 0 : owner === "FO" ? 1 : 2;
+  const rank = owner => owner === "CAPTAIN" ? 0 : 1;
   const seen = new Set();
   return attention.filter(item => {
     const key = `${item.owner}\n${item.label}`;
@@ -405,26 +409,45 @@ function nextCockpitCommandAttention(group, observation){
   }).sort((left, right) => rank(left.owner) - rank(right.owner));
 }
 
+function nextCockpitAuthorityVerb(item){
+  const kind = String(item && item.kind || "").toLowerCase();
+  if(item && item.owner === "CAPTAIN"){
+    if(/authori|approv/.test(kind)) return "AUTHORIZE";
+    if(/cho(?:ice|ose)|select/.test(kind)) return "CHOOSE";
+    if(/revis/.test(kind)) return "REVISE";
+    return "ANSWER";
+  }
+  const label = String(item && item.label || "").toLowerCase();
+  if(kind === "decision_application" || /^apply\b/.test(label)) return "APPLY";
+  if(/^refresh\b/.test(label)) return "REFRESH";
+  if(/^complete\b/.test(label)) return "COMPLETE";
+  if(/^link\b/.test(label)) return "LINK";
+  return "INSPECT";
+}
+
 function nextCockpitRecoveryAttention(group, observation, commandAttention){
   const attention = commandAttention || nextCockpitCommandAttention(group, observation);
   const coverage = nextCockpitAttentionCoverage(group, observation);
-  const coverageEvidence = `${coverage.label} · ${coverage.source}`;
-  const row = item => `<strong>${esc(item.owner === "SOURCE" ? item.label :
-    item.owner + " · " + item.label)}</strong>`;
-  const evidence = item => `<small>${esc(item.owner + " · " + item.label + " · " +
+  const row = item => `<strong>${esc(nextCockpitAuthorityVerb(item) + " · " + item.label)}</strong>`;
+  const evidence = item => `<small>${esc(item.owner + " · " +
+    (item.kind || "attention") + " · " + item.label + " · " +
     String(item.evidence && item.evidence.source || "source unavailable") + " · " +
     String(item.evidence && item.evidence.confidence || "confidence unavailable"))}</small>`;
   const captain = attention.filter(item => item && item.owner === "CAPTAIN");
   const system = attention.filter(item => item && item.owner === "FO");
-  const information = attention.filter(item => item && item.owner === "SOURCE");
-  const captainRows = captain.length ? captain.map(row).join("") :
-    coverage.state === "complete"
-      ? `<strong>No explicit captain request · scan ${coverage.scanned}/${coverage.total}</strong>`
-      : "";
-  const allEvidence = attention.length ? '<details><summary>Evidence</summary>' +
-    attention.map(evidence).join("") + '</details>' : "";
-  return captainRows + system.map(row).join("") + information.map(row).join("") + allEvidence +
-    `<small data-next-cockpit-attention-coverage>${esc(coverageEvidence)}</small>`;
+  const state = captain.length ? "captain-needed" :
+    coverage.state !== "complete" || system.length ? "fo-inspecting" : "fo-continues";
+  const stateLabel = state === "captain-needed" ? "CAPTAIN NEEDED" :
+    state === "fo-inspecting" ? "FO INSPECTING" : "FO CONTINUES";
+  const primary = captain.map(row).join("") + (system[0] ? row(system[0]) :
+    state === "fo-continues" ? "<strong>CONTINUE · Current assignment</strong>" : "");
+  const remainder = Math.max(0, system.length - 1);
+  const evidenceRows = attention.map(evidence).join("") +
+    (remainder ? `<small>${remainder} more FO ${remainder === 1 ? "action" : "actions"}</small>` : "") +
+    `<small data-next-cockpit-attention-coverage>${esc(coverage.label + " · " + coverage.source)}</small>`;
+  return `<div class="next-cockpit-authority next-cockpit-authority--${state}" ` +
+    `data-next-cockpit-authority-state="${state}"><span>${stateLabel}</span>${primary}` +
+    `<details><summary>Evidence</summary>${evidenceRows}</details></div>`;
 }
 
 function nextCockpitRecoveryDecisions(semantic){
@@ -485,7 +508,17 @@ function nextCockpitSubstantiveDirection(group, semantic){
   return pool.sort((left, right) => Number(right.at || 0) - Number(left.at || 0))[0] || null;
 }
 
-function nextCockpitRecoveryAssignment(group, semantic, observation){
+function nextCockpitStageLinkEffect(group, commandAttention, sourceSession){
+  const blocked = (commandAttention || []).find(item => item && item.owner === "FO" &&
+    item.kind === "stage_link_required" && item.blockedStep && item.evidence &&
+    item.evidence.confidence === "exact");
+  if(blocked) return `Stage link required before ${blocked.blockedStep}`;
+  const canContinue = group.sessions.some(session => sessKey(session) === sourceSession &&
+    session.state === "working");
+  return canContinue ? "Stage link missing · current work can continue" : "";
+}
+
+function nextCockpitRecoveryAssignment(group, semantic, observation, commandAttention){
   const current = nextCockpitCurrentTask(observation);
   if(current.known){
     const bound = (semantic && Array.isArray(semantic.facts) ? semantic.facts : [])
@@ -499,9 +532,11 @@ function nextCockpitRecoveryAssignment(group, semantic, observation){
   if(!fact) return Object.assign({}, current, {provenance:"",qualifier:"",
     sourceSession:"",fact:null});
   const summary = String(fact.summary || "").trim();
+  const sourceSession = nextCockpitFactSessionKey(fact);
   return {known:true,id:"",label:summary[0].toUpperCase() + summary.slice(1),stage:"",
-    provenance:"Exact operator direction",qualifier:"Workflow stage not linked",
-    sourceSession:nextCockpitFactSessionKey(fact),fact};
+    provenance:"Exact operator direction",
+    qualifier:nextCockpitStageLinkEffect(group, commandAttention, sourceSession),
+    sourceSession,fact};
 }
 
 function nextCockpitLatestSessionResult(group, sourceSession){
@@ -546,7 +581,7 @@ function nextCockpitRecoveryBriefing(group, focus, observation, commandAttention
   const context = nextCockpitContexts.get(nextCockpitContextKey(group, null));
   const outcome = nextCockpitReadMemo(nextCockpitMemoKey(group, focus, "outcome")) || "Not set";
   const currentFocus = nextCockpitReadMemo(nextCockpitMemoKey(group, focus, "focus")) || "Not set";
-  const task = nextCockpitRecoveryAssignment(group, semantic, observation);
+  const task = nextCockpitRecoveryAssignment(group, semantic, observation, commandAttention);
   const active = nextCockpitRecoveryActive(group);
   const latest = nextCockpitRecoveryLatest(group, semantic, context && context.error, task);
   const decisions = nextCockpitRecoveryDecisions(semantic);
@@ -645,16 +680,17 @@ function nextCockpitRecoveryExecution(group, briefing){
   if(!sessions.length) return '<strong>No execution observed</strong>';
   const childEvidence = child => '<details><summary>Evidence</summary>' +
     `<small>${esc(child.assignment + (child.result ? " · " + child.result : "") +
-      " · source " + child.assignmentSource + " · source session " + child.sourceSession)}</small>` +
+      " · source " + child.assignmentSource + " · source session " + child.sourceSession +
+      (child.lifecycle === "returned" ? ` · event ${child.at || "unavailable"} · age ` +
+        (child.age ? `${child.age} ago` : "unavailable") : ""))}</small>` +
     '</details>';
   return sessions.map(session => {
     const key = sessKey(session);
     const harness = labels.get(String(session.harness || "")) || String(session.harness || "Session");
     const state = session.state === "needs_input" ? "needs input" : String(session.state || "unknown");
     const rows = children.filter(child => child.sourceSession === key).map(child => {
-      const returned = child.lifecycle === "returned" ? (child.age
-        ? ` · ${child.age} ago${child.ageSec >= NEXT_PROJECT_STALLED_SEC ? " · stale" : ""}`
-        : " · age unavailable") : "";
+      const returned = child.lifecycle === "returned" && child.ageSec >= NEXT_PROJECT_STALLED_SEC
+        ? ` · stale ${child.age || "age unavailable"}` : "";
       return '<div class="next-cockpit-child-row">' +
         `<strong>${esc(child.worker + " · " + child.lifecycle + returned)}</strong>` +
         `${childEvidence(child)}</div>`;
@@ -690,9 +726,14 @@ function nextCockpitRecoveryStrip(group, observation, commandAttention){
   const taskText = briefing.task.known ? [briefing.task.label, briefing.task.stage]
     .filter(Boolean).join(" · ") : "Not observed";
   const taskAttrs = briefing.task.id ? ` data-work-item="${esc(briefing.task.id)}"` : "";
-  const assignmentMeta = briefing.task.known && (briefing.task.provenance || briefing.task.qualifier)
-    ? `<small>${esc([briefing.task.provenance, briefing.task.qualifier]
-      .filter(Boolean).join(" · "))}</small>` : "";
+  const assignmentEffect = briefing.task.known && briefing.task.qualifier
+    ? `<small>${esc(briefing.task.qualifier)}</small>` : "";
+  const assignmentEvidence = briefing.task.known && briefing.task.provenance
+    ? '<details><summary>Evidence</summary>' +
+      `<small>${esc(briefing.task.provenance +
+        (briefing.task.sourceSession ? ` · source session ${briefing.task.sourceSession}` : "") +
+        (briefing.task.fact && briefing.task.fact.at ? ` · event ${briefing.task.fact.at}` : ""))}</small>` +
+      '</details>' : "";
   const latestCells = [
     briefing.latest.direction ? `<span>${exactLabel}</span>` +
       `<strong>${esc(briefing.latest.direction.summary)}</strong>` : "",
@@ -709,8 +750,8 @@ function nextCockpitRecoveryStrip(group, observation, commandAttention){
     '<header><strong>RECOVERY BRIEFING</strong>' +
     `<button type="button" data-next-cockpit-action="copy-briefing">${copyLabel}</button></header>` +
     `<div data-next-cockpit-task${taskAttrs}><span>ASSIGNMENT</span>` +
-    `<strong>${esc(taskText)}</strong>${assignmentMeta}</div>` +
-    `<div><span>MISSING / NEXT ACTION</span>` +
+    `<strong>${esc(taskText)}</strong>${assignmentEffect}${assignmentEvidence}</div>` +
+    `<div>` +
     `${nextCockpitRecoveryAttention(group, observation, commandAttention)}</div>` +
     `<div><span>EXECUTION</span>${nextCockpitRecoveryExecution(group, briefing)}</div>` +
     latestCell +
@@ -930,12 +971,15 @@ function nextCockpitActiveDelegation(group, observation){
 
 function nextCockpitNeedsYou(commandAttention){
   const captain = (commandAttention || []).filter(item => item && item.owner === "CAPTAIN");
-  const guard = (commandAttention || []).find(item => item && item.owner === "SOURCE" &&
-    ["coverage_unavailable", "coverage_incomplete"].includes(String(item.kind || "")));
+  const guard = (commandAttention || []).find(item => item &&
+    item.kind === "coverage_inspection");
   if(!captain.length){
+    const guardLabel = guard && guard.evidence && guard.evidence.confidence === "bounded"
+      ? "Captain-attention coverage incomplete" : guard ? "Captain attention unavailable" :
+        "Nothing needs you";
     return '<section class="next-cockpit-needs" data-next-cockpit-primary>' +
       nextCockpitScopeCue(nextCockpitProjectScopeKind()) +
-      `<h2>Needs you</h2><p>${esc(guard ? guard.label : "Nothing needs you")}</p></section>`;
+      `<h2>Needs you</h2><p>${esc(guardLabel)}</p></section>`;
   }
   const rows = captain.map(item => `<li><strong>${esc(item.question || item.label)}</strong></li>`)
     .join("");

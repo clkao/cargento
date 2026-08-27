@@ -134,7 +134,7 @@ console.log(JSON.stringify({html,tabs,panel}));
         self.assertEqual(1, out["html"].count('role="tabpanel"'))
         self.assertIn('data-next-cockpit-panel="now"', out["html"])
         self.assertIn("+ Add human context · this browser", out["html"])
-        self.assertIn("No explicit captain request · scan 3/3", out["html"])
+        self.assertIn("FO INSPECTING", out["html"])
         self.assertIn("Banach · active", out["html"])
         self.assertIn("Show project plan", out["html"])
         self.assertNotIn("CURRENT FOCUS · DERIVED", out["html"])
@@ -692,7 +692,7 @@ console.log(JSON.stringify({html,recovery,task,scope,visibleWords:visible?visibl
             self.assertNotIn(invention, out["html"])
         self.assertIn("Unbound · active", out["recovery"])
         self.assertIn("assignment unavailable", out["recovery"])
-        self.assertIn("Source unavailable · Unbound assignment", out["recovery"])
+        self.assertIn("inspect Unbound assignment", out["recovery"])
         self.assertIn("<small>1 session</small>", out["scope"])
         self.assertIn(
             '<span class="next-cockpit-scope-state">working</span>'
@@ -1034,7 +1034,9 @@ console.log(JSON.stringify({items,html:nextCockpitNeedsYou(items)}));
 
         self.assertTrue(
             any(
-                row["owner"] == "SOURCE" and row["label"] == "Captain-attention coverage incomplete"
+                row["owner"] == "FO"
+                and row["kind"] == "coverage_inspection"
+                and row["label"] == "complete captain-attention scan"
                 for row in out["items"]
             )
         )
@@ -1074,14 +1076,12 @@ console.log(JSON.stringify({loading,failed,missing,incomplete,complete,
         assert isinstance(out, dict)
 
         for key in ("loading", "failed", "missing"):
-            guard = [row for row in out[key] if row["owner"] == "SOURCE"]
-            self.assertEqual("Captain attention unavailable", guard[0]["label"])
+            guard = [row for row in out[key] if row["kind"] == "coverage_inspection"]
+            self.assertEqual("refresh captain-attention scan", guard[0]["label"])
             self.assertIn("Captain attention unavailable", out[f"{key}Html"])
             self.assertNotIn("Nothing needs you", out[f"{key}Html"])
         self.assertTrue(
-            any(
-                row["label"] == "Captain-attention coverage incomplete" for row in out["incomplete"]
-            )
+            any(row["label"] == "complete captain-attention scan" for row in out["incomplete"])
         )
         self.assertNotIn("Nothing needs you", out["incompleteHtml"])
         self.assertEqual([], [row for row in out["complete"] if row["owner"] == "CAPTAIN"])
@@ -1158,7 +1158,7 @@ console.log(JSON.stringify({attention,
             self.assertIn(text, out["briefing"]["text"])
         self.assertTrue(
             any(
-                row["owner"] == "SOURCE" and "Source unavailable · Hooke assignment" in row["label"]
+                row["owner"] == "FO" and row["label"] == "inspect Hooke assignment"
                 for row in out["attention"]
             )
         )
@@ -1217,7 +1217,7 @@ console.log(JSON.stringify({text:briefing.text,
 
         for value in (out["text"], out["html"]):
             self.assertIn("bounded active-session final-output scan", value)
-        self.assertIn("No explicit captain request · scan 3/3", out["html"])
+        self.assertIn("FO CONTINUES", out["html"])
 
     def test_failed_refresh_marks_retained_exact_facts_stale(self) -> None:
         out = self.run_fixture(
@@ -1332,7 +1332,7 @@ console.log(JSON.stringify({briefing,
         for value in (out["briefing"]["text"], out["html"]):
             self.assertIn("Restart 5-round review loop", value)
             self.assertIn("Exact operator direction", value)
-            self.assertIn("Workflow stage not linked", value)
+            self.assertIn("Stage link missing · current work can continue", value)
             self.assertNotIn("playwright-chrome", value)
             self.assertNotIn("task, outcome, stage, done condition", value)
 
@@ -1412,7 +1412,237 @@ console.log(JSON.stringify({attention,
 
         self.assertEqual("Choose whether to ship checkpoint abc1234.", out["attention"][0]["label"])
         self.assertLess(out["html"].index("CAPTAIN ·"), out["html"].index("FO ·"))
-        self.assertIn("No explicit captain request · scan 3/3", out["empty"])
+        self.assertIn("FO INSPECTING", out["empty"])
+
+    def test_authority_cell_has_one_of_three_explicit_states(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+for(const session of group.sessions){
+  session.state="working";session.last_activity=nextData.generated;
+  session.subagent_hierarchy=[];session.subagent_events=[];
+}
+const observation={semantic:__semantic,workflow_discovery:{state:"observed"},sources:{}};
+const continues=nextCockpitRecoveryAttention(group,observation,[]);
+const inspecting=nextCockpitRecoveryAttention(group,observation,[
+  {owner:"FO",kind:"recovery",label:"inspect Harvey handoff",
+    evidence:{source:"child lifecycle",confidence:"exact"}}
+]);
+const needed=nextCockpitRecoveryAttention(group,observation,[
+  {owner:"CAPTAIN",kind:"authorization",label:"Approve checkpoint abc1234?",
+    question:"Approve checkpoint abc1234?",evidence:{source:"exact request",confidence:"exact"}}
+]);
+console.log(JSON.stringify({continues,inspecting,needed}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn('data-next-cockpit-authority-state="fo-continues"', out["continues"])
+        self.assertIn("FO CONTINUES", out["continues"])
+        self.assertNotIn("captain request", out["continues"].casefold())
+        self.assertIn('data-next-cockpit-authority-state="fo-inspecting"', out["inspecting"])
+        self.assertIn("FO INSPECTING", out["inspecting"])
+        self.assertIn('data-next-cockpit-authority-state="captain-needed"', out["needed"])
+        self.assertIn("CAPTAIN NEEDED", out["needed"])
+
+    def test_captain_attention_preserves_kind_and_renders_compact_verbs(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.projections.command_attention=[
+  {owner:"CAPTAIN",kind:"authorization",question:"Approve checkpoint?",
+    evidence:{source:"request",confidence:"exact"}},
+  {owner:"CAPTAIN",kind:"ask",question:"What evidence is required?",
+    evidence:{source:"ask",confidence:"exact"}},
+  {owner:"CAPTAIN",kind:"choice",question:"Choose deck or ledger.",
+    evidence:{source:"gate",confidence:"exact"}},
+  {owner:"CAPTAIN",kind:"revision",question:"Revise the scope statement?",
+    evidence:{source:"review",confidence:"exact"}}
+];
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+const items=nextCockpitCommandAttention(group,observation);
+console.log(JSON.stringify({items,html:nextCockpitRecoveryAttention(group,observation,items)}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual(
+            ["authorization", "ask", "choice", "revision"],
+            [row["kind"] for row in out["items"] if row["owner"] == "CAPTAIN"],
+        )
+        for verb in ("AUTHORIZE", "ANSWER", "CHOOSE", "REVISE"):
+            self.assertIn(verb, out["html"])
+
+    def test_source_unavailable_is_fo_inspection_evidence_not_an_actor(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+for(const session of group.sessions){session.subagent_hierarchy=[];session.subagent_events=[];}
+group.sessions[0].subagent_hierarchy=[{name:"Harvey",observer_sid:"child-h",depth:1}];
+const observation={semantic:__semantic,workflow_discovery:{state:"observed"},sources:{}};
+const items=nextCockpitCommandAttention(group,observation);
+console.log(JSON.stringify({items,html:nextCockpitRecoveryAttention(group,observation,items)}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertFalse(any(row["owner"] == "SOURCE" for row in out["items"]))
+        self.assertTrue(
+            any(
+                row["owner"] == "FO" and row["label"] == "inspect Harvey assignment"
+                for row in out["items"]
+            )
+        )
+        self.assertIn("FO INSPECTING", out["html"])
+        self.assertNotIn("SOURCE ·", out["html"])
+
+    def test_authority_cell_shows_all_captain_one_fo_and_discloses_remainder(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const observation={semantic:__semantic,workflow_discovery:{state:"observed"},sources:{}};
+const items=[
+  {owner:"CAPTAIN",kind:"authorization",label:"Approve A?",question:"Approve A?",
+    evidence:{source:"a",confidence:"exact"}},
+  {owner:"CAPTAIN",kind:"choice",label:"Choose B.",question:"Choose B.",
+    evidence:{source:"b",confidence:"exact"}},
+  {owner:"FO",kind:"recovery",label:"inspect first",evidence:{source:"one",confidence:"exact"}},
+  {owner:"FO",kind:"recovery",label:"inspect second",evidence:{source:"two",confidence:"exact"}},
+  {owner:"FO",kind:"recovery",label:"inspect third",evidence:{source:"three",confidence:"exact"}}
+];
+console.log(JSON.stringify({html:nextCockpitRecoveryAttention(group,observation,items)}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        primary = out["html"].split("<details", maxsplit=1)[0]
+        self.assertIn("Approve A?", primary)
+        self.assertIn("Choose B.", primary)
+        self.assertIn("inspect first", primary)
+        self.assertNotIn("inspect second", primary)
+        self.assertNotIn("inspect third", primary)
+        self.assertIn("2 more FO actions", out["html"])
+
+    def test_failed_and_incomplete_coverage_are_fo_inspecting_not_captain_needed(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const key=nextCockpitContextKey(group,null);
+const semantic=JSON.parse(JSON.stringify(__semantic));
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+nextCockpitContexts.set(key,{data:observation,revision:nextData.generated,error:true});
+const failedItems=nextCockpitCommandAttention(group,observation);
+const failed=nextCockpitRecoveryAttention(group,observation,failedItems);
+nextCockpitContexts.set(key,{data:observation,revision:nextData.generated});
+semantic.projections.command_attention_coverage={state:"incomplete",scanned:2,total:3,
+  omitted:1,source:"bounded attention scan"};
+const incompleteItems=nextCockpitCommandAttention(group,observation);
+const incomplete=nextCockpitRecoveryAttention(group,observation,incompleteItems);
+console.log(JSON.stringify({failedItems,failed,incompleteItems,incomplete}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        for key in ("failed", "incomplete"):
+            self.assertIn("FO INSPECTING", out[key])
+            self.assertNotIn("CAPTAIN NEEDED", out[key])
+        for key in ("failedItems", "incompleteItems"):
+            self.assertFalse(any(row["owner"] == "SOURCE" for row in out[key]))
+
+    def test_pending_decision_is_fo_application_until_a_fresh_question_exists(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.projections.command_attention=[
+  {owner:"CAPTAIN",kind:"hold",label:"Hold recorded",
+    evidence:{source:"decision history",confidence:"exact"}}
+];
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+const pendingItems=nextCockpitCommandAttention(group,observation);
+const pending=nextCockpitRecoveryAttention(group,observation,pendingItems);
+semantic.projections.command_attention=[
+  {owner:"CAPTAIN",kind:"revision",label:"Revision requested",
+    question:"Revise the assignment boundary?",
+    evidence:{source:"fresh review question",confidence:"exact"}}
+];
+const freshItems=nextCockpitCommandAttention(group,observation);
+const fresh=nextCockpitRecoveryAttention(group,observation,freshItems);
+console.log(JSON.stringify({pendingItems,pending,freshItems,fresh}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual([], [row for row in out["pendingItems"] if row["owner"] == "CAPTAIN"])
+        self.assertTrue(
+            any(
+                row["owner"] == "FO" and "apply recorded hold" in row["label"]
+                for row in out["pendingItems"]
+            )
+        )
+        self.assertIn("FO INSPECTING", out["pending"])
+        self.assertIn("CAPTAIN NEEDED", out["fresh"])
+        self.assertIn("REVISE", out["fresh"])
+
+    def test_stage_link_copy_states_only_proven_operational_effect(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.projections.trail_heads=[];
+semantic.facts=semantic.facts.filter(fact=>fact.type!=="user_message");
+semantic.facts.push({fact_id:"direction",at:110,type:"user_message",
+  summary:"restart 5-round review loop",intent_promoted:true,
+  source_session:{harness:"codex",sid:"focus-1"},
+  evidence:{source:"root transcript",confidence:"exact"}});
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+const continues=nextCockpitRecoveryStrip(group,observation,[]);
+semantic.projections.command_attention=[{owner:"FO",kind:"stage_link_required",
+  label:"link stage",blocked_step:"dispatch reviewer",
+  evidence:{source:"workflow handoff",confidence:"exact"}}];
+const blocked=nextCockpitRecoveryStrip(group,observation,
+  nextCockpitCommandAttention(group,observation));
+console.log(JSON.stringify({continues,blocked}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        continues_task = out["continues"].split("MISSING / NEXT ACTION", maxsplit=1)[0]
+        blocked_task = out["blocked"].split("MISSING / NEXT ACTION", maxsplit=1)[0]
+        self.assertIn("Stage link missing · current work can continue", continues_task)
+        self.assertIn("Stage link required before dispatch reviewer", blocked_task)
+        self.assertNotIn("Workflow stage not linked", out["continues"])
+        self.assertNotIn("Workflow stage not linked", out["blocked"])
+        self.assertNotIn(
+            "Exact operator direction", continues_task.split("<details", maxsplit=1)[0]
+        )
+
+    def test_fresh_return_age_moves_to_evidence_while_stale_age_remains_primary(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+nextData.generated=1000;
+for(const session of group.sessions){session.subagent_hierarchy=[];session.subagent_events=[];}
+const observation={semantic:__semantic,workflow_discovery:{state:"observed"},sources:{}};
+group.sessions[0].subagent_events=[{at:978,kind:"subagent_complete",name:"Harvey",
+  assignment:"Review mirror",result:"Returned",source:"lifecycle"}];
+const fresh=nextCockpitRecoveryExecution(group,
+  nextCockpitRecoveryBriefing(group,null,observation,[]));
+group.sessions[0].subagent_events=[{at:1,kind:"subagent_complete",name:"Harvey",
+  assignment:"Review mirror",result:"Returned",source:"lifecycle"}];
+const stale=nextCockpitRecoveryExecution(group,
+  nextCockpitRecoveryBriefing(group,null,observation,[]));
+console.log(JSON.stringify({fresh,stale}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        fresh_primary = out["fresh"].split("<details", maxsplit=1)[0]
+        stale_primary = out["stale"].split("<details", maxsplit=1)[0]
+        self.assertNotIn("22s", fresh_primary)
+        self.assertIn("22s", out["fresh"])
+        self.assertIn("stale", stale_primary)
 
     def test_result_fallback_requires_same_session_affinity(self) -> None:
         out = self.run_fixture(
@@ -1526,10 +1756,10 @@ console.log(JSON.stringify({items,html}));
 
         self.assertEqual("inspect Hooke handoff", out["items"][0]["label"])
         self.assertLess(
-            out["html"].index("No explicit captain request · scan 3/3"),
-            out["html"].index("FO · inspect Hooke handoff"),
+            out["html"].index("FO INSPECTING"),
+            out["html"].index("INSPECT · inspect Hooke handoff"),
         )
-        self.assertIn("FO · verify source refresh", out["html"])
+        self.assertIn("FO · attention · verify source refresh", out["html"])
         self.assertIn("bounded active-session final-output scan", out["html"])
 
     def test_empty_recovery_memos_collapse_to_one_add_context_action(self) -> None:
@@ -1558,7 +1788,7 @@ console.log(JSON.stringify({recovery}));
 
         ordered = [
             "ASSIGNMENT",
-            "MISSING / NEXT ACTION",
+            "FO INSPECTING",
             "EXECUTION",
             "LATEST EVIDENCE",
             "+ Add human context · this browser",
@@ -1589,9 +1819,9 @@ console.log(JSON.stringify({html}));
         assert isinstance(out, dict)
 
         self.assertNotIn("task, outcome, stage, done condition", out["html"])
-        self.assertIn("No explicit captain request · scan 3/3", out["html"])
-        self.assertIn("Source unavailable · Ohm assignment", out["html"])
-        self.assertIn("FO · inspect Harvey handoff", out["html"])
+        self.assertIn("FO INSPECTING", out["html"])
+        self.assertIn("inspect Ohm assignment", out["html"])
+        self.assertIn("inspect Harvey handoff", out["html"])
         execution = (
             out["html"].split("EXECUTION", maxsplit=1)[1].split("LATEST EVIDENCE", maxsplit=1)[0]
         )
@@ -1708,7 +1938,7 @@ console.log(JSON.stringify({html,recovery,panel,
             "<h2>Active work</h2>",
         ):
             self.assertNotIn(duplicate, out["panel"])
-        self.assertIn("FO · inspect idle owner", out["recovery"])
+        self.assertIn("INSPECT · inspect idle owner", out["recovery"])
 
     def test_prepared_trail_is_fo_follow_up_not_current_task(self) -> None:
         out = self.run_fixture(

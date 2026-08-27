@@ -341,6 +341,15 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
 .next-cockpit-recovery details{margin-top:5px;color:var(--ink3)}
 .next-cockpit-recovery summary{cursor:pointer}
 .next-cockpit-recovery ul{margin:5px 0 0;padding-left:18px;color:var(--ink2)}
+.next-cockpit-authority{margin:-10px -12px;padding:10px 12px;min-height:100%;box-sizing:border-box}
+.next-cockpit-authority>span{font-weight:700}
+.next-cockpit-authority>strong+strong{margin-top:5px}
+.next-cockpit-authority--captain-needed{box-shadow:inset 3px 0 var(--alert);background:color-mix(in oklab,var(--alert) 7%,transparent)}
+.next-cockpit-authority--captain-needed>span{color:var(--alert)}
+.next-cockpit-authority--fo-inspecting{box-shadow:inset 2px 0 var(--line2)}
+.next-cockpit-authority--fo-inspecting>span{color:var(--ink)}
+.next-cockpit-authority--fo-continues{background:color-mix(in oklab,var(--ink3) 4%,transparent)}
+.next-cockpit-authority--fo-continues>span,.next-cockpit-authority--fo-continues>strong{color:var(--ink3)}
 .next-cockpit-child-row{margin-top:7px}
 .next-cockpit-child-row+.next-cockpit-child-row{padding-top:7px;border-top:1px solid var(--line)}
 .next-cockpit-execution-root+.next-cockpit-execution-root{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
