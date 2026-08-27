@@ -475,3 +475,28 @@ Cycle 15 separates the cockpit's two navigation axes: a project-rooted scope tre
 ### Summary
 
 Cycle 16 makes scope legible through one structural grammar rather than repeated explanatory UI: project items are square and flush to a solid spine, session items are round and branched, and uncertain provenance stays explicitly unknown. Scope now follows evidence rather than screen selection across the tree, human memos, Course, Decisions, Console, and scoped Now evidence, while epistemic labels and the task subject remain independent. Checkpoint `e5ef8f5` is live on 8766 with the exact root terminal durably renewed and is ready for the first-officer gate.
+
+## Stage Report: shaping (cycle 17)
+
+- DONE: Now becomes a calm command briefing with only human Outcome/Focus, one current task, captain-owned attention, and active work; empty and secondary surfaces do not occupy primary space.
+  Commit `f673d045ddcb4a0c31c35e26fb0f276b1bb4a6ca` renders exactly four primary regions; empty memos are compact `Not set` rows, only the selected field opens, captain attention excludes FO work, and unassigned children cannot impersonate active assignments.
+- DONE: Decisions, history/results, plan detail, FO/system diagnostics, steering, guardrails, metrics, and raw interaction mechanics remain available only in their owning tab or disclosure, with no duplicate dense blocks in Now.
+  Renderer ownership tests fail if decision counts leave Decisions, completed work leaves Course, Console loses raw session state/Going On/metrics/controls/terminal, or the closed plan/system disclosures reopen into primary Now.
+- DONE: The exact screenshot/live-payload falsifier proves a substantial visible-text and primary-region reduction, compact edit-on-demand memos, truthful captain attention, preserved scope semantics/permalinks, and green focused/static checks before swap.
+  The screenshot-shaped fixture falls from 197 to 33 visible Now words with four regions; the exact 8767 payload rendered 26 words, one task/stage, `Nothing needs you`, truthful active root work, no textarea, no unavailable assignment, and none of the six removed dense surfaces.
+- DONE: Preserve edit, reload, scope isolation, and responsive structure while subtracting the old dashboard.
+  Executed tests click Outcome/Focus independently, autosave and reload exact project/session keys, preserve scope+tab fragments and square/round cues, and falsify a wide 2:5 briefing that does not collapse to one column at 760px.
+- DONE: Record the captain feedback, resulting criterion, and accepted interaction.
+  The captain identified layered old-dashboard ownership as the failure; the resulting criterion was subtraction to task, captain need, active work, and human memos, and the accepted interaction is compact read/edit/done with Course, Decisions, Console, and plan disclosure retaining detail.
+- DONE: Exercise, serve, and preserve the exact read-only interaction origin.
+  All 173 Next tests, 228 shared page/project/context/snapshot tests, Ruff, format, mypy over 116 files, embedded lint, plugin validation, and diff checks pass; isolated 8767 was stopped after the swap.
+  Stable `http://127.0.0.1:8766/?next=true#n=project:spacedock-research%2Fcargento` runs PID `63133`, serving 386,228 bytes at SHA-256 `68c05f321b1e8af92f30c8f358f03f5cc82b6fcaae5c0eac95c3f01f705de6c6`.
+  Exact root `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` is registered at tmux `$4/@4/%10`, stream connected, `read-only-control-stream`, keyboard input `not-exposed`; renewal client `@16/%65` reread the new server generation after the old lease correctly disconnected.
+- FAILED: The pre-existing whole-repository discovery suite is not green outside this frontend scope.
+  Under load it ran 1,920 tests with three failures and five errors; isolated Contracts/Droid retained three baseline expectation failures, `test_spacedock` retained its surrogate-import error, and the documented HTTP/quota contention modules timed out, while every changed renderer/static group passed independently.
+- DONE: Preserve the authorized prototype-only boundary.
+  The code commit remains local to `spacedock-ensign/project-cockpit`; no code ref was pushed or integrated, no version field changed, and `.spacedock/dev` was neither read nor mutated.
+
+### Summary
+
+Cycle 17 removes the layered dashboard from Now and gives each secondary mechanism one owner, leaving a four-region command briefing whose exact live payload is under one seventh of the failing screenshot fixture's text. Human memos remain exact-scope and edit-on-demand, captain attention is truthful, active work rejects unavailable assignments, and all retained detail is reachable through Course, Decisions, Console, or disclosure. Checkpoint `f673d04` is live on 8766 with the exact root terminal renewed read-only; the candidate is stopped and the unrelated baseline suite failures are recorded rather than hidden.
