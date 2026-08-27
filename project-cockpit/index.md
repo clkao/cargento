@@ -425,3 +425,28 @@ Shaping cycle 13 makes decision rows scannable without weakening their evidence 
 ### Summary
 
 Cycle 14 reshapes the project mirror around four operator questions while keeping the task—not a contributor—the stable subject. Course now separates exact direction and work from source-backed derived course change, Now distinguishes the live shaping task from completed checkpoint `179a80d`, Decisions keeps explicit application semantics, and Console retains exact read-only output. The committed Explore-only checkpoint is live on 8766 with the root terminal preserved and is ready for the first-officer gate.
+
+## Stage Report: shaping (cycle 15)
+
+- DONE: The session chooser is a left, tree-like scope filter rooted at the project—not a second tab strip—and preserves exact project/session permalinks and active-state cues.
+  Commit `ce7be1ea1be063b8fcc2fc08520cf58c22550d2c` renders one native-link `Project scope` navigation: normalized project root plus indented exact-session children with live state; executed tests fail if `All sessions`, session tab roles, horizontal-card styling, selection, or scope+tab round-trip regress.
+- DONE: Human-authored Focus and Outcome edit and persist independently for the normalized project scope and each exact session scope, without cross-project/session leakage or overwriting observer-derived context.
+  Versioned v2 keys combine canonical project identity, optional exact `harness:sid`, and field; input autosaves bounded 500-character values, reports saved/storage-unavailable state, treats corrupt values as empty, and renders empty session memos without project inheritance.
+- DONE: The four operator-question tabs remain a separate axis, the exact live Cargento payload is usable at wide and narrow layouts, and focused renderer/static suites pass before the stable server swaps.
+  The live project/root-session DOM exercise edits both project memos and both session memos, switches scopes, clears renderer drafts, reloads from storage, proves isolation, and round-trips exact Decisions scope while Course remains a separate local tab.
+- DONE: Preserve human versus derived ownership in Now.
+  `HUMAN · OUTCOME` and `HUMAN · FOCUS` sit in a captain-memo surface scoped by the selected tree node; a separate `DERIVED` line names semantic task/stage evidence and never reads or writes memo text.
+- DONE: Reflow scope navigation without returning to horizontal pills.
+  Wide CSS fixes a `180–230px` left scope column beside content; the executed narrow-layout contract requires a one-column stack at 760px and forbids horizontal overflow on the wide shell.
+- DONE: Record the captain feedback and accepted decision criterion.
+  The captain-authorized cycle-15 correction distinguished scope from operator question, made the project root the all-session action, and assigned human notes to the selected exact scope; the implementation follows that accepted criterion without adding another content surface.
+- DONE: Exercise, serve, and preserve prototype authority.
+  Twenty cockpit tests and the full 165-test next-UI suite pass with Ruff, format, strict mypy over 116 files, embedded lint, plugin validation, version parity, and diff checks; candidate 8767 stayed isolated until these and the exact-payload exercise passed.
+  Stable `http://127.0.0.1:8766/?next=true#n=project:spacedock-research%2Fcargento` runs PID `44838`, serving 376,636 bytes at SHA-256 `ad612400443cbb30ed1ca27a243984fb38e5e93f5a705877aeb9e1e1be7d9fd8`; candidate 8767 is stopped.
+  Exact root `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` remains registered at tmux `$4/@4/%10`, stream connected, `read-only-control-stream`, keyboard input `not-exposed`, after six renewals across more than one lease interval.
+- DONE: Preserve the authorized prototype-only boundary.
+  The code commit is local to `spacedock-ensign/project-cockpit`; no code ref was pushed or integrated, no version field changed, and `.spacedock/dev` was neither read nor mutated.
+
+### Summary
+
+Cycle 15 separates the cockpit's two navigation axes: a project-rooted scope tree chooses whose evidence and notes are in view, while Now, Course, Decisions, and Console remain content tabs. Outcome and Focus are now explicit human memos with exact-scope browser persistence, storage failure boundaries, and no inheritance or semantic-history contamination. The committed Explore-only checkpoint is live on 8766 with the root terminal preserved and is ready for the first-officer gate.
