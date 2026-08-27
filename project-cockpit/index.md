@@ -646,3 +646,43 @@ Cycle 22 turns the recovery briefing into the canonical project mirror: exact wo
 ### Summary
 
 Cycle 23 makes the recovery hierarchy visually undeniable without adding another surface. When captain evidence is empty, the first FO recovery becomes the action; captain coverage remains supporting evidence. Acknowledgements cannot impersonate direction, attributable output stays explicitly uncertain, and empty memo/child evidence is compressed behind clear ownership. Checkpoint `5fc6b6b` is live on 8766 with the exact root console renewed read-only; candidate 8767 is stopped and the inspected Round-1 screenshot records the accepted correction.
+
+## Stage Report: shaping (cycle 24)
+
+- DONE: Inspect the authoritative Round-2 before image and apply the resulting IA criterion.
+  `/tmp/cargento-mirror-round2-before.png` showed browser-local memo before task truth, missing evidence split from execution, repeated SESSION decoration, empty Decisions duplication, and `0 subagents` contradicting the selected project. The dispatched criterion was assignment, missing/owner, execution, evidence, optional note.
+- DONE: Make authoritative assignment truth the first briefing cell without confusing it with browser-local context.
+  Commit `e7c9913802e497f7e2f80fa5acf9d2dfe2121b7b` renders `ASSIGNMENT` first and states absent authority once as `Not observed · task, outcome, stage, done condition`; the browser memo moves to `OPTIONAL HUMAN NOTE · THIS BROWSER` at the end and remains editable.
+- DONE: Consolidate CAPTAIN/FO-owned gaps into one missing/next-action surface.
+  CAPTAIN requests precede FO actions; authoritative empty state says `Captain · no request observed` once. Active and returned gaps become owner-first `FO · verify NAME assignment[/result]` lines, while source/confidence stays in one Evidence disclosure and failed/incomplete coverage guards remain authoritative.
+- DONE: Group observed execution once under each exact root without repeating session ornament.
+  The live mirror renders `Codex · working`, then plain `Harvey · active` and `Ohm · returned` rows. Full session/work-item identifiers are absent from primary child copy and remain in expanded Evidence and Copy briefing.
+- DONE: Subtract empty Decisions and preserve evidence, scope, and control ownership.
+  The recovery strip has no Decisions primary cell; the Decisions tab remains canonical. Latest actionable direction and attributable result follow execution as `LATEST EVIDENCE`; semantic filtering, stale/unavailable labels, project/session routes, four tabs, and read-only Console remain intact.
+- DONE: Make project identity and header counts compatible and explicitly scoped.
+  The full project path appears once in the primary title, while the breadcrumb keeps the compact navigable leaf. The header says `All projects` and derives active children from the same working-session hierarchy as the briefing, omitting a zero child claim rather than contradicting project execution.
+- DONE: Add falsifiers for reading order, consolidated missing evidence, optional-memo subordination, empty-Decisions subtraction, child grouping, and compatible scoped counts.
+  All six pass and fail if any requested hierarchy or subtraction is reversed. The cockpit/chrome group passes 68/68, the focused renderer/context group passes 209/209, and the final changed-surface group passes 89/89 after recomputing byte oracles.
+- DONE: Complete static and full verification without hiding unrelated baselines.
+  Ruff, formatting over 156 files, strict mypy over 116 source files, embedded lint, plugin validation, version parity at 0.16.0, version-diff guard, byte oracles, and diff checks pass. Full discovery completed 1,952 tests in 182.269 seconds with three failures, four errors, one skip, and 84.1% coverage; the separate 184-test script group reproduced its one runtime-inventory failure. All reds are the unchanged CapturingServer, Python 3.13 surrogate, stale Codex state, import allowlist, Droid timestamp, and runtime-inventory baselines; no cockpit or contention failure appears.
+- DONE: Exercise the exact candidate and preserve output-only Console behavior.
+  Candidate 8767 served 413,130 bytes at SHA-256 `df91fbfb18c7fecad56520696081f038580e38a5a7f2dd1de1f20ebee185b73f`; standalone Playwright Chrome proved the five-part order, singular assignment absence, hidden IDs, accurate active-child count, all four tabs, and zero control requests from terminal keystrokes. Candidate 8767 is stopped.
+- DONE: Capture and inspect the required post-swap 1440×1000 Chrome screenshot.
+  `/tmp/cargento-mirror-round2-after.png` is 88,694 bytes at SHA-256 `cbbe322b1d8bce77bcc0c1d909e7bcf0242ed30caeea92bf861e0fb10a4def87`. Inspection confirms assignment first; CAPTAIN/FO missing evidence second; one root-grouped execution cell; latest evidence after execution; optional note last; compatible scoped count; compact breadcrumb; no repeated session glyph, empty Decisions cell, or overflow.
+- DONE: Serve the committed checkpoint and preserve the exact read-only interaction origin.
+  Stable `http://127.0.0.1:8766/?next=true#n=project:spacedock-research%2Fcargento` runs PID `13203` with the verified bytes and digest. Exact root `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` is registered at tmux `$4/@4/%10`, 166×40, connected and stream connected, `read-only-control-stream`, keyboard input `not-exposed`, with eight renewals observed after the swap.
+- DONE: Preserve the authorized prototype-only boundary and recorded captain interaction.
+  The Round-2 review supplied the authoritative before image and requested hierarchy; the live candidate and inspected after image exercise that accepted correction. The code commit remains local to `spacedock-ensign/project-cockpit`; no code ref was pushed or integrated, no version or workflow status changed, and `.spacedock/dev` was neither read nor mutated.
+
+### Completion checklist
+
+- DONE: The canonical visual order is assignment truth first, then consolidated missing evidence and its CAPTAIN/FO owner, then observed execution and latest evidence; optional browser-local context is subordinate and edit-on-demand.
+  The live DOM order indices were strictly increasing across all five regions, and the after screenshot confirms the same visual order.
+- DONE: Absent assignment is stated once as the missing task/outcome/stage/done-condition binding, and child assignment/result gaps are consolidated into the owned next-action surface without contradictory or repetitive absence vocabulary.
+  The live falsifier counted one authoritative absence sentence and found no assignment-missing vocabulary in execution rows.
+- DONE: Project/session identity and activity counts use explicit scope and one compatible child derivation; repeated session glyphs/labels and empty decision duplication are removed, with the post-swap Chrome screenshot proving the hierarchy visually.
+  The live header reports `All projects · 1 running · 1 active child`; the inspected after image shows one full identity, plain child rows, and no empty Decisions cell.
+
+### Summary
+
+Cycle 24 inverts the recovery mirror around operator action: assignment truth, owned missing evidence, observed execution, latest evidence, then optional human context. It removes duplicate session and decision decoration, reconciles global counts with project execution, and preserves uncertainty, scope, semantic admission, and output-only Console behavior. Checkpoint `e7c9913` is live on 8766 with its exact origin renewed read-only; candidate 8767 is stopped and the Round-2 after image records the corrected hierarchy.
