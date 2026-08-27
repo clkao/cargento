@@ -6,12 +6,17 @@ function nextRouteToken(route){
   return nextFragmentForRoute(route).slice(3);
 }
 
+function nextBreadcrumbProjectLabel(project){
+  const parts = String(project || "").split("/").filter(Boolean);
+  return parts[parts.length - 1] || String(project || "project");
+}
+
 function nextBreadcrumb(){
   const overview = nextRoute.view === "overview"
     ? "<span>Cargento | overview</span>"
     : '<button type="button" class="next-crumb" data-next-route="overview">Cargento | overview</button>';
   if(nextRoute.view === "overview") return overview;
-  const project = esc(nextRoute.project);
+  const project = esc(nextBreadcrumbProjectLabel(nextRoute.project));
   if(nextRoute.view === "project") return `${overview}<span aria-hidden="true"> &gt; </span><span>${project}</span>`;
   const projectRoute = esc(nextRouteToken({view: "project", project: nextRoute.project}));
   return `${overview}<span aria-hidden="true"> &gt; </span>` +
@@ -27,8 +32,10 @@ function nextCounts(){
   const rows = nextRows();
   const summary = nextData && nextData.summary ? nextData.summary : {};
   const projects = new Set(rows.map(row => String(row.project || ""))).size;
-  const subagents = rows.reduce(
-    (total, row) => total + (Array.isArray(row.subagents) ? row.subagents.length : 0),
+  const activeChildren = rows.filter(row => row.state === "working").reduce(
+    (total, row) => total + (Array.isArray(row.subagent_hierarchy)
+      ? row.subagent_hierarchy.length
+      : Array.isArray(row.subagents) ? row.subagents.length : 0),
     0,
   );
   return {
@@ -36,7 +43,7 @@ function nextCounts(){
     projects,
     running: Number(summary.working) || 0,
     sessions: rows.length,
-    subagents,
+    activeChildren,
   };
 }
 
@@ -81,7 +88,9 @@ function renderNext(){
   app.innerHTML = '<header class="next-header">' +
     `<nav class="next-breadcrumb" aria-label="Breadcrumb">${nextBreadcrumb()}</nav>` +
     '<div class="next-header-right">' +
-    `<span class="next-running next-live">${nextStatusDot("live")} ${counts.running} running · ${counts.subagents} subagents</span>` +
+    `<span class="next-running next-live">${nextStatusDot("live")} All projects · ` +
+    `${counts.running} running${counts.activeChildren ? ` · ${counts.activeChildren} active ` +
+      `${counts.activeChildren === 1 ? "child" : "children"}` : ""}</span>` +
     gate +
     '<details class="next-menu"><summary aria-label="More">···</summary>' +
     '<div class="next-menu-items">' +

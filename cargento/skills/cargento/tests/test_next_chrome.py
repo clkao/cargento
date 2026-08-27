@@ -203,7 +203,7 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         self.assertIn(
             '<span class="next-running next-live">'
             '<span class="next-status-dot" aria-label="live">●</span> '
-            "1 running · 3 subagents</span>",
+            "All projects · 1 running · 2 active children</span>",
             out,
         )
         self.assertIn(
@@ -214,6 +214,32 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         self.assertNotIn("4 running", out)
         self.assertIn("2 projects · 4 sessions", out)
         self.assertIn("in this 24h window", out)
+
+    def test_all_projects_header_counts_the_same_active_children_as_briefing(self) -> None:
+        out = self._run_page_js(
+            """
+await __settle();
+console.log(JSON.stringify(__els.app.innerHTML));
+""",
+            """
+location.hash = "#n=project:org%2Frecce";
+__els.app = {innerHTML: ""};
+__fetchImpl = async url => ({ok: true, json: async () =>
+  String(url).startsWith("/api/project-context")
+    ? {semantic:{projections:{command_attention:[],command_attention_coverage:{
+        state:"complete",scanned:1,total:1,omitted:0,source:"bounded scan"}}}}
+    : ({window_hours:24,summary:{working:1,needs_input:0},
+      harnesses:[{key:"codex",label:"Codex"}],sessions:[{
+        sid:"root",harness:"codex",project:"recce",project_key:"org/recce",
+        state:"working",active:true,last_activity:10,subagents:[],
+        subagent_hierarchy:[{name:"Ohm",observer_sid:"child-ohm",depth:1}]
+      }]})});
+""",
+        )
+
+        self.assertIn("All projects · 1 running · 1 active child", out)
+        self.assertNotIn("0 subagents", out)
+        self.assertEqual(1, out.count("org/recce"))
 
     def test_the_need_you_pill_opens_the_session_queue(self) -> None:
         out = self._run_page_js(
@@ -266,7 +292,7 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         self.assertIn(
             '<span class="next-running next-live">'
             '<span class="next-status-dot" aria-label="live">●</span> '
-            "0 running · 0 subagents</span>",
+            "All projects · 0 running</span>",
             out,
         )
         self.assertNotIn("need you", out)
@@ -346,10 +372,10 @@ __fetchImpl = async () => {
 """,
         )
 
-        self.assertIn('aria-label="live">●</span> 1 running', out["good"])
+        self.assertIn('aria-label="live">●</span> All projects · 1 running', out["good"])
         self.assertNotIn("Refresh stalled", out["once"])
         self.assertIn("Refresh stalled", out["twice"])
-        self.assertIn('aria-label="live">●</span> 1 running', out["twice"])
+        self.assertIn('aria-label="live">●</span> All projects · 1 running', out["twice"])
         self.assertIn('data-next-state="stalled"', out["twice"])
 
 

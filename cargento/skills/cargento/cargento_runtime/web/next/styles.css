@@ -324,6 +324,8 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
 .next-cockpit-recovery>header button{padding:4px 7px;border:1px solid var(--line2);background:transparent;color:var(--ink2);font:inherit;letter-spacing:0;cursor:pointer}
 .next-cockpit-recovery>div{min-width:0;padding:10px 12px;border-right:1px solid var(--line);font:var(--fs-xs) var(--mono)}
 .next-cockpit-recovery>div:last-child{border-right:0}
+.next-cockpit-recovery-evidence{grid-column:span 2;border-top:1px solid var(--line)}
+.next-cockpit-recovery-evidence+.next-cockpit-recovery-memos{border-top:1px solid var(--line)}
 .next-cockpit-recovery-memos>[data-next-cockpit-memo-field]{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 8px;padding-top:5px}
 .next-cockpit-recovery-memos>[data-next-cockpit-memo-field]+[data-next-cockpit-memo-field]{margin-top:5px;border-top:1px solid var(--line);padding-top:7px}
 .next-cockpit-recovery-memos>[data-next-cockpit-memo-field]>span{grid-column:1/-1;margin:0;letter-spacing:.04em}
@@ -341,6 +343,8 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
 .next-cockpit-recovery ul{margin:5px 0 0;padding-left:18px;color:var(--ink2)}
 .next-cockpit-child-row{margin-top:7px}
 .next-cockpit-child-row+.next-cockpit-child-row{padding-top:7px;border-top:1px solid var(--line)}
+.next-cockpit-execution-root+.next-cockpit-execution-root{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.next-cockpit-execution-root>.next-cockpit-child-row{padding-left:10px}
 .next-cockpit-scope{display:flex;align-items:baseline;gap:12px;padding:7px 12px;font:var(--fs-xs) var(--mono);color:var(--ink3)}
 .next-cockpit-scope strong{font-size:var(--fs-2xs);letter-spacing:.08em;color:var(--ink)}
 .next-cockpit-scope--project{border-bottom:1px solid var(--line)}
@@ -423,6 +427,7 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
   .next-cockpit-recovery,.next-cockpit-now-state{grid-template-columns:1fr}
   .next-cockpit-recovery>div,.next-cockpit-now-state>div{border-right:0;border-bottom:1px solid var(--line)}
   .next-cockpit-recovery>div:last-child,.next-cockpit-now-state>div:last-child{border-bottom:0}
+  .next-cockpit-recovery-evidence{grid-column:1}
   .next-project-detail-status{grid-column:1;grid-row:auto;text-align:left}
   .next-project-detail-main{grid-template-columns:1fr}
   [data-next-project-section="plan"],[data-next-project-section="workstream"]{grid-column:1}

@@ -283,8 +283,8 @@ function nextCockpitRecoveryChildren(group){
 
 function nextCockpitCommandAttention(group, observation){
   const attention = [];
-  const add = (owner, label, source, confidence = "exact") => attention.push({
-    owner, label, evidence:{source, confidence},
+  const add = (owner, label, source, confidence = "exact", kind = "") => attention.push({
+    owner, label, kind, evidence:{source, confidence},
   });
   const semantic = observation && observation.semantic || {};
   const projected = semantic.projections && Array.isArray(semantic.projections.command_attention)
@@ -349,16 +349,16 @@ function nextCockpitCommandAttention(group, observation){
   const children = nextCockpitRecoveryChildren(group);
   for(const child of children.active){
     if(child.assignment !== "assignment unavailable") continue;
-    add("FO", `verify ${child.worker} assignment — assignment missing`,
-      child.assignmentSource, "unavailable");
+    add("FO", `verify ${child.worker} assignment`, child.assignmentSource,
+      "unavailable", "child_evidence_gap");
   }
   const returned = children.latestReturn;
   if(returned && (returned.assignment === "assignment unavailable" ||
       returned.result === "result unavailable")){
     const gaps = [returned.assignment === "assignment unavailable" ? "assignment" : "",
       returned.result === "result unavailable" ? "result" : ""].filter(Boolean);
-    add("FO", `verify ${returned.worker} return — ${gaps.join("/")} missing`,
-      returned.assignmentSource, "unavailable");
+    add("FO", `verify ${returned.worker} ${gaps.join("/")}`, returned.assignmentSource,
+      "unavailable", "child_evidence_gap");
   }
   return attention.sort((left, right) =>
     (left.owner === "CAPTAIN" ? 0 : 1) - (right.owner === "CAPTAIN" ? 0 : 1));
@@ -368,19 +368,18 @@ function nextCockpitRecoveryAttention(group, observation, commandAttention){
   const attention = commandAttention || nextCockpitCommandAttention(group, observation);
   const coverage = nextCockpitAttentionCoverage(group, observation);
   const coverageEvidence = `${coverage.label} · ${coverage.source}`;
-  const row = item => `<strong>${esc(item.owner + " · " + item.label)}</strong>` +
-    `<small>${esc(String(item.evidence && item.evidence.source || "source unavailable"))} · ` +
-    `${esc(String(item.evidence && item.evidence.confidence || "confidence unavailable"))}</small>`;
+  const row = item => `<strong>${esc(item.owner + " · " + item.label)}</strong>`;
+  const evidence = item => `<small>${esc(item.owner + " · " + item.label + " · " +
+    String(item.evidence && item.evidence.source || "source unavailable") + " · " +
+    String(item.evidence && item.evidence.confidence || "confidence unavailable"))}</small>`;
   const captain = attention.filter(item => item && item.owner === "CAPTAIN");
   const system = attention.filter(item => item && item.owner === "FO");
-  const primary = captain.length ? captain.map(row).join("") :
-    system.length ? row(system[0]) : '<strong>No action observed</strong>';
-  const collapsed = captain.length ? system : system.slice(1);
-  const systemRows = collapsed.length ? '<details><summary>System details · ' + collapsed.length +
-    `</summary><ul>${collapsed.map(item => `<li>${row(item)}</li>`).join("")}</ul></details>` : "";
-  const captainEmpty = captain.length ? "" : "Captain · none observed · ";
-  return primary + systemRows +
-    `<small data-next-cockpit-attention-coverage>${esc(captainEmpty + coverageEvidence)}</small>`;
+  const captainRows = captain.length ? captain.map(row).join("") :
+    coverage.state === "complete" ? '<strong>Captain · no request observed</strong>' : "";
+  const allEvidence = attention.length ? '<details><summary>Evidence</summary>' +
+    attention.map(evidence).join("") + '</details>' : "";
+  return captainRows + system.map(row).join("") + allEvidence +
+    `<small data-next-cockpit-attention-coverage>${esc(coverageEvidence)}</small>`;
 }
 
 function nextCockpitRecoveryDecisions(semantic){
@@ -504,9 +503,9 @@ function nextCockpitRecoveryMemoCell(group, focus, briefing){
   if(briefing.outcome === "Not set" && briefing.currentFocus === "Not set" &&
       ![outcomeKey, focusKey].includes(nextCockpitMemoEditingKey)){
     return '<div class="next-cockpit-recovery-memos" data-next-cockpit-memo-empty>' +
-      '<span>OUTCOME / FOCUS · THIS BROWSER</span><strong>Outcome/focus not set</strong>' +
+      '<span>OPTIONAL HUMAN NOTE</span>' +
       `<button type="button" data-next-cockpit-action="memo-edit" data-arg="${esc(outcomeKey)}">` +
-      'Add context</button></div>';
+      'this browser · Add outcome/focus</button></div>';
   }
   const field = (kind, label, placeholder, value) => {
     const key = nextCockpitMemoKey(group, focus, kind);
@@ -526,9 +525,33 @@ function nextCockpitRecoveryMemoCell(group, focus, briefing){
       `<strong>${esc(value)}</strong><button type="button" data-next-cockpit-action="memo-edit" ` +
       `data-arg="${esc(key)}" aria-label="Edit ${label}">Edit</button></div>`;
   };
-  return '<div class="next-cockpit-recovery-memos"><span>OUTCOME / FOCUS · THIS BROWSER</span>' +
+  return '<div class="next-cockpit-recovery-memos"><span>OPTIONAL HUMAN NOTE · THIS BROWSER</span>' +
     field("outcome", "OUTCOME", "What result should this scope achieve?", briefing.outcome) +
     field("focus", "FOCUS", "What are you concentrating on now?", briefing.currentFocus) + '</div>';
+}
+
+function nextCockpitRecoveryExecution(group, briefing){
+  const labels = nextHarnessLabels();
+  const children = [...briefing.children.active];
+  if(briefing.children.latestReturn) children.push(briefing.children.latestReturn);
+  const sessions = group.sessions.filter(session => session.state === "working" ||
+    children.some(child => child.sourceSession === sessKey(session)));
+  if(!sessions.length) return '<strong>No execution observed</strong>';
+  const childEvidence = child => '<details><summary>Evidence</summary>' +
+    `<small>${esc(child.assignment + (child.result ? " · " + child.result : "") +
+      " · source " + child.assignmentSource + " · source session " + child.sourceSession)}</small>` +
+    '</details>';
+  return sessions.map(session => {
+    const key = sessKey(session);
+    const harness = labels.get(String(session.harness || "")) || String(session.harness || "Session");
+    const state = session.state === "needs_input" ? "needs input" : String(session.state || "unknown");
+    const rows = children.filter(child => child.sourceSession === key).map(child =>
+      '<div class="next-cockpit-child-row">' +
+      `<strong>${esc(child.worker + " · " + child.lifecycle)}</strong>${childEvidence(child)}</div>`
+    ).join("");
+    return '<div class="next-cockpit-execution-root">' +
+      `<strong>${esc(harness + " · " + state)}</strong>${rows}</div>`;
+  }).join("");
 }
 
 function nextCockpitRecoveryStrip(group, observation, commandAttention){
@@ -560,48 +583,24 @@ function nextCockpitRecoveryStrip(group, observation, commandAttention){
       : "result evidence not captured";
   const taskText = briefing.task.known ? briefing.task.label + " · " + briefing.task.stage :
     "Not observed";
-  const childScope = child => {
-    const session = group.sessions.find(candidate => sessKey(candidate) === child.sourceSession);
-    return session ? nextCockpitScopeCue(nextCockpitSessionScopeKind(session)) :
-      nextCockpitScopeCue({kind:"unknown",owner:"unknown"});
-  };
-  const childEvidence = (child, detail) => '<details><summary>Evidence</summary>' +
-    `<small>${esc(detail + " · source " + child.assignmentSource + " · source session " +
-      child.sourceSession)}</small></details>`;
-  const activeChildRows = briefing.children.active.map(child =>
-    `<div class="next-cockpit-child-row" data-parent-session="${esc(child.sourceSession)}"` +
-    (child.workItemId ? ` data-work-item="${esc(child.workItemId)}"` : "") + `>` +
-    childScope(child) + `<strong>${esc(child.worker + " · " + child.lifecycle)}</strong>` +
-    `<small>${esc(child.assignment === "assignment unavailable" ? "assignment missing" :
-      child.assignment)}</small>` + childEvidence(child, child.assignment) + '</div>').join("");
-  const returned = briefing.children.latestReturn;
-  const returnedMissing = returned ? [
-    returned.assignment === "assignment unavailable" ? "assignment" : "",
-    returned.result === "result unavailable" ? "result" : "",
-  ].filter(Boolean) : [];
-  const returnedRow = returned ? `<div class="next-cockpit-child-row" ` +
-    `data-parent-session="${esc(returned.sourceSession)}">` +
-    childScope(returned) + `<strong>${esc(returned.worker + " · " + returned.lifecycle)}</strong>` +
-    `<small>${esc(returnedMissing.length ? returnedMissing.join("/") + " missing" :
-      "return evidence captured")}</small>` + childEvidence(returned,
-      returned.assignment + " · " + returned.result) + '</div>' : "";
-  const childRows = activeChildRows + returnedRow || `<strong>${esc(briefing.active)}</strong>`;
   const taskAttrs = briefing.task.known ? ` data-work-item="${esc(briefing.task.id)}"` : "";
+  const assignment = briefing.task.known ? taskText :
+    "Not observed · task, outcome, stage, done condition";
   return '<section class="next-cockpit-recovery" aria-label="Recovery summary">' +
     '<header><strong>RECOVERY BRIEFING</strong>' +
     `<button type="button" data-next-cockpit-action="copy-briefing">${copyLabel}</button></header>` +
-    nextCockpitRecoveryMemoCell(group, focus, briefing) +
-    `<div data-next-cockpit-task${taskAttrs}>${nextCockpitScopeCue(nextCockpitProjectScopeKind())}` +
-    `<span>${briefing.task.known ? "CURRENT TASK" : "WORKFLOW TASK"}</span>` +
-    `<strong>${esc(taskText)}</strong></div>` +
-    `<div><span>CHILDREN · LATEST RETURN BOUNDED 1</span>${childRows}</div>` +
-    `<div><span>${exactLabel}</span><strong>${esc(direction)}</strong>` +
+    `<div data-next-cockpit-task${taskAttrs}><span>ASSIGNMENT</span>` +
+    `<strong>${esc(assignment)}</strong></div>` +
+    `<div><span>MISSING / NEXT ACTION</span>` +
+    `${nextCockpitRecoveryAttention(group, observation, commandAttention)}</div>` +
+    `<div><span>EXECUTION</span>${nextCockpitRecoveryExecution(group, briefing)}</div>` +
+    `<div class="next-cockpit-recovery-evidence"><span>LATEST EVIDENCE</span>` +
+    `<span>${exactLabel}</span><strong>${esc(direction)}</strong>` +
     `<span>${resultLabel}</span><strong>${esc(result)}</strong>` +
     '<details><summary>Evidence</summary>' +
     `<small>${esc(directionEvidence)}</small><small>${esc(resultEvidence)}</small>` +
     '</details></div>' +
-    `<div><span>ATTENTION</span>${nextCockpitRecoveryAttention(group, observation, commandAttention)}</div>` +
-    `<div><span>DECISIONS</span><strong>${esc(briefing.decisions)}</strong></div>` +
+    nextCockpitRecoveryMemoCell(group, focus, briefing) +
     '</section>';
 }
 
