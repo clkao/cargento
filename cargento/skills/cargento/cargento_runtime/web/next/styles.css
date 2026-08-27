@@ -412,3 +412,7 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
   .pc-trail-top span{text-align:left}
   .pc-terminal-viewport{height:220px}
 }
+@media(max-width:420px){
+  .next-cockpit-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;padding:0 6px}
+  .next-cockpit-tabs button{min-width:0;padding-right:0;padding-left:0;font-size:var(--fs-xs)}
+}

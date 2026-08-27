@@ -37,9 +37,13 @@ function nextCockpitFocusedSession(group){
   return group.sessions.find(session => sessKey(session) === nextRoute.focus) || null;
 }
 
-function nextCockpitSessionResult(session){
-  if(session.state === "working") return session.title || "working";
-  return session.last_output || session.title || session.state || "state unavailable";
+function nextCockpitSessionActivityDetail(session){
+  const state = String(session && session.state || "").trim().toLowerCase();
+  for(const candidate of [session && session.state_detail, session && session.title]){
+    const detail = String(candidate || "").trim().replace(/\s+/g, " ");
+    if(detail && detail.toLowerCase() !== state) return detail;
+  }
+  return "";
 }
 
 function nextCockpitScopeLabel(group){
@@ -111,20 +115,22 @@ function nextCockpitScopeTree(group, focus){
       nextCockpitScopeCue(Object.assign({}, scope, {detail:""})) +
       `<strong class="next-cockpit-scope-name">${esc(label)}</strong>` +
       (state ? `<span class="next-cockpit-scope-state">${esc(state)}</span>` : "") +
-      `<small>${esc(String(subtitle || "").replace(/\s+/g, " ").slice(0, 90))}</small></a>`;
+      (subtitle ? `<small>${esc(String(subtitle).replace(/\s+/g, " ").slice(0, 90))}</small>` : "") +
+      `</a>`;
   };
   const rows = [...group.sessions].sort((left, right) =>
     String(left.harness || "").localeCompare(String(right.harness || "")) ||
     sessKey(left).localeCompare(sessKey(right)));
   return `<nav class="next-cockpit-scope-tree" aria-label="Project scope">` +
     '<span class="next-cockpit-scope-heading">SCOPE</span>' +
-    link("project", nextCockpitScopeLabel(group), "", `${rows.length} sessions`,
+    link("project", nextCockpitScopeLabel(group), "",
+      `${rows.length} ${rows.length === 1 ? "session" : "sessions"}`,
       nextCockpitProjectScopeKind()) +
     rows.map(session => {
       const harness = nextHarnessLabels().get(String(session.harness || "")) ||
         String(session.harness || "Session");
       return link(sessKey(session), harness, String(session.state || "unknown"),
-        nextCockpitSessionResult(session), nextCockpitSessionScopeKind(session));
+        nextCockpitSessionActivityDetail(session), nextCockpitSessionScopeKind(session));
     }).join("") + `</nav>`;
 }
 
@@ -404,17 +410,20 @@ function nextCockpitCurrentTask(observation){
     ? semantic.projections.trail_heads : [];
   const head = heads.find(row => row && row.status === "current stage") ||
     heads.find(row => row && row.stage) || null;
-  const item = head && items.get(String(head.work_item_id || ""));
-  const fallback = (semantic.work_items || []).find(row => row && row.kind === "workflow_item");
-  return {
-    id:String(head && head.work_item_id || fallback && fallback.work_item_id || ""),
-    label:nextCockpitHumanLabel(item && item.label || fallback && fallback.label || "Project work"),
-    stage:nextCockpitHumanLabel(head && head.stage || "state unavailable"),
-  };
+  const id = String(head && head.work_item_id || "").trim();
+  const item = id ? items.get(id) : null;
+  const label = String(item && item.label || "").trim();
+  const stage = String(head && head.stage || "").trim();
+  if(!id || !label || !stage) return {known:false,id:"",label:"Not observed",stage:""};
+  return {known:true,id,label:nextCockpitHumanLabel(label),stage:nextCockpitHumanLabel(stage)};
 }
 
 function nextCockpitTaskSubject(observation){
   const task = nextCockpitCurrentTask(observation);
+  if(!task.known){
+    return '<section class="next-cockpit-task-subject" data-next-cockpit-task-subject ' +
+      'data-next-cockpit-primary><span>WORKFLOW TASK</span><h2>Not observed</h2></section>';
+  }
   return '<section class="next-cockpit-task-subject" data-next-cockpit-task-subject ' +
     `data-next-cockpit-primary data-work-item="${esc(task.id)}"><span>CURRENT TASK</span>` +
     `<h2>${esc(task.label)} <small>· ${esc(task.stage)}</small></h2></section>`;
@@ -458,7 +467,8 @@ function nextCockpitNowState(observation){
       '<span>COMPLETED RESULT</span><strong>No completed result observed</strong></div>';
   return '<section class="next-cockpit-now-state" aria-label="Current task state">' +
     `<div>${nextCockpitScopeCue(nextCockpitProjectScopeKind())}` +
-    `<span>CURRENT · EXACT WORKFLOW STATE</span><strong>${esc(task.label + " · " + task.stage)}</strong></div>` +
+    '<span>CURRENT · EXACT WORKFLOW STATE</span>' +
+    `<strong>${esc(task.known ? task.label + " · " + task.stage : task.label)}</strong></div>` +
     `<div>${nextCockpitScopeCue({kind:"unknown",owner:"unknown"})}` +
     '<span>CURRENT FOCUS · DERIVED</span><strong>Browser-local operator interpretation</strong></div>' +
     result + '</section>';
@@ -477,17 +487,19 @@ function nextCockpitActiveDelegation(group, observation){
   const assignmentRows = lanes.map(lane => {
     const session = group.sessions.find(candidate => sessKey(candidate) === lane.parentSession);
     const scope = session ? nextCockpitSessionScopeKind(session) : {kind:"unknown",owner:"unknown"};
-    return `<li data-work-item="${esc(lane.workItemId || "")}" ` +
-      `data-parent-session="${esc(lane.parentSession || "")}">` +
+    const workItem = lane.workItemId ? ` data-work-item="${esc(lane.workItemId)}"` : "";
+    return `<li${workItem} data-parent-session="${esc(lane.parentSession || "")}">` +
       `<strong>${esc(lane.assignment)}</strong>` +
       `<small>${esc(lane.worker)} · ${esc(scope.detail || "source unavailable")}</small></li>`;
   });
   const sessionRows = lanes.length ? [] : activeSessions.map(session => {
-    const label = nextCockpitHumanLabel(session.title || "Current task is active");
-    const title = label === task.label ? "Current task is active" : label;
     const scope = nextCockpitSessionScopeKind(session);
-    return `<li data-parent-session="${esc(sessKey(session))}"><strong>${esc(title)}</strong>` +
-      `<small>${esc(scope.detail || "Session")}</small></li>`;
+    const detail = nextCockpitSessionActivityDetail(session);
+    const secondary = [detail, scope.detail].filter(Boolean).join(" · ") || "Session";
+    const binding = String(session.work_item_id || "").trim();
+    const title = task.known && binding === task.id ? "Current task is active" : "Work is active";
+    return `<li data-parent-session="${esc(sessKey(session))}"><strong>${title}</strong>` +
+      `<small>${esc(secondary)}</small></li>`;
   });
   const rows = assignmentRows.concat(sessionRows).join("");
   return '<section class="next-cockpit-active-delegation" data-next-cockpit-active-delegation ' +

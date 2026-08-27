@@ -509,6 +509,59 @@ console.log(JSON.stringify({html}));
         self.assertNotIn("assignment unavailable", out["html"])
         self.assertNotIn("Unbound", out["html"])
         self.assertIn("Shape project cockpit", out["html"])
+        self.assertIn("Work is active", out["html"])
+        self.assertNotIn("Current task is active", out["html"])
+
+    def test_missing_task_identity_keeps_exact_working_activity_without_invention(self) -> None:
+        out = self.run_fixture(
+            """
+nextData.sessions=[{sid:"focus-1",harness:"codex",project:"cargento",
+  project_key:"spacedock-research/cargento",state:"working",active:true,
+  last_activity:104,title:null,state_detail:"running 1 subagent",
+  subagent_hierarchy:[{name:"Unbound",observer_sid:"child-x",depth:1}],subagents:[{}]}];
+const group=nextProjectGroups()[0];
+const observation={semantic:{facts:[],work_items:[],relations:[],projections:{
+  trail_heads:[],command_attention:[]}},child_assignments:[],observers:[]};
+nextCockpitContexts.clear();nextCockpitRequests.clear();
+nextCockpitContexts.set(nextCockpitContextKey(group,null),{data:observation,revision:nextData.generated});
+nextRoute=nextRouteFromFragment("#n=project:cargento");
+renderNext();await __settle();await __settle();
+const html=__els.app.innerHTML;
+const task=(html.match(/<section[^>]*data-next-cockpit-task-subject[\\s\\S]*?<\\/section>/)||[""])[0];
+const active=(html.match(/<section[^>]*data-next-cockpit-active-delegation[\\s\\S]*?<\\/section>/)||[""])[0];
+const scope=(html.match(/<nav class="next-cockpit-scope-tree"[\\s\\S]*?<\\/nav>/)||[""])[0];
+const panel=(html.match(/<section class="next-cockpit-panel"[\\s\\S]*<\\/section>/)||[""])[0];
+const visible=panel.replace(/<details(?![^>]*\\bopen\\b)[^>]*>[\\s\\S]*?<\\/details>/g," ")
+  .replace(/<[^>]+>/g," ").replace(/&[^;]+;/g," ").replace(/\\s+/g," ").trim();
+console.log(JSON.stringify({html,task,active,scope,visibleWords:visible?visible.split(" ").length:0,
+  primary:(html.match(/data-next-cockpit-primary/g)||[]).length}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual(4, out["primary"])
+        self.assertLessEqual(out["visibleWords"], 48)
+        self.assertIn("WORKFLOW TASK", out["task"])
+        self.assertIn("Not observed", out["task"])
+        self.assertNotIn("data-work-item", out["task"])
+        for invention in (
+            "CURRENT TASK",
+            "Project work",
+            "State unavailable",
+            "Current task is active",
+            "assignment unavailable",
+            "Unbound",
+        ):
+            self.assertNotIn(invention, out["html"])
+        self.assertIn("Work is active", out["active"])
+        self.assertIn("running 1 subagent", out["active"])
+        self.assertIn("<small>1 session</small>", out["scope"])
+        self.assertIn(
+            '<span class="next-cockpit-scope-state">working</span>'
+            "<small>running 1 subagent</small>",
+            out["scope"],
+        )
+        self.assertEqual(1, out["scope"].count(">working<"))
 
     def test_session_switcher_is_below_header_and_outcome_first(self) -> None:
         out = self.run_fixture(

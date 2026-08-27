@@ -555,6 +555,27 @@ class NextPageAssetContractTest(unittest.TestCase):
         self.assertIsNotNone(now_narrow)
         self.assertIn("grid-template-columns:1fr", now_narrow.group(1) if now_narrow else "")
 
+    def test_four_cockpit_tabs_fit_the_smallest_phone_without_pills(self) -> None:
+        styles = (frontend_page.WEB_DIR / "next" / "styles.css").read_text(encoding="utf-8")
+        phone_tabs = re.search(
+            r"@media\(max-width:420px\)\{[\s\S]*?\.next-cockpit-tabs\{([^}]*)\}",
+            styles,
+        )
+        phone_buttons = re.search(
+            r"@media\(max-width:420px\)\{[\s\S]*?\.next-cockpit-tabs button\{([^}]*)\}",
+            styles,
+        )
+
+        self.assertIsNotNone(phone_tabs)
+        self.assertIn(
+            "grid-template-columns:repeat(4,minmax(0,1fr))",
+            phone_tabs.group(1) if phone_tabs else "",
+        )
+        self.assertNotIn("overflow-x:auto", phone_tabs.group(1) if phone_tabs else "")
+        self.assertIsNotNone(phone_buttons)
+        self.assertIn("min-width:0", phone_buttons.group(1) if phone_buttons else "")
+        self.assertNotIn("border-radius", phone_buttons.group(1) if phone_buttons else "")
+
     def test_load_next_page_preserves_its_byte_oracles(self) -> None:
         # Per-part first, deliberately. Every part feeds the assembled page, so a
         # one-part edit fails the assembled oracle too. Naming the part that moved
@@ -605,8 +626,8 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "4da6527bbf6401db716ab5807748ac01a64aecce996e993ff9e0b42c22fdc811",
             ),
             "next-cockpit.js": (
-                41_782,
-                "72a4e734fe22b0ecbedab3ffa96c63cd6372f7ca60b53cf9cd2a43a88bfcac47",
+                42_399,
+                "cf632ce4fec3a800a5ec74f580c628e283b1c627ee0167be49df928d5db2a42c",
             ),
             "next-render.js": (
                 802,
@@ -625,16 +646,16 @@ class NextPageAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.next_asset_path("styles.css").read_bytes()
-        self.assertEqual(40_007, len(styles))
+        self.assertEqual(40_230, len(styles))
         self.assertEqual(
-            "56cae493221453a3db3255c594285e45d590a71c8642ae84a78c1f6201ec5d84",
+            "ce3789c8618c51ab227d992671394a49a63d432e132c9f14f4ff32b0f3f0f66c",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_next_page()
-        self.assertEqual(386_228, len(assembled))
+        self.assertEqual(387_068, len(assembled))
         self.assertEqual(
-            "68c05f321b1e8af92f30c8f358f03f5cc82b6fcaae5c0eac95c3f01f705de6c6",
+            "499c360b15c9af3d9671e0997b9705231489bf2d5e6c0f00b13e4ce471c631d2",
             hashlib.sha256(assembled).hexdigest(),
         )
 
