@@ -104,7 +104,7 @@ function nextCockpitScopeCue(scope){
     `<strong>${label}</strong>${detail}</span>`;
 }
 
-function nextCockpitScopeTree(group, focus){
+function nextCockpitScopeLinks(group, focus){
   const selected = focus ? sessKey(focus) : "project";
   const link = (key, label, state, subtitle, scope) => {
     const route = {view:"project",project:group.label,focus:key === "project" ? null : key,
@@ -121,9 +121,7 @@ function nextCockpitScopeTree(group, focus){
   const rows = [...group.sessions].sort((left, right) =>
     String(left.harness || "").localeCompare(String(right.harness || "")) ||
     sessKey(left).localeCompare(sessKey(right)));
-  return `<nav class="next-cockpit-scope-tree" aria-label="Project scope">` +
-    '<span class="next-cockpit-scope-heading">SCOPE</span>' +
-    link("project", nextCockpitScopeLabel(group), "",
+  return link("project", nextCockpitScopeLabel(group), "",
       `${rows.length} ${rows.length === 1 ? "session" : "sessions"}`,
       nextCockpitProjectScopeKind()) +
     rows.map(session => {
@@ -131,7 +129,24 @@ function nextCockpitScopeTree(group, focus){
         String(session.harness || "Session");
       return link(sessKey(session), harness, String(session.state || "unknown"),
         nextCockpitSessionActivityDetail(session), nextCockpitSessionScopeKind(session));
-    }).join("") + `</nav>`;
+    }).join("");
+}
+
+function nextCockpitScopeTree(group, focus){
+  return `<nav class="next-cockpit-scope-tree" aria-label="Project scope">` +
+    '<span class="next-cockpit-scope-heading">SCOPE</span>' +
+    nextCockpitScopeLinks(group, focus) + `</nav>`;
+}
+
+function nextCockpitScopeSwitcher(group, focus){
+  const selected = focus
+    ? `Viewing session · ${nextCockpitSessionScopeKind(focus).detail || "Session"} · ` +
+      String(focus.state || "state unavailable")
+    : `Viewing project · ${nextCockpitScopeLabel(group)}`;
+  return '<details class="next-cockpit-scope-switcher">' +
+    `<summary><span>${esc(selected)}</span><strong>Change scope</strong></summary>` +
+    `<nav class="next-cockpit-scope-options" aria-label="Change project scope">` +
+    nextCockpitScopeLinks(group, focus) + '</nav></details>';
 }
 
 function nextCockpitHumanLabel(value){
@@ -378,7 +393,7 @@ function nextCockpitMemoFields(group, focus){
   return `<section class="next-cockpit-memos" data-next-cockpit-memos ` +
     `data-next-cockpit-primary data-scope-owner="${esc(scope.owner)}">` +
     '<header><strong>Outcome &amp; Focus</strong>' + nextCockpitScopeCue(scope) +
-    '<span>Captain-authored</span></header>' +
+    '<span>Captain-authored · This browser only</span></header>' +
     '<div>' + field("outcome", "OUTCOME", "What result should this scope achieve?") +
     field("focus", "FOCUS", "What are you concentrating on now?") + '</div>' +
     '</section>';
@@ -420,13 +435,23 @@ function nextCockpitCurrentTask(observation){
 
 function nextCockpitTaskSubject(observation){
   const task = nextCockpitCurrentTask(observation);
+  const scope = nextCockpitScopeCue(nextCockpitProjectScopeKind());
   if(!task.known){
     return '<section class="next-cockpit-task-subject" data-next-cockpit-task-subject ' +
-      'data-next-cockpit-primary><span>WORKFLOW TASK</span><h2>Not observed</h2></section>';
+      `data-next-cockpit-primary>${scope}<span>WORKFLOW TASK</span>` +
+      '<h2>Not observed</h2></section>';
   }
   return '<section class="next-cockpit-task-subject" data-next-cockpit-task-subject ' +
-    `data-next-cockpit-primary data-work-item="${esc(task.id)}"><span>CURRENT TASK</span>` +
+    `data-next-cockpit-primary data-work-item="${esc(task.id)}">${scope}<span>CURRENT TASK</span>` +
     `<h2>${esc(task.label)} <small>· ${esc(task.stage)}</small></h2></section>`;
+}
+
+function nextCockpitViewingSession(focus){
+  if(!focus) return "";
+  const scope = nextCockpitSessionScopeKind(focus);
+  const state = String(focus.state || "state unavailable").trim();
+  return `<p class="next-cockpit-viewing-session" data-next-cockpit-viewing-session="${esc(sessKey(focus))}">` +
+    `Viewing session · ${esc(scope.detail || "Session")} · ${esc(state)}</p>`;
 }
 
 function nextCockpitTabList(){
@@ -482,6 +507,7 @@ function nextCockpitActiveDelegation(group, observation){
   const activeSessions = group.sessions.filter(session => session.state === "working");
   if(!lanes.length && !activeSessions.length){
     return '<section class="next-cockpit-active-delegation" data-next-cockpit-primary>' +
+      nextCockpitScopeCue(nextCockpitProjectScopeKind()) +
       '<h2>Active work</h2><p>No active work</p></section>';
   }
   const assignmentRows = lanes.map(lane => {
@@ -504,7 +530,7 @@ function nextCockpitActiveDelegation(group, observation){
   const rows = assignmentRows.concat(sessionRows).join("");
   return '<section class="next-cockpit-active-delegation" data-next-cockpit-active-delegation ' +
     'data-next-cockpit-primary>' +
-    '<h2>Active work</h2>' +
+    nextCockpitScopeCue(nextCockpitProjectScopeKind()) + '<h2>Active work</h2>' +
     `<ul>${rows}</ul></section>`;
 }
 
@@ -512,11 +538,13 @@ function nextCockpitNeedsYou(commandAttention){
   const captain = (commandAttention || []).filter(item => item && item.owner === "CAPTAIN");
   if(!captain.length){
     return '<section class="next-cockpit-needs" data-next-cockpit-primary>' +
+      nextCockpitScopeCue(nextCockpitProjectScopeKind()) +
       '<h2>Needs you</h2><p>Nothing needs you</p></section>';
   }
   const rows = captain.map(item => `<li><strong>${esc(item.question || item.label)}</strong></li>`)
     .join("");
   return '<section class="next-cockpit-needs" data-next-cockpit-primary>' +
+    nextCockpitScopeCue(nextCockpitProjectScopeKind()) +
     `<h2>Needs you</h2><ul>${rows}</ul></section>`;
 }
 
@@ -585,6 +613,9 @@ function nextCockpitCourseEvidence(fact, contributors){
 }
 
 function nextCockpitCourseRow(episode){
+  const direction = episode.directionFact
+    ? `<p><b>Direction</b> · ${esc(episode.directionFact.summary || "Direction unavailable")}</p>`
+    : "";
   const body = episode.findings && episode.findings.length
     ? `<ul>${episode.findings.map(finding => `<li>${esc(finding)}</li>`).join("")}</ul>`
     : `<p>${esc(episode.summary)}</p>`;
@@ -592,8 +623,10 @@ function nextCockpitCourseRow(episode){
   return `<article class="next-course-episode" data-epistemic-kind="${esc(episode.epistemic)}" ` +
     `data-scope-kind="${esc(scope.kind)}">` +
     `<header>${nextCockpitScopeCue(scope)}<span>${esc(episode.badge)}</span></header>` +
-    `<strong>${esc(episode.task + " · " + episode.label)}</strong>${body}` +
-    nextCockpitCourseEvidence(episode.fact, episode.contributors || []) + '</article>';
+    `<strong>${esc(episode.task + " · " + episode.label)}</strong>${direction}${body}` +
+    nextCockpitCourseEvidence(episode.fact, episode.contributors || []) +
+    (episode.directionFact ? nextCockpitCourseEvidence(episode.directionFact, []) : "") +
+    '</article>';
 }
 
 function nextCockpitCourseEpisodes(semantic, lanes){
@@ -601,67 +634,86 @@ function nextCockpitCourseEpisodes(semantic, lanes){
     [String(item.work_item_id || ""), nextCockpitHumanLabel(item.label)]));
   const current = nextCockpitCurrentTask({semantic});
   const taskFor = fact => items.get(String(fact.work_item_id || "")) || current.label;
-  const intentIds = new Set((semantic.projections && semantic.projections.operator_intents || [])
-    .map(row => String(row && row.derived_from || "")).filter(Boolean));
+  const facts = (semantic.facts || []).filter(Boolean);
+  const factsById = new Map(facts.map(fact => [String(fact.fact_id || ""), fact]));
+  const projections = semantic.projections || {};
+  const intents = new Map((projections.operator_intents || []).map(intent =>
+    [String(intent && intent.projection_id || ""), intent]));
+  const pairedDirection = fact => {
+    const episode = (projections.steering_episodes || []).find(row =>
+      String(row && row.adaptation_fact || "") === String(fact.fact_id || ""));
+    const intent = episode && intents.get(String(episode.intent_id || ""));
+    const direction = intent && factsById.get(String(intent.derived_from || ""));
+    return direction && direction.type === "user_message" ? direction : null;
+  };
   const contributorNames = fact => [...new Set((lanes || []).filter(lane =>
     !fact.work_item_id || String(lane.workItemId || "") === String(fact.work_item_id))
     .map(lane => String(lane.worker || "")).filter(Boolean))];
   const episodes = [];
   const used = new Set();
-  const results = (semantic.facts || []).filter(fact => fact && fact.type === "result")
-    .sort((left, right) => Number(right.at || 0) - Number(left.at || 0));
-  const review = results.find(fact => nextCockpitReviewFindings(fact.detail).length);
-  if(review){
-    used.add(String(review.fact_id || ""));
-    episodes.push({at:Number(review.at || 0),fact:review,sourceFacts:[review],task:taskFor(review),
-      label:"Course change",badge:"DERIVED COURSE CHANGE",epistemic:"derived-course-change",
-      findings:nextCockpitReviewFindings(review.detail),contributors:contributorNames(review)});
-  }else{
-    const unavailable = results.find(fact => /\breview\b/i.test(String(fact.summary || fact.detail || "")));
-    if(unavailable){
-      used.add(String(unavailable.fact_id || ""));
-      episodes.push({at:Number(unavailable.at || 0),fact:unavailable,sourceFacts:[unavailable],task:taskFor(unavailable),
-        label:"Course change",badge:"DERIVED COURSE CHANGE",epistemic:"derived-course-change",
-        summary:"Review outcome unavailable from collected result detail.",
-        contributors:contributorNames(unavailable)});
-    }
-  }
   const lifecycle = new Set();
-  for(const fact of semantic.facts || []){
-    if(!fact || fact.type === "gate_decision" || used.has(String(fact.fact_id || ""))) continue;
-    if(fact.type === "user_message"){
-      if(fact.intent_promoted !== true && !intentIds.has(String(fact.fact_id || ""))) continue;
-      episodes.push({at:Number(fact.at || 0),fact,sourceFacts:[fact],task:taskFor(fact),label:"User direction",
-        badge:"EXACT INPUT",epistemic:"exact-input",summary:String(fact.summary || "Direction unavailable")});
-      continue;
-    }
-    if(!["prepared_dispatch", "stage_transition", "result"].includes(fact.type)) continue;
+  for(const fact of facts){
+    if(used.has(String(fact.fact_id || ""))) continue;
+    const findings = fact.type === "result" ? nextCockpitReviewFindings(fact.detail) : [];
+    const completed = fact.type === "result"
+      ? nextCockpitLatestCompletedResult({facts:[fact]}) : null;
+    const directionFact = pairedDirection(fact);
+    if(!findings.length && !completed && !directionFact &&
+      !["stage_transition", "gate_decision"].includes(fact.type)) continue;
     const lifecycleKey = fact.type === "result" ? String(fact.fact_id || "") :
       `${fact.type}\n${String(fact.work_item_id || "")}\n${String(fact.stage || fact.source_kind || "")}`;
     if(lifecycle.has(lifecycleKey)) continue;
     lifecycle.add(lifecycleKey);
-    const completed = fact.type === "result"
-      ? nextCockpitLatestCompletedResult({facts:[fact]}) : null;
     const summary = String(fact.summary || fact.stage || "Work observed") +
       (completed ? ` · checkpoint ${completed.checkpoint}` : "");
-    episodes.push({at:Number(fact.at || 0),fact,sourceFacts:[fact],task:taskFor(fact),label:"Observed work",
-      badge:"EXACT WORK",epistemic:"exact-work",summary,
-      contributors:contributorNames(fact)});
+    const sourceFacts = directionFact ? [directionFact, fact] : [fact];
+    const review = findings.length > 0;
+    const decision = fact.type === "gate_decision";
+    const state = fact.type === "stage_transition";
+    episodes.push({at:Number(fact.at || 0),fact,sourceFacts,task:taskFor(fact),
+      label:review ? "Course change" : decision ? "Decision" : state ? "State change" : "Result",
+      badge:review ? "DERIVED COURSE CHANGE" : decision ? "EXACT DECISION" :
+        state ? "EXACT STATE CHANGE" : "EXACT RESULT",
+      epistemic:review ? "derived-course-change" : "exact-course-change",
+      summary,findings,directionFact,contributors:contributorNames(fact)});
+    if(directionFact) used.add(String(directionFact.fact_id || ""));
   }
   return episodes.sort((left, right) => left.at - right.at);
 }
 
+function nextCockpitCourseDirections(semantic, episodes){
+  const used = new Set(episodes.map(episode =>
+    String(episode.directionFact && episode.directionFact.fact_id || "")).filter(Boolean));
+  const projected = new Set((semantic.projections && semantic.projections.operator_intents || [])
+    .map(intent => String(intent && intent.derived_from || "")).filter(Boolean));
+  return (semantic.facts || []).filter(fact => fact && fact.type === "user_message" &&
+    !used.has(String(fact.fact_id || "")) &&
+    (fact.intent_promoted === true || projected.has(String(fact.fact_id || ""))))
+    .sort((left, right) => Number(left.at || 0) - Number(right.at || 0));
+}
+
+function nextCockpitCourseDirectionRow(fact){
+  const scope = nextCockpitFactScope(fact);
+  return `<article class="next-course-direction" data-scope-kind="${esc(scope.kind)}">` +
+    `<header>${nextCockpitScopeCue(scope)}<span>EXACT DIRECTION</span></header>` +
+    `<p>${esc(fact.summary || "Direction unavailable")}</p>` +
+    nextCockpitCourseEvidence(fact, []) + '</article>';
+}
+
 function nextCockpitCourse(group, semantic, lanes){
   const episodes = nextCockpitCourseEpisodes(semantic, lanes);
-  if(!episodes.length){
-    return '<p class="next-cockpit-empty">No source-backed course-changing episodes observed.</p>';
-  }
+  const directions = nextCockpitCourseDirections(semantic, episodes);
   const visible = episodes.slice(-8);
   const earlier = episodes.slice(0, -8);
   const disclosure = earlier.length ? '<details class="next-course-earlier"><summary>' +
     `${earlier.length} Earlier</summary>${earlier.map(nextCockpitCourseRow).join("")}</details>` : "";
-  return `<div class="next-cockpit-course" data-next-cockpit-course>${disclosure}` +
-    visible.map(nextCockpitCourseRow).join("") + '</div>';
+  const empty = episodes.length ? "" :
+    '<p class="next-cockpit-empty">No source-backed course changes observed.</p>';
+  const other = directions.length ? '<details class="next-course-directions"><summary>' +
+    `Other directions (${directions.length})</summary>` +
+    directions.map(nextCockpitCourseDirectionRow).join("") + '</details>' : "";
+  return `<div class="next-cockpit-course" data-next-cockpit-course>${empty}${disclosure}` +
+    visible.map(nextCockpitCourseRow).join("") + other + '</div>';
 }
 
 function nextCockpitTimeline(group, focus, mode = "active"){
@@ -761,7 +813,8 @@ function nextProjectCockpit(context, observation, commandAttention){
   const focus = nextCockpitFocusedSession(group);
   projectQuerySession = focus ? sessKey(focus) : "";
   lastData = nextData;
-  return nextCockpitTaskSubject(observation) + nextCockpitTabList() +
+  return nextCockpitTaskSubject(observation) + nextCockpitViewingSession(focus) +
+    nextCockpitTabList() +
     nextCockpitPanel(context, focus, observation, commandAttention);
 }
 

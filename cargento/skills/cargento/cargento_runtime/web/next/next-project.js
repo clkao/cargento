@@ -212,12 +212,21 @@ function nextProjectView(project){
   }
   const context = {group, plans: nextProjectPlans(group.sessions), harnesses: nextHarnessLabels()};
   const focus = nextCockpitFocusedSession(group);
+  if(nextRoute && nextRoute.focus && !focus){
+    const root = {view:"project",project:group.label,focus:null,tab:nextRoute.tab || "now"};
+    return `<article class="next-project-detail" data-next-project-detail="${esc(group.label)}">` +
+      '<section class="next-cockpit-stale-session" data-next-cockpit-stale-session>' +
+      '<span>SESSION FILTER</span><h1>Session filter is outside this payload window</h1>' +
+      `<p>${esc(nextRoute.focus)}</p><a href="${esc(nextFragmentForRoute(root))}">` +
+      'View project root</a></section></article>';
+  }
   nextCockpitLoadContext(group, null);
   const observation = nextCockpitProjectObservation(group);
   const commandAttention = nextCockpitCommandAttention(group, observation);
   return `<article class="next-project-detail" data-next-project-detail="${esc(group.label)}">` +
     nextProjectDetailHeader(context) +
     '<div class="next-cockpit-shell">' + nextCockpitScopeTree(group, focus) +
+    nextCockpitScopeSwitcher(group, focus) +
     '<div class="next-cockpit-content">' +
     nextProjectCockpit(context, observation, commandAttention) + '</div></div></article>';
 }

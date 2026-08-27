@@ -93,13 +93,13 @@ console.log(JSON.stringify({html, rows}));
 
         self.assertIn('data-next-project-detail="cargento"', html)
         self.assertIn('data-next-cockpit-panel="course"', html)
-        self.assertIn("Project cockpit · User direction", html)
-        self.assertIn("Project cockpit · Observed work", html)
+        self.assertIn("Other directions (2)", html)
+        self.assertIn("Project cockpit · State change", html)
         self.assertNotIn("FOCUS · THIS BROWSER", html)
         self.assertNotIn("SEMANTIC TIMELINE", html)
         self.assertNotIn('data-next-cockpit-action="graph-mode"', html)
         self.assertNotIn('data-calm="project-graph-mode"', html)
-        self.assertEqual(4, len(out["rows"]))
+        self.assertEqual(2, len(out["rows"]))
         self.assertNotIn("pc-project-tabs", html)
         self.assertNotIn("Other project sessions", html)
         self.assertNotIn("Evidence / limits", html)
@@ -237,6 +237,32 @@ console.log(JSON.stringify({project,session,narrowest}));
         self.assertIn('data-parent-session="codex:focus-1"', out["project"])
         self.assertIn('data-scope-owner="codex:focus-1"', out["project"])
 
+    def test_selected_session_keeps_project_briefing_ownership_explicit(self) -> None:
+        out = self.run_fixture(
+            """
+nextRoute=nextRouteFromFragment("#n=project:cargento:codex%3Afocus-1");
+renderNext();await __settle();await __settle();
+const html=__els.app.innerHTML;
+const task=(html.match(/<section[^>]*data-next-cockpit-task-subject[\\s\\S]*?<\\/section>/)||[""])[0];
+const needs=(html.match(/<section class="next-cockpit-needs"[\\s\\S]*?<\\/section>/)||[""])[0];
+const active=(html.match(/<section[^>]*data-next-cockpit-active-delegation[\\s\\S]*?<\\/section>/)||[""])[0];
+const switcher=(html.match(/<details class="next-cockpit-scope-switcher"[\\s\\S]*?<\\/details>/)||[""])[0];
+console.log(JSON.stringify({html,task,needs,active,switcher}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("Viewing session · Codex · working", out["html"])
+        self.assertIn('data-next-cockpit-viewing-session="codex:focus-1"', out["html"])
+        for project_surface in (out["task"], out["needs"], out["active"]):
+            self.assertEqual(1, project_surface.count(">PROJECT</strong>"))
+            self.assertIn('data-scope-kind="project"', project_surface)
+        self.assertNotIn(">SESSION</strong>", out["task"])
+        self.assertIn("Viewing session · Codex · working", out["switcher"])
+        self.assertIn("Change scope", out["switcher"])
+        self.assertIn('data-next-cockpit-scope="project"', out["switcher"])
+        self.assertIn('data-next-cockpit-scope="codex:focus-1"', out["switcher"])
+
     def test_course_interleaves_project_session_and_unknown_provenance_cues(self) -> None:
         out = self.run_fixture(
             """
@@ -256,14 +282,16 @@ renderNext();await __settle();await __settle();await __settle();
 const html=__els.app.innerHTML;
 const rows=[...html.matchAll(/<article class="next-course-episode"[\\s\\S]*?<\\/article>/g)]
   .map(match=>match[0]);
-console.log(JSON.stringify({html,rows}));
+const directions=[...html.matchAll(/<article class="next-course-direction"[\\s\\S]*?<\\/article>/g)]
+  .map(match=>match[0]);
+console.log(JSON.stringify({html,rows,directions}));
 """
         )
         assert isinstance(out, dict)
 
-        session_rows = [row for row in out["rows"] if "Newest direction" in row]
+        session_rows = [row for row in out["directions"] if "Newest direction" in row]
         project_rows = [row for row in out["rows"] if "Shaping cockpit" in row]
-        unknown_rows = [row for row in out["rows"] if "Unattributed operator note" in row]
+        unknown_rows = [row for row in out["directions"] if "Unattributed operator note" in row]
         derived_rows = [row for row in out["rows"] if "DERIVED COURSE CHANGE" in row]
         self.assertEqual(1, len(session_rows))
         self.assertIn('data-scope-kind="session"', session_rows[0])
@@ -275,6 +303,56 @@ console.log(JSON.stringify({html,rows}));
         self.assertEqual(1, len(derived_rows))
         self.assertIn('data-scope-kind="session"', derived_rows[0])
         self.assertIn("DERIVED COURSE CHANGE", derived_rows[0])
+
+    def test_paired_direction_stays_with_its_change_and_is_not_duplicated(self) -> None:
+        out = self.run_fixture(
+            """
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.facts.push({fact_id:"paired-result",at:106,type:"result",summary:"Layout corrected",
+  source_session:{harness:"codex",sid:"focus-1"},work_item_id:__task,
+  evidence:{source:"assistant result",confidence:"exact"}});
+semantic.projections.steering_episodes=[{episode_id:"pair-a",intent_id:"intent-a",
+  adaptation_fact:"paired-result",confidence:"structural"}];
+const html=nextCockpitCourse(nextProjectGroups()[0],semantic,[]);
+const primary=(html.match(/<article class="next-course-episode"[\\s\\S]*?<\\/article>/g)||[])
+  .find(row=>row.includes("Layout corrected"))||"";
+const other=(html.match(/<details class="next-course-directions"[\\s\\S]*?<\\/details>/)||[""])[0];
+console.log(JSON.stringify({html,primary,other}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("Newest direction", out["primary"])
+        self.assertIn("Layout corrected", out["primary"])
+        self.assertIn("assistant result", out["primary"])
+        self.assertNotIn("Newest direction", out["other"])
+        self.assertEqual(1, out["html"].count("Newest direction"))
+
+    def test_sixteen_exact_directions_fold_when_no_course_change_is_observed(self) -> None:
+        out = self.run_fixture(
+            """
+const facts=Array.from({length:16},(_,index)=>({fact_id:`direction-${index+1}`,
+  at:index+1,type:"user_message",intent_promoted:true,summary:`Direction ${index+1}`,
+  source_session:{harness:"codex",sid:"focus-1"},
+  evidence:{source:"root transcript",confidence:"exact"}}));
+const semantic={facts,work_items:[],relations:[],projections:{
+  operator_intents:facts.map((fact,index)=>({projection_id:`intent-${index+1}`,
+    at:fact.at,summary:fact.summary,derived_from:fact.fact_id})),
+  steering_episodes:[],trail_heads:[]}};
+const html=nextCockpitCourse(nextProjectGroups()[0],semantic,[]);
+const primary=[...html.matchAll(/<article class="next-course-episode"/g)].length;
+console.log(JSON.stringify({html,primary}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual(0, out["primary"])
+        self.assertIn("No source-backed course changes observed", out["html"])
+        self.assertIn("Other directions (16)", out["html"])
+        self.assertIn("<details", out["html"])
+        for number in range(1, 17):
+            self.assertEqual(1, out["html"].count(f"Direction {number}<"))
+        self.assertLess(out["html"].index("Direction 1<"), out["html"].index("Direction 16<"))
 
     def test_completed_tracked_work_lives_only_in_course(self) -> None:
         out = self.run_fixture(
@@ -438,10 +516,12 @@ console.log(JSON.stringify({html:__els.app.innerHTML}));
         html = out["html"]
 
         self.assertIn('data-next-cockpit-panel="course"', html)
-        self.assertIn("Project cockpit · User direction", html)
-        self.assertIn("EXACT INPUT", html)
-        self.assertIn("Project cockpit · Observed work", html)
-        self.assertIn("EXACT WORK", html)
+        self.assertIn("Other directions (2)", html)
+        self.assertIn("EXACT DIRECTION", html)
+        self.assertIn("Project cockpit · State change", html)
+        self.assertIn("EXACT STATE CHANGE", html)
+        self.assertIn("Project cockpit · Result", html)
+        self.assertIn("EXACT RESULT", html)
         self.assertIn("Project cockpit · Course change", html)
         self.assertIn("DERIVED COURSE CHANGE", html)
         self.assertIn("Show task ownership, not lifecycle noise.", html)
@@ -543,6 +623,7 @@ console.log(JSON.stringify({html,task,active,scope,visibleWords:visible?visible.
         self.assertLessEqual(out["visibleWords"], 48)
         self.assertIn("WORKFLOW TASK", out["task"])
         self.assertIn("Not observed", out["task"])
+        self.assertEqual(1, out["task"].count(">PROJECT</strong>"))
         self.assertNotIn("data-work-item", out["task"])
         for invention in (
             "CURRENT TASK",
@@ -646,6 +727,24 @@ console.log(JSON.stringify({html, focus:nextCockpitFocusedSession(nextProjectGro
         self.assertIn('data-next-cockpit-scope="pi:pi-idle"', out["html"])
         self.assertIn('data-next-cockpit-scope="pi:pi-idle" aria-current="page"', out["html"])
         self.assertIn('data-arg="decisions"', out["html"])
+
+    def test_stale_exact_session_permalink_never_falls_back_to_project_scope(self) -> None:
+        out = self.run_fixture(
+            """
+nextData.sessions=nextData.sessions.filter(session=>sessKey(session)!=="pi:pi-idle");
+nextRoute=nextRouteFromFragment("#n=project:cargento:pi%3Api-idle:course");
+renderNext();await __settle();
+console.log(JSON.stringify({html:__els.app.innerHTML,route:nextFragmentForRoute(nextRoute)}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual("#n=project:cargento:pi%3Api-idle:course", out["route"])
+        self.assertIn("Session filter is outside this payload window", out["html"])
+        self.assertIn('href="#n=project:cargento:course"', out["html"])
+        self.assertIn("View project root", out["html"])
+        self.assertNotIn("data-next-cockpit-memos", out["html"])
+        self.assertNotIn('data-next-cockpit-panel="course"', out["html"])
 
     def test_decisions_view_preserves_canonical_metadata_and_compacts_scan_line(self) -> None:
         out = self.run_fixture(
@@ -886,6 +985,7 @@ console.log(JSON.stringify({projectOutcome,projectFocus,sessionOutcome,store:__s
         self.assertIn("Saved in this browser", out["project"])
         self.assertEqual(1, out["project"].count("<textarea"))
         self.assertNotIn("<textarea", out["closed"])
+        self.assertIn("This browser only", out["closed"])
         self.assertNotIn("DERIVED", out["project"])
         self.assertNotIn("Ship calm scope navigation", out["session"])
         self.assertNotIn("Review project truth", out["session"])

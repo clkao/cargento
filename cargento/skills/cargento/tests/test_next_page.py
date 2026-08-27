@@ -520,6 +520,22 @@ class NextPageAssetContractTest(unittest.TestCase):
         self.assertIn("grid-template-columns:1fr", narrow.group(1) if narrow else "")
         self.assertNotIn("overflow-x:auto", wide.group(1) if wide else "")
 
+        wide_switcher = re.search(r"\.next-cockpit-scope-switcher\{([^}]*)\}", styles)
+        narrow_tree = re.search(
+            r"@media\(max-width:760px\)\{[\s\S]*?\.next-cockpit-scope-tree\{([^}]*)\}",
+            styles,
+        )
+        narrow_switcher = re.search(
+            r"@media\(max-width:760px\)\{[\s\S]*?\.next-cockpit-scope-switcher\{([^}]*)\}",
+            styles,
+        )
+        self.assertIsNotNone(wide_switcher)
+        self.assertIn("display:none", wide_switcher.group(1) if wide_switcher else "")
+        self.assertIsNotNone(narrow_tree)
+        self.assertIn("display:none", narrow_tree.group(1) if narrow_tree else "")
+        self.assertIsNotNone(narrow_switcher)
+        self.assertIn("display:block", narrow_switcher.group(1) if narrow_switcher else "")
+
         project_cue = re.search(r"\.next-scope-cue--project\{([^}]*)\}", styles)
         session_cue = re.search(r"\.next-scope-cue--session\{([^}]*)\}", styles)
         square = re.search(r"\.next-scope-marker--square\{([^}]*)\}", styles)
@@ -602,8 +618,8 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "c430a56866fd1219b97267375f2b0b3bad3acf3b2dfbcb34c54e51e6845a68ce",
             ),
             "next-project.js": (
-                10_647,
-                "a963cf6fc5c7d33e5b34056705ec0be491ce9045b7661268f4bdc16ede1cc38b",
+                11_251,
+                "e445657d5eaefdd6941ef09b76f68529026f71c0a98c6ba4c6b9ac46e918b20f",
             ),
             "next-activity.js": (
                 4_513,
@@ -626,8 +642,8 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "4da6527bbf6401db716ab5807748ac01a64aecce996e993ff9e0b42c22fdc811",
             ),
             "next-cockpit.js": (
-                42_399,
-                "cf632ce4fec3a800a5ec74f580c628e283b1c627ee0167be49df928d5db2a42c",
+                45_170,
+                "dff1b68f1cd3a465de09ede589de503e63969491223e03694380007aa804c031",
             ),
             "next-render.js": (
                 802,
@@ -646,16 +662,16 @@ class NextPageAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.next_asset_path("styles.css").read_bytes()
-        self.assertEqual(40_230, len(styles))
+        self.assertEqual(42_001, len(styles))
         self.assertEqual(
-            "ce3789c8618c51ab227d992671394a49a63d432e132c9f14f4ff32b0f3f0f66c",
+            "798406a09871a180c74d416df4e9be9e2fb7b1e4cc528a627c4161c5dced86e3",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_next_page()
-        self.assertEqual(387_068, len(assembled))
+        self.assertEqual(392_214, len(assembled))
         self.assertEqual(
-            "499c360b15c9af3d9671e0997b9705231489bf2d5e6c0f00b13e4ce471c631d2",
+            "5f7b190a6b3a95c1ade16368af3da56b60f647b33846520212601a388b301284",
             hashlib.sha256(assembled).hexdigest(),
         )
 
