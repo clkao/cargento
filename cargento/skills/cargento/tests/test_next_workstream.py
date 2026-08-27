@@ -9,7 +9,7 @@ from .next_harness import NextPageJsHarness
 @unittest.skipUnless(shutil.which("node"), "node not available")
 class NextWorkstreamBehaviorTest(NextPageJsHarness):
     FIXTURE = """
-location.hash = "#n=project:alpha%2Frepo";
+location.hash = "#n=project:alpha%2Frepo:console";
 __els.app = {innerHTML: ""};
 let __workstreamPayload = {
   generated: 1000,

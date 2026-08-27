@@ -215,11 +215,9 @@ function nextProjectView(project){
   nextCockpitLoadContext(group, null);
   const observation = nextCockpitProjectObservation(group);
   const commandAttention = nextCockpitCommandAttention(group, observation);
-  const status = observation && observation.semantic
-    ? nextCockpitProjectStatus(group, observation.semantic) : "";
   return `<article class="next-project-detail" data-next-project-detail="${esc(group.label)}">` +
     nextProjectDetailHeader(context) +
     '<div class="next-cockpit-shell">' + nextCockpitScopeTree(group, focus) +
     '<div class="next-cockpit-content">' +
-    nextProjectCockpit(context, observation, commandAttention, status) + '</div></div></article>';
+    nextProjectCockpit(context, observation, commandAttention) + '</div></div></article>';
 }

@@ -10,7 +10,7 @@ from .next_harness import NextPageJsHarness
 @unittest.skipUnless(shutil.which("node"), "node not available")
 class NextActivityBehaviorTest(NextPageJsHarness):
     FIXTURE = """
-location.hash = "#n=project:alpha%2Frepo";
+location.hash = "#n=project:alpha%2Frepo:console";
 __els.app = {innerHTML: ""};
 __fetchImpl = async () => ({ok: true, json: async () => ({
   generated: 10000,
@@ -246,7 +246,13 @@ console.log(JSON.stringify({html, route: nextRoute, hash: location.hash}));
         self.assertEqual("#n=session:alpha%2Frepo:gate-z", out["hash"])
 
     def test_done_lists_only_completed_tasks_in_payload_order_without_deduplication(self) -> None:
-        html = self.render()
+        html = self.render(
+            """
+nextRoute=nextRouteFromFragment("#n=project:alpha%2Frepo:course");
+renderNext();await __settle();await __settle();
+console.log(JSON.stringify(__els.app.innerHTML));
+"""
+        )
         assert isinstance(html, str)
         done = re.search(r'data-next-project-activity="done"[\s\S]*?</section>', html)
 
@@ -276,7 +282,7 @@ console.log(JSON.stringify({html, route: nextRoute, hash: location.hash}));
         html = self._run_page_js(
             "await __settle();\nconsole.log(JSON.stringify(__els.app.innerHTML));",
             """
-location.hash = "#n=project:spacedock%2Frepo";
+location.hash = "#n=project:spacedock%2Frepo:course";
 __els.app = {innerHTML: ""};
 __fetchImpl = async () => ({ok: true, json: async () => ({
   generated: 10000, window_hours: 24,
@@ -293,9 +299,9 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         assert isinstance(html, str)
         done = re.search(r'data-next-project-activity="done"[\s\S]*?</section>', html)
 
-        self.assertIsNotNone(done)
+        self.assertIsNone(done)
         done_html = done.group(0) if done else ""
-        self.assertIn("No completed tracked tasks in this payload.", done_html)
+        self.assertNotIn("No completed tracked tasks in this payload.", html)
         self.assertNotIn("terminal-looking-entity", done_html)
         self.assertNotIn('aria-label="completed"', done_html)
 
@@ -303,7 +309,7 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         html = self._run_page_js(
             "await __settle();\nconsole.log(JSON.stringify(__els.app.innerHTML));",
             """
-location.hash = "#n=project:quiet%2Frepo";
+location.hash = "#n=project:quiet%2Frepo:console";
 __els.app = {innerHTML: ""};
 __fetchImpl = async () => ({ok: true, json: async () => ({
   generated: 10000, window_hours: 24,
@@ -317,7 +323,7 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         assert isinstance(html, str)
 
         self.assertIn("No session currently running. Command attention remains above.", html)
-        self.assertIn("No completed tracked tasks in this payload.", html)
+        self.assertNotIn("No completed tracked tasks in this payload.", html)
 
     def test_going_on_empty_copy_never_claims_all_clear_with_command_attention(self) -> None:
         out = self._run_page_js(

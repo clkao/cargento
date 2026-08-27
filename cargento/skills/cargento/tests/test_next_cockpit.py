@@ -127,16 +127,73 @@ console.log(JSON.stringify({html,tabs,panel}));
         )
         self.assertEqual(1, out["html"].count('role="tabpanel"'))
         self.assertIn('data-next-cockpit-panel="now"', out["html"])
-        self.assertIn("HUMAN · OUTCOME", out["html"])
-        self.assertIn("HUMAN · FOCUS", out["html"])
-        self.assertIn("CURRENT FOCUS · DERIVED", out["html"])
-        self.assertIn('data-next-project-section="plan"', out["html"])
-        self.assertIn('data-next-project-section="going-on"', out["html"])
-        self.assertIn("data-next-delegation", out["html"])
+        self.assertIn("Outcome &amp; Focus", out["html"])
+        self.assertIn("Needs you", out["html"])
+        self.assertIn("Active work", out["html"])
+        self.assertIn("Show project plan", out["html"])
+        self.assertNotIn("CURRENT FOCUS · DERIVED", out["html"])
+        self.assertNotIn('data-next-project-section="plan"', out["html"])
+        self.assertNotIn('data-next-project-section="going-on"', out["html"])
+        self.assertNotIn("data-next-delegation", out["html"])
         self.assertNotIn("SEMANTIC TIMELINE", out["html"])
         self.assertNotIn('data-semantic-kind="decision"', out["html"])
         self.assertNotIn("EXACT SESSION TERMINAL", out["html"])
         self.assertNotIn('data-next-project-section="workstream"', out["html"])
+
+    def test_now_is_a_calm_command_briefing_not_the_old_dashboard(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.projections.command_attention=[
+  {projection_id:"captain-auth",at:110,owner:"CAPTAIN",kind:"push_pr",
+    label:"the shaped project cockpit",question:"Approve pushing this candidate?",
+    evidence:{source:"exact assistant authorization request",confidence:"exact"}},
+  {projection_id:"fo-recovery",at:109,owner:"FO",kind:"recovery",
+    label:"Retry workflow discovery",question:"Retry workflow discovery",
+    evidence:{source:"project workflow discovery",confidence:"exact"}}
+];
+const observation={semantic,workflow_discovery:{state:"error",reason:"timed out"},sources:{}};
+nextCockpitContexts.set(nextCockpitContextKey(group,null),{data:observation,revision:105});
+renderNext();
+const html=__els.app.innerHTML;
+const panel=(html.match(/<section class="next-cockpit-panel"[\\s\\S]*<\\/section>/)||[""])[0];
+const visible=panel
+  .replace(/<details(?![^>]*\\bopen\\b)[^>]*>[\\s\\S]*?<\\/details>/g," ")
+  .replace(/<[^>]+>/g," ").replace(/&[^;]+;/g," ")
+  .replace(/\\s+/g," ").trim();
+console.log(JSON.stringify({html,panel,visible,visibleWords:visible ? visible.split(" ").length : 0,
+  primary:(html.match(/data-next-cockpit-primary/g)||[]).length}));
+"""
+        )
+        assert isinstance(out, dict)
+        panel = out["panel"]
+
+        pre_correction_visible_words = 197
+        self.assertLessEqual(out["visibleWords"] * 4, pre_correction_visible_words)
+        self.assertEqual(4, out["primary"])
+        self.assertIn("Project cockpit <small>· Shaping</small>", out["html"])
+        self.assertIn("Approve pushing this candidate?", panel)
+        self.assertIn("Fix the completion guard", panel)
+        self.assertIn("Outcome", panel)
+        self.assertIn("Focus", panel)
+        self.assertIn("Not set", panel)
+        self.assertIn('data-next-cockpit-action="memo-edit"', panel)
+        for old_surface in (
+            "Latest decisions",
+            "CURRENT FOCUS · DERIVED",
+            "COMPLETED RESULT",
+            'data-next-project-section="plan"',
+            "data-next-delegation",
+            "STEER · LOCAL ONLY",
+            "GUARDRAILS · LOCAL ONLY",
+            "<textarea",
+        ):
+            self.assertNotIn(old_surface, panel)
+        self.assertNotIn("Retry workflow discovery", out["visible"])
+        self.assertNotIn("workflow discovery failed", out["visible"])
+        self.assertIn("data-next-cockpit-system-details", panel)
+        self.assertIn("workflow discovery failed", panel)
 
     def test_scope_tree_and_memos_share_project_session_marker_grammar(self) -> None:
         out = self.run_fixture(
@@ -219,6 +276,24 @@ console.log(JSON.stringify({html,rows}));
         self.assertIn('data-scope-kind="session"', derived_rows[0])
         self.assertIn("DERIVED COURSE CHANGE", derived_rows[0])
 
+    def test_completed_tracked_work_lives_only_in_course(self) -> None:
+        out = self.run_fixture(
+            """
+const claude=__dashboard.sessions.find(session=>session.harness==="claude");
+claude.tasks=[{status:"completed",subject:"Verify accepted project cockpit"}];
+renderNext();await __settle();
+const now=__els.app.innerHTML;
+nextRoute=nextRouteFromFragment("#n=project:cargento:course");
+renderNext();await __settle();await __settle();
+console.log(JSON.stringify({now,course:__els.app.innerHTML}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertNotIn("Verify accepted project cockpit", out["now"])
+        self.assertIn("Verify accepted project cockpit", out["course"])
+        self.assertIn('data-next-project-activity="done"', out["course"])
+
     def test_decisions_use_fact_scope_not_selected_session(self) -> None:
         out = self.run_fixture(
             """
@@ -269,6 +344,12 @@ console.log(JSON.stringify({project,session}));
         self.assertNotIn('data-scope-kind="session"', project_panel)
         self.assertIn('data-scope-kind="session"', session_panel)
         self.assertIn(">SESSION</strong>", session_panel)
+        self.assertIn("STEER · LOCAL ONLY", project_panel)
+        self.assertIn("GUARDRAILS · LOCAL ONLY", project_panel)
+        self.assertIn("data-next-delegation", project_panel)
+        self.assertIn("STEER · LOCAL ONLY", session_panel)
+        self.assertIn("Raw project status", project_panel)
+        self.assertNotIn("Latest decisions", project_panel)
 
     def test_local_tab_permalink_and_arrow_keys_preserve_project_session_route(self) -> None:
         out = self.run_fixture(
@@ -407,9 +488,27 @@ console.log(JSON.stringify({html, task}));
 
         self.assertIn("Banach", out["task"])
         self.assertIn("Copernicus", out["task"])
-        self.assertIn("Project cockpit · 2 active assignments", out["task"])
+        self.assertIn("Active work", out["task"])
+        self.assertIn("Fix the completion guard", out["task"])
+        self.assertIn("Fix dispatch authority", out["task"])
+        self.assertNotIn("Project cockpit · 2 active assignments", out["task"])
         self.assertIn('data-work-item="workflow:project-cockpit"', out["task"])
         self.assertIn('data-parent-session="codex:focus-1"', out["task"])
+
+    def test_active_work_does_not_promote_an_unassigned_child(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+group.sessions[0].subagent_hierarchy=[{name:"Unbound",observer_sid:"child-x",depth:1}];
+const html=nextCockpitActiveDelegation(group,{semantic:__semantic});
+console.log(JSON.stringify({html}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertNotIn("assignment unavailable", out["html"])
+        self.assertNotIn("Unbound", out["html"])
+        self.assertIn("Shape project cockpit", out["html"])
 
     def test_session_switcher_is_below_header_and_outcome_first(self) -> None:
         out = self.run_fixture(
@@ -419,7 +518,7 @@ const nav = (html.match(/<nav class="next-cockpit-scope-tree"[\\s\\S]*?<\\/nav>/
 console.log(JSON.stringify({
   header:html.indexOf('class="next-project-detail-header"'),
   nav:html.indexOf('class="next-cockpit-scope-tree"'),
-  plan:html.indexOf('data-next-project-section="plan"'),
+  plan:html.indexOf('data-next-cockpit-plan-details'),
   html, sessionNav:nav
 }));
 """
@@ -517,6 +616,8 @@ console.log(JSON.stringify({html, rows}));
         self.assertIn('data-result="review → shaping"', out["rows"][0])
         self.assertIn("<strong>Approved</strong> Project cockpit · applied", out["rows"][0])
         self.assertIn("<b>Decision mechanics</b> · review → shaping · applied", out["rows"][0])
+        self.assertIn("data-next-cockpit-decision-summary", out["html"])
+        self.assertIn("Decision application · consumed/applied 1", out["html"])
 
     def test_gate_application_state_controls_completed_transition_wording(self) -> None:
         out = self.run_fixture(
@@ -610,7 +711,7 @@ console.log(JSON.stringify({html:nextCockpitProjectStatus(nextProjectGroups()[0]
         self.assertIn("Gamma · validation · decision superseded", out["html"])
         self.assertNotIn("Delta", out["html"])
 
-    def test_recovery_strip_precedes_plan_and_uses_only_discovered_goal(self) -> None:
+    def test_project_plan_is_after_the_briefing_and_closed_by_default(self) -> None:
         out = self.run_fixture(
             """
 const group = nextProjectGroups()[0];
@@ -629,11 +730,12 @@ console.log(JSON.stringify({discovered,absent:__els.app.innerHTML}));
         assert isinstance(out, dict)
 
         self.assertLess(
-            out["discovered"].index("OUTCOME"),
-            out["discovered"].index('data-next-project-section="plan"'),
+            out["discovered"].index("Outcome &amp; Focus"),
+            out["discovered"].index("data-next-cockpit-plan-details"),
         )
+        self.assertIn("<summary>Show project plan</summary>", out["discovered"])
         self.assertIn("Discovered workflow outcome", out["discovered"])
-        self.assertIn("Outcome not recorded", out["absent"])
+        self.assertNotIn("Outcome not recorded", out["absent"])
 
     def test_recovery_attention_orders_actionable_conditions_and_decision_counts(self) -> None:
         out = self.run_fixture(
@@ -662,11 +764,11 @@ console.log(JSON.stringify({html:nextCockpitRecoveryStrip(group, observation)}))
         html = out["html"]
 
         self.assertLess(html.index("gate or ask"), html.index("workflow discovery failed"))
-        self.assertLess(html.index("workflow discovery failed"), html.index("decision application"))
-        self.assertLess(html.index("decision application"), html.index("assignment return"))
+        self.assertLess(html.index("workflow discovery failed"), html.index("assignment return"))
         self.assertLess(html.index("assignment return"), html.index("owner idle"))
         self.assertLess(html.index("pending 1"), html.index("unknown 1"))
         self.assertIn("consumed/applied 1", html)
+        self.assertNotIn("decision application", html)
         self.assertNotIn("blocker", html.casefold())
 
     def test_command_attention_leads_with_exact_authorization_and_assigns_fo_recovery(self) -> None:
@@ -709,9 +811,15 @@ const edit=(key,kind,value)=>({value,dataset:{nextCockpitMemoKey:key,nextCockpit
 __fire("input",{target:edit(projectOutcome,"outcome","Ship calm scope navigation")});
 __fire("input",{target:edit(projectFocus,"focus","Review project truth")});
 __fire("input",{target:edit(sessionOutcome,"outcome","Inspect Pi evidence")});
+const action=(name,key)=>({dataset:{nextCockpitAction:name,arg:key},
+  closest(selector){ return selector === "[data-next-cockpit-action]" ? this : null; }});
+__fire("click",{target:action("memo-edit",projectFocus),preventDefault(){}});
 const project=nextCockpitMemoFields(group,null,__semantic);
 const session=nextCockpitMemoFields(group,pi,__semantic);
-console.log(JSON.stringify({projectOutcome,projectFocus,sessionOutcome,store:__store,project,session}));
+__fire("click",{target:action("memo-done",""),preventDefault(){}});
+const closed=nextCockpitMemoFields(group,null,__semantic);
+console.log(JSON.stringify({projectOutcome,projectFocus,sessionOutcome,store:__store,
+  project,session,closed}));
 """
         )
         assert isinstance(out, dict)
@@ -720,10 +828,12 @@ console.log(JSON.stringify({projectOutcome,projectFocus,sessionOutcome,store:__s
         self.assertEqual("Ship calm scope navigation", out["store"][out["projectOutcome"]])
         self.assertEqual("Review project truth", out["store"][out["projectFocus"]])
         self.assertEqual("Inspect Pi evidence", out["store"][out["sessionOutcome"]])
-        self.assertIn("HUMAN · OUTCOME", out["project"])
-        self.assertIn("HUMAN · FOCUS", out["project"])
+        self.assertIn("OUTCOME", out["project"])
+        self.assertIn("FOCUS", out["project"])
         self.assertIn("Saved in this browser", out["project"])
-        self.assertIn("DERIVED", out["project"])
+        self.assertEqual(1, out["project"].count("<textarea"))
+        self.assertNotIn("<textarea", out["closed"])
+        self.assertNotIn("DERIVED", out["project"])
         self.assertNotIn("Ship calm scope navigation", out["session"])
         self.assertNotIn("Review project truth", out["session"])
 
@@ -742,6 +852,7 @@ const input={value:"x".repeat(700),dataset:{nextCockpitMemoKey:corruptKey,
   nextCockpitMemoKind:"outcome"},closest(selector){
   return selector === "[data-next-cockpit-memo-input]" ? this : null; }};
 __fire("input",{target:input});
+nextCockpitMemoEditingKey=corruptKey;
 console.log(JSON.stringify({normalized,aliased,value:nextCockpitReadMemo(corruptKey),
   html:nextCockpitMemoFields(group,null,__semantic)}));
 """
@@ -751,8 +862,27 @@ console.log(JSON.stringify({normalized,aliased,value:nextCockpitReadMemo(corrupt
         self.assertEqual(out["normalized"], out["aliased"])
         self.assertEqual(500, len(out["value"]))
         self.assertIn("Browser storage unavailable", out["html"])
-        self.assertIn("HUMAN · OUTCOME", out["html"])
-        self.assertIn("DERIVED", out["html"])
+        self.assertIn("OUTCOME", out["html"])
+        self.assertEqual(1, out["html"].count("<textarea"))
+        self.assertNotIn("DERIVED", out["html"])
+
+    def test_memo_reload_restores_only_the_exact_selected_scope(self) -> None:
+        key = "cargento.cockpit.memo.v2:spacedock-research%2Fcargento:project:outcome"
+        out = self.run_fixture(
+            """
+const project=__els.app.innerHTML;
+nextRoute=nextRouteFromFragment("#n=project:cargento:pi%3Api-idle");
+renderNext();await __settle();await __settle();
+console.log(JSON.stringify({project,session:__els.app.innerHTML}));
+""",
+            storage={key: "Remember the accepted cockpit"},
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("Remember the accepted cockpit", out["project"])
+        self.assertNotIn("<textarea", out["project"])
+        self.assertNotIn("Remember the accepted cockpit", out["session"])
+        self.assertIn('data-scope-owner="pi:pi-idle"', out["session"])
 
     def test_next_bundle_keeps_steer_local_and_terminal_input_absent(self) -> None:
         out = self.run_fixture(

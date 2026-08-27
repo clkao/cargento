@@ -92,8 +92,10 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
 
         self.assertIn('data-next-view-body="project"', html)
         self.assertIn('data-next-project-detail="alpha/repo"', html)
-        self.assertIn("data-next-project-main", html)
-        self.assertIn("data-next-project-rail", html)
+        self.assertNotIn("data-next-project-main", html)
+        self.assertNotIn("data-next-project-rail", html)
+        self.assertIn("data-next-cockpit-plan-details", html)
+        self.assertIn("<summary>Show project plan</summary>", html)
         self.assertIn('class="next-project-detail-name">alpha/repo</', html)
         self.assertIn("launch", html)
         self.assertIn("audit", html)

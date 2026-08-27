@@ -5,6 +5,7 @@ const nextCockpitRequests = new Map();
 const nextCockpitMemoDrafts = new Map();
 const nextCockpitMemoStates = new Map();
 let nextCockpitTerminalScreen = null;
+let nextCockpitMemoEditingKey = null;
 
 function nextCockpitStableKey(group){
   const keys = new Set(group.sessions.map(session => String(session.project_key || "")).filter(Boolean));
@@ -220,11 +221,12 @@ function nextCockpitCommandAttention(group, observation){
   const projected = semantic.projections && Array.isArray(semantic.projections.command_attention)
     ? semantic.projections.command_attention : [];
   for(const item of projected){
-    if(!item || item.owner !== "CAPTAIN") continue;
-    const label = item.kind === "push_pr"
+    if(!item || !["CAPTAIN", "FO"].includes(item.owner)) continue;
+    const label = item.owner === "CAPTAIN" && item.kind === "push_pr"
       ? `authorize push + PR for ${String(item.label || "Codex session result")}`
-      : String(item.question || item.label || "answer explicit authorization request");
-    attention.push({owner:"CAPTAIN",label,evidence:item.evidence || {}});
+      : String(item.question || item.label || "resolve system follow-up");
+    attention.push({owner:item.owner,label,question:String(item.question || ""),
+      evidence:item.evidence || {}});
   }
   const needs = nextCockpitProjectNeeds(group);
   if(needs) add("CAPTAIN", `${needs} gate or ask ${needs === 1 ? "needs" : "need"} attention`,
@@ -243,16 +245,6 @@ function nextCockpitCommandAttention(group, observation){
   const failures = nextCockpitSourceFailures(observation);
   if(failures.length) add("FO", `source unavailable · ${failures[0]}` +
     (failures.length > 1 ? ` · ${failures.length - 1} more` : ""), "project context sources");
-
-  const decisions = nextCockpitCaptainDecisionCounts(semantic);
-  const unresolvedDecisions = decisions.pending + decisions.unknown;
-  if(unresolvedDecisions){
-    const parts = [];
-    if(decisions.pending) parts.push(`${decisions.pending} pending`);
-    if(decisions.unknown) parts.push(`${decisions.unknown} unknown`);
-    add("FO", `decision application · ${parts.join(" · ")}`,
-      "exact captain gate decision facts");
-  }
 
   const trails = semantic.projections && Array.isArray(semantic.projections.trail_heads)
     ? semantic.projections.trail_heads : [];
@@ -355,27 +347,34 @@ function nextCockpitLoadContext(group, focus){
   });
 }
 
-function nextCockpitMemoFields(group, focus, semantic){
+function nextCockpitMemoFields(group, focus){
   const field = (kind, label, placeholder) => {
     const key = nextCockpitMemoKey(group, focus, kind);
+    const value = nextCockpitReadMemo(key);
     const state = nextCockpitMemoStates.get(key);
     const cue = state === "error" ? "Browser storage unavailable" :
       state === "saved" ? "Saved in this browser" : "Autosaves in this browser";
-    return `<label><span>HUMAN · ${label}</span>` +
-      `<textarea maxlength="${NEXT_COCKPIT_MEMO_LIMIT}" data-next-cockpit-memo-input ` +
-      `data-next-cockpit-memo-key="${esc(key)}" data-next-cockpit-memo-kind="${kind}" ` +
-      `placeholder="${esc(placeholder)}">${esc(nextCockpitReadMemo(key))}</textarea>` +
-      `<small data-next-cockpit-memo-cue="${kind}">${cue}</small></label>`;
+    const editing = nextCockpitMemoEditingKey === key;
+    if(editing){
+      return `<label data-next-cockpit-memo-field="${kind}"><span>${label}</span>` +
+        `<textarea maxlength="${NEXT_COCKPIT_MEMO_LIMIT}" data-next-cockpit-memo-input ` +
+        `data-next-cockpit-memo-key="${esc(key)}" data-next-cockpit-memo-kind="${kind}" ` +
+        `placeholder="${esc(placeholder)}">${esc(value)}</textarea>` +
+        `<small data-next-cockpit-memo-cue="${kind}">${cue}</small>` +
+        `<button type="button" data-next-cockpit-action="memo-done">Done</button></label>`;
+    }
+    return `<div data-next-cockpit-memo-field="${kind}"><span>${label}</span>` +
+      `<strong>${esc(value || "Not set")}</strong>` +
+      `<button type="button" data-next-cockpit-action="memo-edit" ` +
+      `data-arg="${esc(key)}" aria-label="Edit ${label}">Edit</button></div>`;
   };
-  const task = nextCockpitCurrentTask({semantic});
   const scope = focus ? nextCockpitSessionScopeKind(focus) : nextCockpitProjectScopeKind();
   return `<section class="next-cockpit-memos" data-next-cockpit-memos ` +
-    `data-scope-owner="${esc(scope.owner)}">` +
-    '<header><strong>CAPTAIN MEMO</strong>' + nextCockpitScopeCue(scope) +
-    '<span>Human-authored · selected scope</span></header>' +
+    `data-next-cockpit-primary data-scope-owner="${esc(scope.owner)}">` +
+    '<header><strong>Outcome &amp; Focus</strong>' + nextCockpitScopeCue(scope) +
+    '<span>Captain-authored</span></header>' +
     '<div>' + field("outcome", "OUTCOME", "What result should this scope achieve?") +
     field("focus", "FOCUS", "What are you concentrating on now?") + '</div>' +
-    `<p><strong>DERIVED</strong> · ${esc(task.label + " · " + task.stage)} · semantic evidence, never memo text</p>` +
     '</section>';
 }
 
@@ -417,9 +416,8 @@ function nextCockpitCurrentTask(observation){
 function nextCockpitTaskSubject(observation){
   const task = nextCockpitCurrentTask(observation);
   return '<section class="next-cockpit-task-subject" data-next-cockpit-task-subject ' +
-    `data-work-item="${esc(task.id)}"><span>CURRENT TASK</span>` +
-    `<h2>${esc(task.label)} <small>· ${esc(task.stage)}</small></h2>` +
-    '<p>Task and stage come from exact workflow evidence.</p></section>';
+    `data-next-cockpit-primary data-work-item="${esc(task.id)}"><span>CURRENT TASK</span>` +
+    `<h2>${esc(task.label)} <small>· ${esc(task.stage)}</small></h2></section>`;
 }
 
 function nextCockpitTabList(){
@@ -469,25 +467,81 @@ function nextCockpitNowState(observation){
 function nextCockpitActiveDelegation(group, observation){
   const task = nextCockpitCurrentTask(observation);
   const delegationGroup = {label:nextCockpitStableKey(group)};
-  const lanes = group.sessions.flatMap(session => projectDelegationLanes(session, delegationGroup));
-  if(!lanes.length){
-    return '<section class="next-cockpit-active-delegation"><h2>ACTIVE DELEGATION</h2>' +
-      '<p>No active task delegation observed.</p></section>';
+  const lanes = group.sessions.flatMap(session => projectDelegationLanes(session, delegationGroup))
+    .filter(lane => lane.assignment !== "assignment unavailable");
+  const activeSessions = group.sessions.filter(session => session.state === "working");
+  if(!lanes.length && !activeSessions.length){
+    return '<section class="next-cockpit-active-delegation" data-next-cockpit-primary>' +
+      '<h2>Active work</h2><p>No active work</p></section>';
   }
-  const rows = lanes.map(lane => {
+  const assignmentRows = lanes.map(lane => {
     const session = group.sessions.find(candidate => sessKey(candidate) === lane.parentSession);
     const scope = session ? nextCockpitSessionScopeKind(session) : {kind:"unknown",owner:"unknown"};
     return `<li data-work-item="${esc(lane.workItemId || "")}" ` +
-      `data-parent-session="${esc(lane.parentSession || "")}">${nextCockpitScopeCue(scope)}` +
-      `<strong>${esc(lane.worker)}</strong> · ${esc(lane.assignment)}` +
-      `<small>${esc(lane.source || "source unavailable")}</small></li>`;
-  }).join("");
-  return '<section class="next-cockpit-active-delegation" data-next-cockpit-active-delegation>' +
-    '<h2>ACTIVE DELEGATION</h2>' +
-    `<strong>${esc(task.label)} · ${lanes.length} active ` +
-    `${lanes.length === 1 ? "assignment" : "assignments"}</strong>` +
-    `<details><summary>${lanes.length} ${lanes.length === 1 ? "contributor" : "contributors"}</summary>` +
-    `<ul>${rows}</ul></details></section>`;
+      `data-parent-session="${esc(lane.parentSession || "")}">` +
+      `<strong>${esc(lane.assignment)}</strong>` +
+      `<small>${esc(lane.worker)} · ${esc(scope.detail || "source unavailable")}</small></li>`;
+  });
+  const sessionRows = lanes.length ? [] : activeSessions.map(session => {
+    const label = nextCockpitHumanLabel(session.title || "Current task is active");
+    const title = label === task.label ? "Current task is active" : label;
+    const scope = nextCockpitSessionScopeKind(session);
+    return `<li data-parent-session="${esc(sessKey(session))}"><strong>${esc(title)}</strong>` +
+      `<small>${esc(scope.detail || "Session")}</small></li>`;
+  });
+  const rows = assignmentRows.concat(sessionRows).join("");
+  return '<section class="next-cockpit-active-delegation" data-next-cockpit-active-delegation ' +
+    'data-next-cockpit-primary>' +
+    '<h2>Active work</h2>' +
+    `<ul>${rows}</ul></section>`;
+}
+
+function nextCockpitNeedsYou(commandAttention){
+  const captain = (commandAttention || []).filter(item => item && item.owner === "CAPTAIN");
+  if(!captain.length){
+    return '<section class="next-cockpit-needs" data-next-cockpit-primary>' +
+      '<h2>Needs you</h2><p>Nothing needs you</p></section>';
+  }
+  const rows = captain.map(item => `<li><strong>${esc(item.question || item.label)}</strong></li>`)
+    .join("");
+  return '<section class="next-cockpit-needs" data-next-cockpit-primary>' +
+    `<h2>Needs you</h2><ul>${rows}</ul></section>`;
+}
+
+function nextCockpitSystemDetails(commandAttention){
+  const system = (commandAttention || []).filter(item => item && item.owner === "FO");
+  if(!system.length) return "";
+  return '<details class="next-cockpit-system-details" data-next-cockpit-system-details>' +
+    `<summary>System details</summary><ul>${system.map(item =>
+      `<li>${esc(item.label)}</li>`).join("")}</ul></details>`;
+}
+
+function nextCockpitPlanDisclosure(context){
+  return '<details class="next-cockpit-plan-details" data-next-cockpit-plan-details>' +
+    `<summary>Show project plan</summary><div>${nextProjectPlanBlock(context)}</div></details>`;
+}
+
+function nextCockpitCompletedWork(context){
+  return nextProjectCompletedTasks(context.group.sessions).length ? nextProjectDone(context) : "";
+}
+
+function nextCockpitDecisionSummary(group, focus, observation){
+  const entry = focus ? nextCockpitContexts.get(nextCockpitContextKey(group, focus)) : null;
+  const semantic = focus ? entry && entry.data && entry.data.semantic : nextCockpitSemantic(observation);
+  if(!semantic) return "";
+  const counts = nextCockpitCaptainDecisionCounts(semantic || {});
+  const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
+  if(!total) return "";
+  return '<p class="next-cockpit-decision-summary" data-next-cockpit-decision-summary>' +
+    `Decision application · ${esc(nextCockpitRecoveryDecisions(semantic))}</p>`;
+}
+
+function nextCockpitConsoleStatus(group){
+  const rows = group.sessions.map(session => `<li>${esc(sessKey(session))} · ` +
+    `${esc(String(session.state || "unknown"))}</li>`).join("");
+  if(!rows) return "";
+  return '<details class="next-cockpit-console-status" data-next-cockpit-console-status>' +
+    `<summary>Raw project status</summary><ul>${rows}</ul></details>`;
 }
 
 function nextCockpitReviewFindings(detail){
@@ -665,41 +719,38 @@ function nextCockpitTerminal(group, focus){
     '</section>';
 }
 
-function nextCockpitPanel(context, focus, observation, commandAttention, status){
+function nextCockpitPanel(context, focus, observation, commandAttention){
   const tab = NEXT_PROJECT_TABS.includes(nextRoute && nextRoute.tab) ? nextRoute.tab : "now";
   let body = "";
   if(tab === "now"){
-    body = nextCockpitProjectScope() + status +
-      nextCockpitRecoveryStrip(context.group, observation, commandAttention) +
-      nextCockpitNowState(observation) +
-      nextCockpitMemoFields(context.group, focus, nextCockpitSemantic(observation)) +
+    body = nextCockpitMemoFields(context.group, focus) +
+      nextCockpitNeedsYou(commandAttention) +
       nextCockpitActiveDelegation(context.group, observation) +
-      '<div class="next-project-detail-layout"><main class="next-project-detail-main" data-next-project-main>' +
-      `<div data-next-project-section="plan">${nextProjectPlanBlock(context)}</div>` +
-      `<div data-next-project-section="going-on">${nextProjectGoingOn(context, commandAttention)}</div>` +
-      `<div data-next-project-section="done">${nextProjectDone(context)}</div></main>` +
-      '<aside class="next-project-detail-rail" data-next-project-rail>' +
-      `${nextProjectDelegation(context)}${nextProjectControls(context)}</aside></div>`;
+      nextCockpitSystemDetails(commandAttention) + nextCockpitPlanDisclosure(context);
   }else if(tab === "course"){
-    body = nextCockpitCoursePanel(context.group, focus);
+    body = nextCockpitCoursePanel(context.group, focus) + nextCockpitCompletedWork(context);
   }else if(tab === "decisions"){
-    body = nextCockpitTimeline(context.group, focus, "decisions");
+    body = nextCockpitDecisionSummary(context.group, focus, observation) +
+      nextCockpitTimeline(context.group, focus, "decisions");
   }else{
     body = nextCockpitConsoleScope(focus) + (focus
       ? nextCockpitTerminal(context.group, focus)
-      : '<p class="next-cockpit-empty">Select one exact session to open its read-only console.</p>');
+      : '<p class="next-cockpit-empty">Select one exact session to open its read-only console.</p>') +
+      nextCockpitConsoleStatus(context.group) + nextProjectGoingOn(context, commandAttention) +
+      nextProjectDelegation(context) +
+      nextProjectControls(context);
   }
   return `<section class="next-cockpit-panel" id="next-cockpit-panel-${tab}" role="tabpanel" ` +
     `data-next-cockpit-panel="${tab}" aria-label="${nextCockpitHumanLabel(tab)}">${body}</section>`;
 }
 
-function nextProjectCockpit(context, observation, commandAttention, status){
+function nextProjectCockpit(context, observation, commandAttention){
   const group = context.group;
   const focus = nextCockpitFocusedSession(group);
   projectQuerySession = focus ? sessKey(focus) : "";
   lastData = nextData;
   return nextCockpitTaskSubject(observation) + nextCockpitTabList() +
-    nextCockpitPanel(context, focus, observation, commandAttention, status);
+    nextCockpitPanel(context, focus, observation, commandAttention);
 }
 
 function nextCockpitBeforeRender(){
@@ -750,6 +801,18 @@ document.addEventListener("click", event => {
     if(!group || !NEXT_PROJECT_TABS.includes(tab)) return;
     event.preventDefault();
     navigateNext({view:"project",project:group.label,focus:nextRoute.focus || null,tab});
+    return;
+  }
+  if(action === "memo-edit"){
+    event.preventDefault();
+    nextCockpitMemoEditingKey = String(target.dataset.arg || "");
+    renderNext();
+    return;
+  }
+  if(action === "memo-done"){
+    event.preventDefault();
+    nextCockpitMemoEditingKey = null;
+    renderNext();
     return;
   }
   const key = String(target.dataset.arg || projectQuerySession || "");
