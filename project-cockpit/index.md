@@ -401,3 +401,27 @@ The final first-officer command round turns recovery Attention into one evidence
 ### Summary
 
 Shaping cycle 13 makes decision rows scannable without weakening their evidence and fixes filter-induced horizontal reflow at the registry boundary. The exact live decision set keeps one reading column across Active, All, and Decisions, while each row preserves its own expandable mechanics and provenance. Checkpoint `179a80d` is live on 8766; work stops here without advancing or integrating.
+
+## Stage Report: shaping (cycle 14)
+
+- DONE: The project/cockpit task remains the page subject while four real tabs—Now, Course, Decisions, Console—separate distinct operator questions without duplicating the same dense content.
+  Commit `3b912140de9f2242f857bb0778ea7b6043b0ceaa` keeps `Project cockpit · Shaping` above one keyboard-accessible, permalink-preserving tab panel; executed route assertions fail if Now, Course, Decisions, or Console leaks another tab's owned dense regions.
+- DONE: Course renders task-centric semantic episodes from exact session/workflow evidence: user direction, observed work, review-caused course changes, corrections, and results; contributor names and lifecycle evidence stay behind disclosure.
+  The exact live-payload DOM exercise requires `EXACT INPUT`, `EXACT WORK`, and five source-backed `DERIVED COURSE CHANGE` findings under the task subject; it also requires the contributor name to follow a collapsed Evidence disclosure and fails if `Future` appears.
+- DONE: The live current Cargento session distinguishes the completed timeline-row correction from the still-open page-organization shaping, shows no invented Future, and preserves truthful current delegation and decision application state.
+  The exact payload renders completed checkpoint `179a80d` separately from current `Project cockpit · Shaping`; task-first active delegation and canonical decision metadata remain source-backed while Decisions truthfully reports no explicit captain decision when none is collected.
+- DONE: Record the captain feedback, resulting criterion, and accepted interaction that authorized this composition.
+  Exact captain directions said the page was too busy and the contributor name was not the subject; the approved scope assigned one operator question per tab, and the final recorded interaction `ok, let's try this.` accepted that direction before implementation.
+- DONE: Resolve the recovered Console falsifier at its actual boundary without changing correct composition.
+  The failure was an immediate sample before the asynchronous origin lookup settled; the new DOM test proves pending → `Open terminal` → explicit `read-only` output, with Now, Course, and Decisions absent throughout.
+- DONE: Exercise the candidate at renderer, source-boundary, static, and live-server seams.
+  Nineteen cockpit tests, 163 next-UI tests, 222 project-context/semantic/shared-renderer/page tests, and a 59-test focused composition set pass; Ruff, format, strict mypy over 116 files, embedded lint, plugin validation, version parity, and diff checks pass.
+- DONE: Serve the verified checkpoint with the preserved exact read-only terminal and prototype authority.
+  Stable `http://127.0.0.1:8766/?next=true#n=project:spacedock-research%2Fcargento` runs PID `91705`, serving 374,651 bytes at SHA-256 `bed3dbd3eed846a9b77de8b6c8d429c5859b87cd1bb4b2183e33474bda7e42a5`; candidate 8767 is stopped.
+  Exact root `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` remains registered at tmux `$4/@4/%10`, stream connected, `read-only-control-stream`, keyboard input `not-exposed`, after six renewals across more than one lease interval.
+- DONE: Preserve the authorized prototype-only boundary.
+  The code commit is local to `spacedock-ensign/project-cockpit`; no code ref was pushed or integrated, no version field changed, and `.spacedock/dev` was neither read nor mutated.
+
+### Summary
+
+Cycle 14 reshapes the project mirror around four operator questions while keeping the task—not a contributor—the stable subject. Course now separates exact direction and work from source-backed derived course change, Now distinguishes the live shaping task from completed checkpoint `179a80d`, Decisions keeps explicit application semantics, and Console retains exact read-only output. The committed Explore-only checkpoint is live on 8766 with the root terminal preserved and is ready for the first-officer gate.
