@@ -750,3 +750,32 @@ Cycle 25 corrects the Round-3 semantic hierarchy at its source boundaries. With 
 ### Summary
 
 Cycle 26 turns the middle briefing cell into an explicit authority state instead of a stack of equal sentences. Exact captain questions are unmistakable, recoverable gaps lead to one bounded FO action, and authoritative calm becomes a quiet continue state; source and coverage mechanics remain evidence. The recovered assignment now names the operational effect of its missing stage link, fresh ages and provenance are disclosed rather than promoted, and checkpoint `b16342a` is live on 8766 with its exact root renewed read-only. Candidate 8767 is stopped and the inspected Round-4 screenshot records the corrected action hierarchy.
+
+## Stage Report: shaping (cycle 27)
+
+- DONE: Put the existing command facts into one immediate Assignment → Execution → Command frame.
+  Commit `06dba3d28eb32dd9074defa8427ee462f155ebe7` renames the frame `PROJECT RECOVERY BRIEFING`, orders its three primary cells as Assignment, Execution, Command, and leaves provenance under Evidence. Assignment includes the exact stage-link effect, execution includes the exact root and relevant child state, and Command includes one exact next action plus captain truth without scan mechanics.
+- DONE: State an unavailable returned handoff without implying one exists.
+  A bounded return with neither assignment nor result now renders `NAME · returned · handoff unavailable` and creates `INSPECT · recover NAME handoff`. The Harvey falsifier proves both truths are primary and do not require opening Evidence; the live payload advanced to Harvey active and Wegener returned during candidate verification, and the same generic renderer exposes Wegener's unavailable handoff inline.
+- DONE: Collapse authoritative idle handoff to the required two truthful lines.
+  When attention coverage is complete and no active or bounded returned child exists, the existing cells show only `FO CONTINUES · Continue current assignment` and `No execution observed · Captain not needed`; no root execution is fabricated.
+- DONE: Delete conditional visual noise without adding a primary region.
+  Empty plan disclosure is absent; exact/recovered assignment with complete attention coverage removes empty add-context from the briefing while keeping it reachable in the existing utility menu; one-session projects remove the scope sidebar; multi-session scope, selected-session filter cue, and permalinks remain; the duplicate project breadcrumb leaf is gone; and Copy briefing plus the global counter now live behind the existing `…` menu.
+- DONE: Add falsifiers for every stop-polishing boundary and update superseded contracts.
+  Six new adversarial tests cover unavailable return/recovery, three-cell order and all inline truths, idle two-line collapse, single-versus-multi-session scope and selected-session project ownership, empty plan/context subtraction, and utility/breadcrumb demotion. The complete cockpit/page group passes 96/96, the next-project module passes 11/11 after aligning its empty-plan expectation, and page sizes/digests were recomputed from the assembled assets.
+- DONE: Complete static and full verification while separating the one owned expectation from established baselines and contention.
+  Ruff, Ruff format, strict mypy over changed tests, embedded JS/CSS lint, plugin validation, byte oracles, and diff checks pass. Full discovery completed 1,972 tests in 463.309 seconds with four failures, nine errors, and one skip under load above 168. The only owned red was the superseded empty-plan assertion and now passes with its full module; the remaining CapturingServer signature, stale Codex state, runtime import allowlist, Droid timestamp, Python surrogate import, lifecycle diagnose, and HTTP timeout cases match the existing branch/contention baselines.
+- DONE: Exercise candidate 8767 and inspect the required standalone Chrome frame.
+  Candidate 8767 served 425,630 bytes at SHA-256 `c381fde66f3108ee7378ee99e8a362bffc57188383370ed25fe8b88f0e11ab39`. `/tmp/cargento-mirror-round5-after.png` is a 51,328-byte 1440×1000 full-page Playwright-Chrome capture at SHA-256 `702d534895a52c9b6b4df117f19cb153650469cc47076475c15da8517c8ace66`; inspection confirms one title, no single-session sidebar, no primary global/copy controls, Assignment → Execution → Command, inline stage-link/return/captain truth, four tabs, and no overflow. Candidate 8767 is stopped.
+- DONE: Serve the committed bytes and preserve the authorized Explore-only boundary.
+  Stable `http://127.0.0.1:8766/?next=true#n=project:spacedock-research%2Fcargento` runs PID `50098` with the same bytes and digest. Exact root `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` is registered as `Cargento:1.1` at tmux `$4/@4/%10` and renewing read-only. The code commit remains local to `spacedock-ensign/project-cockpit`; no code ref was pushed or integrated, no version or workflow status changed, and `.spacedock/dev` was neither read nor mutated.
+
+### Completion checklist
+
+- [x] Assignment, execution/root and relevant child state, exact next action, captain truth, and stage-link blocking effect are visible without opening Evidence; unavailable return commands one concrete recovery path.
+- [x] The three cells read Assignment → Execution → Command, and authoritative FO CONTINUES with no child execution collapses to two truthful lines without fabrication.
+- [x] Empty/single-session duplication is subtracted while multi-session filters, selected-session project ownership, tabs, Evidence, client-only utilities, and read-only Console remain reachable; the inspected Chrome frame meets the stop-polishing criterion.
+
+### Summary
+
+Cycle 27 stops polishing once the four command facts are immediate. It pairs unavailable returned work with one honest recovery action, puts situation before response, collapses authoritative idle state without inventing execution, and removes empty plan, context, scope, breadcrumb, copy, and global-count noise from the primary frame. Checkpoint `06dba3d` is live on 8766 with its exact root renewed read-only; candidate 8767 is stopped, and the inspected Round-5 screenshot records the final subtractive correction.
