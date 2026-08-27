@@ -127,8 +127,8 @@ console.log(JSON.stringify({html,tabs,panel}));
         )
         self.assertEqual(1, out["html"].count('role="tabpanel"'))
         self.assertIn('data-next-cockpit-panel="now"', out["html"])
-        self.assertIn("FOCUS · THIS BROWSER", out["html"])
-        self.assertIn("OUTCOME", out["html"])
+        self.assertIn("HUMAN · OUTCOME", out["html"])
+        self.assertIn("HUMAN · FOCUS", out["html"])
         self.assertIn("CURRENT FOCUS · DERIVED", out["html"])
         self.assertIn('data-next-project-section="plan"', out["html"])
         self.assertIn('data-next-project-section="going-on"', out["html"])
@@ -251,8 +251,10 @@ console.log(JSON.stringify({html, query:[...nextCockpitContexts.keys()]}));
         assert isinstance(out, dict)
         html = out["html"]
 
-        self.assertIn('data-next-cockpit-session="all"', html)
-        self.assertIn('aria-current="page"><strong>All sessions', html)
+        self.assertIn('class="next-cockpit-scope-tree"', html)
+        self.assertIn('data-next-cockpit-scope="project" aria-current="page"', html)
+        self.assertNotIn("All sessions", html)
+        self.assertNotIn('role="tablist" aria-label="Project sessions"', html)
         self.assertIn("Codex", html)
         self.assertIn("Pi", html)
         self.assertIn("Claude", html)
@@ -281,10 +283,10 @@ console.log(JSON.stringify({html, task}));
         out = self.run_fixture(
             """
 const html = __els.app.innerHTML;
-const nav = (html.match(/<nav class="next-cockpit-session-nav"[\\s\\S]*?<\\/nav>/) || [""])[0];
+const nav = (html.match(/<nav class="next-cockpit-scope-tree"[\\s\\S]*?<\\/nav>/) || [""])[0];
 console.log(JSON.stringify({
   header:html.indexOf('class="next-project-detail-header"'),
-  nav:html.indexOf('class="next-cockpit-session-nav"'),
+  nav:html.indexOf('class="next-cockpit-scope-tree"'),
   plan:html.indexOf('data-next-project-section="plan"'),
   html, sessionNav:nav
 }));
@@ -294,7 +296,7 @@ console.log(JSON.stringify({
 
         self.assertLess(out["header"], out["nav"])
         self.assertLess(out["nav"], out["plan"])
-        self.assertIn("<strong>Codex · working</strong>", out["sessionNav"])
+        self.assertIn("<strong>Codex</strong><span>working</span>", out["sessionNav"])
         self.assertIn("<small>Shape project cockpit</small>", out["sessionNav"])
         self.assertNotIn("<strong>Shape project cockpit", out["sessionNav"])
 
@@ -352,8 +354,8 @@ console.log(JSON.stringify({html, focus:nextCockpitFocusedSession(nextProjectGro
         assert isinstance(out, dict)
 
         self.assertEqual("pi:pi-idle", out["focus"])
-        self.assertIn('data-next-cockpit-session="pi:pi-idle"', out["html"])
-        self.assertIn('aria-current="page"><strong>Pi', out["html"])
+        self.assertIn('data-next-cockpit-scope="pi:pi-idle"', out["html"])
+        self.assertIn('data-next-cockpit-scope="pi:pi-idle" aria-current="page"', out["html"])
         self.assertIn('data-arg="decisions"', out["html"])
 
     def test_decisions_view_preserves_canonical_metadata_and_compacts_scan_line(self) -> None:
@@ -471,8 +473,7 @@ console.log(JSON.stringify({html:nextCockpitProjectStatus(nextProjectGroups()[0]
         self.assertIn("Gamma · validation · decision superseded", out["html"])
         self.assertNotIn("Delta", out["html"])
 
-    def test_recovery_strip_precedes_plan_and_uses_focus_then_discovered_goal(self) -> None:
-        focus_key = "cargento.projectGoal.v1:spacedock-research%2Fcargento"
+    def test_recovery_strip_precedes_plan_and_uses_only_discovered_goal(self) -> None:
         out = self.run_fixture(
             """
 const group = nextProjectGroups()[0];
@@ -481,23 +482,18 @@ const observation = {semantic:__semantic, workflow_discovery:{state:"observed",w
 ]}};
 nextCockpitContexts.set(nextCockpitContextKey(group, null), {data:observation, revision:105});
 renderNext();
-const focused = __els.app.innerHTML;
-nextCockpitFocusDrafts.set(nextCockpitStableKey(group), "");
-renderNext();
 const discovered = __els.app.innerHTML;
 nextCockpitContexts.set(nextCockpitContextKey(group, null), {
   data:{semantic:__semantic,workflow_discovery:{state:"none",workflows:[]}}, revision:105});
 renderNext();
-console.log(JSON.stringify({focused,discovered,absent:__els.app.innerHTML}));
+console.log(JSON.stringify({discovered,absent:__els.app.innerHTML}));
 """,
-            storage={focus_key: "Browser-local outcome"},
         )
         assert isinstance(out, dict)
 
-        self.assertIn("Browser-local outcome", out["focused"])
         self.assertLess(
-            out["focused"].index("OUTCOME"),
-            out["focused"].index('data-next-project-section="plan"'),
+            out["discovered"].index("OUTCOME"),
+            out["discovered"].index('data-next-project-section="plan"'),
         )
         self.assertIn("Discovered workflow outcome", out["discovered"])
         self.assertIn("Outcome not recorded", out["absent"])
@@ -563,30 +559,63 @@ console.log(JSON.stringify({items,html:nextCockpitRecoveryStrip(group, observati
         self.assertIn("exact", out["html"])
         self.assertLess(out["html"].index("CAPTAIN"), out["html"].index("FO"))
 
-    def test_focus_reads_label_alias_then_saves_only_under_the_stable_project_key(self) -> None:
-        label_key = "cargento.projectGoal.v1:cargento"
-        stable_key = "cargento.projectGoal.v1:spacedock-research%2Fcargento"
+    def test_human_outcome_and_focus_autosave_per_exact_scope(self) -> None:
         out = self.run_fixture(
             """
-const before = __els.app.innerHTML;
-const input = {value:"Stable desired outcome",
-  dataset:{nextCockpitProject:"spacedock-research/cargento"},
-  closest(selector){ return selector === "[data-next-cockpit-focus-input]" ? this : null; }};
-__fire("input", {target:input});
-const save = {dataset:{nextCockpitAction:"focus-save"},
-  closest(selector){ return selector === "[data-next-cockpit-action]" ? this : null; }};
-__fire("click", {target:save, preventDefault(){}});
-console.log(JSON.stringify({before, stored:__store, writes:__storageWrites}));
-""",
-            storage={label_key: "Legacy label focus"},
+const group=nextProjectGroups()[0];
+const projectOutcome=nextCockpitMemoKey(group,null,"outcome");
+const projectFocus=nextCockpitMemoKey(group,null,"focus");
+const pi=group.sessions.find(session=>sessKey(session)==="pi:pi-idle");
+const sessionOutcome=nextCockpitMemoKey(group,pi,"outcome");
+const edit=(key,kind,value)=>({value,dataset:{nextCockpitMemoKey:key,nextCockpitMemoKind:kind},
+  closest(selector){ return selector === "[data-next-cockpit-memo-input]" ? this : null; }});
+__fire("input",{target:edit(projectOutcome,"outcome","Ship calm scope navigation")});
+__fire("input",{target:edit(projectFocus,"focus","Review project truth")});
+__fire("input",{target:edit(sessionOutcome,"outcome","Inspect Pi evidence")});
+const project=nextCockpitMemoFields(group,null,__semantic);
+const session=nextCockpitMemoFields(group,pi,__semantic);
+console.log(JSON.stringify({projectOutcome,projectFocus,sessionOutcome,store:__store,project,session}));
+"""
         )
         assert isinstance(out, dict)
 
-        self.assertIn("Legacy label focus", out["before"])
-        self.assertIn("stable project key · spacedock-research/cargento", out["before"])
-        self.assertEqual("Stable desired outcome", out["stored"][stable_key])
-        self.assertEqual("Legacy label focus", out["stored"][label_key])
-        self.assertIn(stable_key, out["writes"])
+        self.assertNotEqual(out["projectOutcome"], out["sessionOutcome"])
+        self.assertEqual("Ship calm scope navigation", out["store"][out["projectOutcome"]])
+        self.assertEqual("Review project truth", out["store"][out["projectFocus"]])
+        self.assertEqual("Inspect Pi evidence", out["store"][out["sessionOutcome"]])
+        self.assertIn("HUMAN · OUTCOME", out["project"])
+        self.assertIn("HUMAN · FOCUS", out["project"])
+        self.assertIn("Saved in this browser", out["project"])
+        self.assertIn("DERIVED", out["project"])
+        self.assertNotIn("Ship calm scope navigation", out["session"])
+        self.assertNotIn("Review project truth", out["session"])
+
+    def test_memos_use_normalized_project_identity_and_survive_storage_failure(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const alias={label:"worktrees/cargento-copy",sessions:group.sessions};
+const normalized=nextCockpitMemoKey(group,null,"focus");
+const aliased=nextCockpitMemoKey(alias,null,"focus");
+localStorage.getItem=()=>{throw new Error("blocked")};
+localStorage.setItem=()=>{throw new Error("blocked")};
+const corruptKey=nextCockpitMemoKey(group,null,"outcome");
+nextCockpitMemoDrafts.set(corruptKey,{not:"text"});
+const input={value:"x".repeat(700),dataset:{nextCockpitMemoKey:corruptKey,
+  nextCockpitMemoKind:"outcome"},closest(selector){
+  return selector === "[data-next-cockpit-memo-input]" ? this : null; }};
+__fire("input",{target:input});
+console.log(JSON.stringify({normalized,aliased,value:nextCockpitReadMemo(corruptKey),
+  html:nextCockpitMemoFields(group,null,__semantic)}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual(out["normalized"], out["aliased"])
+        self.assertEqual(500, len(out["value"]))
+        self.assertIn("Browser storage unavailable", out["html"])
+        self.assertIn("HUMAN · OUTCOME", out["html"])
+        self.assertIn("DERIVED", out["html"])
 
     def test_next_bundle_keeps_steer_local_and_terminal_input_absent(self) -> None:
         out = self.run_fixture(

@@ -503,6 +503,23 @@ class NextPageAssetContractTest(unittest.TestCase):
                 self.assertIsNotNone(rule)
                 self.assertIn(f"box-shadow:inset 3px 0 {color}", rule.group(1) if rule else "")
 
+    def test_project_scope_tree_is_left_at_wide_width_and_stacks_when_narrow(self) -> None:
+        styles = (frontend_page.WEB_DIR / "next" / "styles.css").read_text(encoding="utf-8")
+        wide = re.search(r"\.next-cockpit-shell\{([^}]*)\}", styles)
+        narrow = re.search(
+            r"@media\(max-width:760px\)\{[\s\S]*?"
+            r"\.next-cockpit-shell\{([^}]*)\}",
+            styles,
+        )
+
+        self.assertIsNotNone(wide)
+        self.assertIn(
+            "grid-template-columns:minmax(180px,230px) minmax(0,1fr)", wide.group(1) if wide else ""
+        )
+        self.assertIsNotNone(narrow)
+        self.assertIn("grid-template-columns:1fr", narrow.group(1) if narrow else "")
+        self.assertNotIn("overflow-x:auto", wide.group(1) if wide else "")
+
     def test_load_next_page_preserves_its_byte_oracles(self) -> None:
         # Per-part first, deliberately. Every part feeds the assembled page, so a
         # one-part edit fails the assembled oracle too. Naming the part that moved
@@ -529,8 +546,8 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "c430a56866fd1219b97267375f2b0b3bad3acf3b2dfbcb34c54e51e6845a68ce",
             ),
             "next-project.js": (
-                10_683,
-                "b7ac5c0721617880dc37df00062b1113c33f4be783fa3e1995c0731a20010543",
+                10_774,
+                "c8e4ae75bd1c9e8192ab412e0e1d09aead3ae79a7dc07f6ee9919bb20d8ea597",
             ),
             "next-activity.js": (
                 4_513,
@@ -553,8 +570,8 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "4da6527bbf6401db716ab5807748ac01a64aecce996e993ff9e0b42c22fdc811",
             ),
             "next-cockpit.js": (
-                34_533,
-                "e551b9961b7694a878a3faf58664cda5c00412660f3f708df8cc768fba228cac",
+                35_517,
+                "2e30422d73799ab04a1c81b3f030b27a4273adf23d5068fc67fdad1c63766e4f",
             ),
             "next-render.js": (
                 802,
@@ -573,16 +590,16 @@ class NextPageAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.next_asset_path("styles.css").read_bytes()
-        self.assertEqual(35_793, len(styles))
+        self.assertEqual(36_703, len(styles))
         self.assertEqual(
-            "3b40f5c2d3ee1119a39f9458d0186c0a16118624afa9e8aebefe89b0d134c879",
+            "a14e919b2dfedf032e0e0500e8abec791cef59bbf8505e145f844781ffef13a2",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_next_page()
-        self.assertEqual(374_651, len(assembled))
+        self.assertEqual(376_636, len(assembled))
         self.assertEqual(
-            "bed3dbd3eed846a9b77de8b6c8d429c5859b87cd1bb4b2183e33474bda7e42a5",
+            "ad612400443cbb30ed1ca27a243984fb38e5e93f5a705877aeb9e1e1be7d9fd8",
             hashlib.sha256(assembled).hexdigest(),
         )
 

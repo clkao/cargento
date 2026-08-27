@@ -219,6 +219,7 @@ function nextProjectView(project){
     ? nextCockpitProjectStatus(group, observation.semantic) : "";
   return `<article class="next-project-detail" data-next-project-detail="${esc(group.label)}">` +
     nextProjectDetailHeader(context) +
-    nextCockpitSessionNav(group, focus) +
-    nextProjectCockpit(context, observation, commandAttention, status) + '</article>';
+    '<div class="next-cockpit-shell">' + nextCockpitScopeTree(group, focus) +
+    '<div class="next-cockpit-content">' +
+    nextProjectCockpit(context, observation, commandAttention, status) + '</div></div></article>';
 }

@@ -1,7 +1,9 @@
-const NEXT_COCKPIT_FOCUS_ALIAS_PREFIX = "cargento.projectGoal.v1:";
+const NEXT_COCKPIT_MEMO_PREFIX = "cargento.cockpit.memo.v2:";
+const NEXT_COCKPIT_MEMO_LIMIT = 500;
 const nextCockpitContexts = new Map();
 const nextCockpitRequests = new Map();
-const nextCockpitFocusDrafts = new Map();
+const nextCockpitMemoDrafts = new Map();
+const nextCockpitMemoStates = new Map();
 let nextCockpitTerminalScreen = null;
 
 function nextCockpitStableKey(group){
@@ -9,22 +11,22 @@ function nextCockpitStableKey(group){
   return keys.size === 1 ? [...keys][0] : group.label;
 }
 
-function nextCockpitFocusKey(group){
-  return NEXT_COCKPIT_FOCUS_ALIAS_PREFIX + encodeURIComponent(nextCockpitStableKey(group));
+function nextCockpitMemoKey(group, focus, kind){
+  const scope = focus ? sessKey(focus) : "project";
+  return NEXT_COCKPIT_MEMO_PREFIX + encodeURIComponent(nextCockpitStableKey(group)) + ":" +
+    encodeURIComponent(scope) + ":" + kind;
 }
 
-function nextCockpitLabelFocusKey(group){
-  return NEXT_COCKPIT_FOCUS_ALIAS_PREFIX + encodeURIComponent(group.label);
+function nextCockpitBoundMemo(value){
+  return typeof value === "string" ? value.slice(0, NEXT_COCKPIT_MEMO_LIMIT) : "";
 }
 
-function nextCockpitReadFocus(group){
-  if(nextCockpitFocusDrafts.has(nextCockpitStableKey(group))){
-    return nextCockpitFocusDrafts.get(nextCockpitStableKey(group));
-  }
+function nextCockpitReadMemo(key){
+  if(nextCockpitMemoDrafts.has(key)) return nextCockpitBoundMemo(nextCockpitMemoDrafts.get(key));
   try{
-    return localStorage.getItem(nextCockpitFocusKey(group)) ||
-      localStorage.getItem(nextCockpitLabelFocusKey(group)) || "";
+    return nextCockpitBoundMemo(localStorage.getItem(key));
   }catch(_error){
+    nextCockpitMemoStates.set(key, "error");
     return "";
   }
 }
@@ -39,25 +41,31 @@ function nextCockpitSessionResult(session){
   return session.last_output || session.title || session.state || "state unavailable";
 }
 
-function nextCockpitSessionNav(group, focus){
-  const selected = focus ? sessKey(focus) : "all";
-  const link = (key, label, subtitle) => {
-    const route = {view:"project",project:group.label,focus:key === "all" ? null : key,
+function nextCockpitScopeLabel(group){
+  const named = group.sessions.find(session => String(session.project_name || "").trim());
+  return String(named && named.project_name || group.label).split("/").filter(Boolean).pop() || "Project";
+}
+
+function nextCockpitScopeTree(group, focus){
+  const selected = focus ? sessKey(focus) : "project";
+  const link = (key, label, state, subtitle) => {
+    const route = {view:"project",project:group.label,focus:key === "project" ? null : key,
       tab:nextRoute && nextRoute.tab || "now"};
-    return `<a href="${esc(nextFragmentForRoute(route))}" data-next-cockpit-session="${esc(key)}"` +
+    return `<a href="${esc(nextFragmentForRoute(route))}" data-next-cockpit-scope="${esc(key)}"` +
       (selected === key ? ` aria-current="page"` : "") + `>` +
-      `<strong>${esc(label)}</strong>` +
+      `<strong>${esc(label)}</strong>${state ? `<span>${esc(state)}</span>` : ""}` +
       `<small>${esc(String(subtitle || "").replace(/\s+/g, " ").slice(0, 90))}</small></a>`;
   };
   const rows = [...group.sessions].sort((left, right) =>
     String(left.harness || "").localeCompare(String(right.harness || "")) ||
     sessKey(left).localeCompare(sessKey(right)));
-  return `<nav class="next-cockpit-session-nav" aria-label="Project sessions">` +
-    link("all", "All sessions", `${rows.length} sessions · project-wide evidence`) +
+  return `<nav class="next-cockpit-scope-tree" aria-label="Project scope">` +
+    '<span class="next-cockpit-scope-heading">SCOPE</span>' +
+    link("project", nextCockpitScopeLabel(group), "", `${rows.length} sessions · project`) +
     rows.map(session => {
       const harness = nextHarnessLabels().get(String(session.harness || "")) ||
         String(session.harness || "Session");
-      return link(sessKey(session), `${harness} · ${String(session.state || "unknown")}`,
+      return link(sessKey(session), harness, String(session.state || "unknown"),
         nextCockpitSessionResult(session));
     }).join("") + `</nav>`;
 }
@@ -124,8 +132,6 @@ function nextCockpitCaptainDecisionCounts(semantic){
 }
 
 function nextCockpitRecoveryOutcome(group, observation){
-  const local = nextCockpitReadFocus(group).trim();
-  if(local) return local;
   const discovery = observation && observation.workflow_discovery || {};
   const workflows = Array.isArray(discovery.workflows) ? discovery.workflows : [];
   if(discovery.state === "observed"){
@@ -292,16 +298,25 @@ function nextCockpitLoadContext(group, focus){
   });
 }
 
-function nextCockpitFocus(group){
-  const stableKey = nextCockpitStableKey(group);
-  const labelAlias = stableKey === group.label ? "" :
-    `<small>stable project key · ${esc(stableKey)} · label alias ${esc(group.label)}</small>`;
-  return '<section class="next-cockpit-focus" data-next-cockpit-focus>' +
-    '<header><span>FOCUS · THIS BROWSER</span>' + labelAlias + '</header>' +
-    `<textarea data-next-cockpit-focus-input data-next-cockpit-project="${esc(stableKey)}" ` +
-    `placeholder="What outcome should this project preserve?">${esc(nextCockpitReadFocus(group))}</textarea>` +
-    '<div><button type="button" data-next-cockpit-action="focus-save">save focus</button>' +
-    '<button type="button" data-next-cockpit-action="focus-clear">clear</button></div></section>';
+function nextCockpitMemoFields(group, focus, semantic){
+  const field = (kind, label, placeholder) => {
+    const key = nextCockpitMemoKey(group, focus, kind);
+    const state = nextCockpitMemoStates.get(key);
+    const cue = state === "error" ? "Browser storage unavailable" :
+      state === "saved" ? "Saved in this browser" : "Autosaves in this browser";
+    return `<label><span>HUMAN · ${label}</span>` +
+      `<textarea maxlength="${NEXT_COCKPIT_MEMO_LIMIT}" data-next-cockpit-memo-input ` +
+      `data-next-cockpit-memo-key="${esc(key)}" data-next-cockpit-memo-kind="${kind}" ` +
+      `placeholder="${esc(placeholder)}">${esc(nextCockpitReadMemo(key))}</textarea>` +
+      `<small data-next-cockpit-memo-cue="${kind}">${cue}</small></label>`;
+  };
+  const task = nextCockpitCurrentTask({semantic});
+  return '<section class="next-cockpit-memos" data-next-cockpit-memos>' +
+    '<header><strong>CAPTAIN MEMO</strong><span>Human-authored · current scope only</span></header>' +
+    '<div>' + field("outcome", "OUTCOME", "What result should this scope achieve?") +
+    field("focus", "FOCUS", "What are you concentrating on now?") + '</div>' +
+    `<p><strong>DERIVED</strong> · ${esc(task.label + " · " + task.stage)} · semantic evidence, never memo text</p>` +
+    '</section>';
 }
 
 function nextCockpitProjectScope(){
@@ -584,7 +599,8 @@ function nextCockpitPanel(context, focus, observation, commandAttention, status)
   if(tab === "now"){
     body = nextCockpitProjectScope() + status +
       nextCockpitRecoveryStrip(context.group, observation, commandAttention) +
-      nextCockpitNowState(observation) + nextCockpitFocus(context.group) +
+      nextCockpitNowState(observation) +
+      nextCockpitMemoFields(context.group, focus, nextCockpitSemantic(observation)) +
       nextCockpitActiveDelegation(context.group, observation) +
       '<div class="next-project-detail-layout"><main class="next-project-detail-main" data-next-project-main>' +
       `<div data-next-project-section="plan">${nextProjectPlanBlock(context)}</div>` +
@@ -631,8 +647,24 @@ function nextCockpitActionTarget(event){
 
 document.addEventListener("input", event => {
   const input = event.target && event.target.closest
-    ? event.target.closest("[data-next-cockpit-focus-input]") : null;
-  if(input) nextCockpitFocusDrafts.set(String(input.dataset.nextCockpitProject || ""), input.value);
+    ? event.target.closest("[data-next-cockpit-memo-input]") : null;
+  if(!input) return;
+  const key = String(input.dataset.nextCockpitMemoKey || "");
+  if(!key) return;
+  const value = nextCockpitBoundMemo(input.value);
+  input.value = value;
+  nextCockpitMemoDrafts.set(key, value);
+  try{
+    localStorage.setItem(key, value);
+    nextCockpitMemoStates.set(key, "saved");
+  }catch(_error){
+    nextCockpitMemoStates.set(key, "error");
+  }
+  const cue = input.parentElement && input.parentElement.querySelector
+    ? input.parentElement.querySelector(`[data-next-cockpit-memo-cue="${input.dataset.nextCockpitMemoKind}"]`)
+    : null;
+  if(cue) cue.textContent = nextCockpitMemoStates.get(key) === "saved"
+    ? "Saved in this browser" : "Browser storage unavailable";
 });
 
 document.addEventListener("click", event => {
@@ -646,19 +678,6 @@ document.addEventListener("click", event => {
     if(!group || !NEXT_PROJECT_TABS.includes(tab)) return;
     event.preventDefault();
     navigateNext({view:"project",project:group.label,focus:nextRoute.focus || null,tab});
-    return;
-  }
-  if(action === "focus-save" || action === "focus-clear"){
-    if(!group) return;
-    event.preventDefault();
-    const stableKey = nextCockpitStableKey(group);
-    const value = action === "focus-clear" ? "" : String(nextCockpitFocusDrafts.get(stableKey) || "").trim();
-    try{
-      if(value) localStorage.setItem(nextCockpitFocusKey(group), value);
-      else localStorage.removeItem(nextCockpitFocusKey(group));
-    }catch(_error){ /* the in-tab draft remains authoritative */ }
-    nextCockpitFocusDrafts.set(stableKey, value);
-    renderNext();
     return;
   }
   const key = String(target.dataset.arg || projectQuerySession || "");
