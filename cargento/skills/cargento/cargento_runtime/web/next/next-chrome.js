@@ -140,6 +140,7 @@ document.addEventListener("keydown", event => {
   const tag = event.target && String(event.target.tagName || "").toLowerCase();
   if(event.metaKey || event.ctrlKey || event.altKey) return;
   if(nextControlsHandleKeydown(event)) return;
+  if(nextCockpitHandleKeydown(event)) return;
   if(nextWorkstreamToggleTarget(event) && ["Enter", " ", "Spacebar"].includes(event.key)){
     event.preventDefault();
     nextWorkstreamToggle();

@@ -212,7 +212,41 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
 .next-guardrail-add-input{display:block;padding-top:10px}
 .next-guardrail-add-input small{display:block}
 .next-project-detail-empty{padding:24px;border:1px solid var(--line);color:var(--ink2);font-size:var(--fs-sm)}
-.next-project-detail-main>[data-next-project-section="cockpit"]{grid-column:1/-1;display:grid;gap:28px}
+.next-cockpit-task-subject{padding:22px 12px 14px;border-bottom:1px solid var(--line)}
+.next-cockpit-task-subject>span,.next-cockpit-now-state span{color:var(--ink3);font:var(--fs-2xs) var(--mono);letter-spacing:.08em}
+.next-cockpit-task-subject h2{margin:5px 0 0;font-size:var(--fs-xl);font-weight:600}
+.next-cockpit-task-subject h2 small{color:var(--ink2);font-size:inherit;font-weight:450}
+.next-cockpit-task-subject p{margin:5px 0 0;color:var(--ink3);font:var(--fs-2xs) var(--mono)}
+.next-cockpit-tabs{display:flex;gap:24px;border-bottom:1px solid var(--line2);padding:0 12px}
+.next-cockpit-tabs button{margin-bottom:-1px;padding:12px 1px 10px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--ink3);font:var(--fs-sm) var(--mono);cursor:pointer}
+.next-cockpit-tabs button[aria-selected="true"]{border-bottom-color:var(--accent-ink);color:var(--ink)}
+.next-cockpit-tabs button:focus-visible{outline:2px solid var(--accent-ink);outline-offset:3px}
+.next-cockpit-panel{min-width:0}
+.next-cockpit-now-state{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-bottom:1px solid var(--line)}
+.next-cockpit-now-state>div{min-width:0;padding:10px 12px;border-right:1px solid var(--line)}
+.next-cockpit-now-state>div:last-child{border-right:0}
+.next-cockpit-now-state strong,.next-cockpit-now-state small{display:block;margin-top:4px;overflow-wrap:anywhere}
+.next-cockpit-now-state strong{font-size:var(--fs-xs);font-weight:600}
+.next-cockpit-now-state small{color:var(--ink3);font-size:var(--fs-2xs)}
+.next-cockpit-active-delegation{padding:12px;border-top:1px solid var(--line2);border-bottom:1px solid var(--line)}
+.next-cockpit-active-delegation h2{margin:0 0 7px;color:var(--ink3);font:var(--fs-2xs) var(--mono);font-weight:400}
+.next-cockpit-active-delegation>strong{font-size:var(--fs-sm)}
+.next-cockpit-active-delegation>p{margin:0;color:var(--ink3);font-size:var(--fs-xs)}
+.next-cockpit-active-delegation details{margin-top:7px;color:var(--ink3);font:var(--fs-2xs) var(--mono)}
+.next-cockpit-active-delegation summary{cursor:pointer}
+.next-cockpit-active-delegation ul{margin:7px 0 0;padding-left:20px}
+.next-cockpit-active-delegation li{margin-top:5px}
+.next-cockpit-active-delegation li small{display:block;margin-top:2px}
+.next-cockpit-course{display:grid;gap:0;padding:12px}
+.next-course-episode{padding:13px 0;border-bottom:1px solid var(--line)}
+.next-course-episode>header span{color:var(--ink3);font:var(--fs-2xs) var(--mono);letter-spacing:.07em}
+.next-course-episode>strong{display:block;margin-top:5px;font-size:var(--fs-md);font-weight:600}
+.next-course-episode p,.next-course-episode ul{margin:6px 0 0;color:var(--ink2);font-size:var(--fs-sm);line-height:1.5}
+.next-course-episode ul{padding-left:20px}
+.next-course-evidence,.next-course-earlier{margin-top:7px;color:var(--ink3);font:var(--fs-2xs) var(--mono)}
+.next-course-evidence summary,.next-course-earlier>summary{cursor:pointer}
+.next-course-evidence div{margin-top:4px;overflow-wrap:anywhere}
+.next-course-earlier{margin:0 0 8px;padding-bottom:8px;border-bottom:1px solid var(--line2)}
 .next-cockpit-focus,.next-cockpit-semantic,.next-cockpit-terminal{border-top:1px solid var(--line2)}
 .next-cockpit-focus>header,.next-cockpit-semantic>h2,.next-cockpit-terminal>h2{margin:0;padding:12px 10px;border-bottom:1px solid var(--line);color:var(--ink3);font-family:var(--mono);font-size:var(--fs-2xs);font-weight:400}
 .next-cockpit-focus>header small{display:block;margin-top:5px;color:var(--ink3);font:inherit;text-transform:none;overflow-wrap:anywhere}
@@ -316,13 +350,12 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:o
   #app{padding:24px 18px 48px}
   .next-header,.next-header-right,.next-tabs-row{align-items:flex-start;flex-direction:column}
   .next-project-detail-header,.next-project-detail-layout{grid-template-columns:1fr}
-  .next-cockpit-recovery{grid-template-columns:1fr}
-  .next-cockpit-recovery>div{border-right:0;border-bottom:1px solid var(--line)}
-  .next-cockpit-recovery>div:last-child{border-bottom:0}
+  .next-cockpit-recovery,.next-cockpit-now-state{grid-template-columns:1fr}
+  .next-cockpit-recovery>div,.next-cockpit-now-state>div{border-right:0;border-bottom:1px solid var(--line)}
+  .next-cockpit-recovery>div:last-child,.next-cockpit-now-state>div:last-child{border-bottom:0}
   .next-project-detail-status{grid-column:1;grid-row:auto;text-align:left}
   .next-project-detail-main{grid-template-columns:1fr}
   [data-next-project-section="plan"],[data-next-project-section="workstream"]{grid-column:1}
-  .next-project-detail-main>[data-next-project-section="cockpit"]{grid-column:1}
   .next-project-detail-rail{min-height:0;border-top:1px solid var(--line);border-left:0;padding-top:24px;padding-left:0}
   .next-project-plan-row{grid-template-columns:20px minmax(150px,1fr)}
   .next-project-plan-owner,.next-project-plan-state{grid-column:2;text-align:left}

@@ -1628,9 +1628,11 @@ function projectUnboundContext(registry){
     "pc-trail-history pc-fo-context") + `</div>`;
 }
 
-function projectSemanticTimeline(d, model, workflowLanes, focus, sessionOrigins){
+function projectSemanticTimeline(d, model, workflowLanes, focus, sessionOrigins, options){
   const fullRegistry = projectLaneRegistry(model, workflowLanes, focus, sessionOrigins);
-  const mode = projectGraphModeBySession.get(String(projectQuerySession || "")) || "active";
+  const requestedMode = options && options.mode;
+  const mode = ["active", "all", "decisions"].includes(requestedMode)
+    ? requestedMode : projectGraphModeBySession.get(String(projectQuerySession || "")) || "active";
   const visibleRegistry = projectVisibleRegistry(fullRegistry, mode);
   const registry = fullRegistry;
   const events = projectGlobalEvents(model, fullRegistry, focus)
@@ -1654,7 +1656,8 @@ function projectSemanticTimeline(d, model, workflowLanes, focus, sessionOrigins)
   const earlier = earlierRows.length ? projectDisclosure("earlier-meaningful-events",
     `Earlier meaningful · ${earlierRows.length}`, earlierRows.join(""),
     "pc-history-band", ` data-activity-band="earlier-meaningful"`) : "";
-  const controls = `<div class="pc-graph-filter" role="group" aria-label="Work activity filter">` +
+  const controls = options && options.controls === false ? "" :
+    `<div class="pc-graph-filter" role="group" aria-label="Work activity filter">` +
     ["active", "all", "decisions"].map(value => `<button type="button" data-calm="project-graph-mode"` +
       ` data-arg="${value}" class="${mode === value ? "selected" : ""}"` +
       ` aria-pressed="${mode === value}">${value === "active" ? "Active" :

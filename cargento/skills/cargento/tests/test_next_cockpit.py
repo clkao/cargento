@@ -79,32 +79,167 @@ __fetchImpl = async url => ({ok: true, json: async () =>
     def test_upstream_project_detail_hosts_focus_semantics_and_no_duplicate_shell(self) -> None:
         out = self.run_fixture(
             """
+nextRoute = nextRouteFromFragment("#n=project:cargento:course");
+renderNext();
+await __settle();await __settle();
 const html = __els.app.innerHTML;
-const rows = [...html.matchAll(/<article class="pc-graph-row[\\s\\S]*?<\\/article>/g)]
+const rows = [...html.matchAll(/<article class="next-course-episode"[\\s\\S]*?<\\/article>/g)]
   .map(match => match[0]);
-console.log(JSON.stringify({html, order: rows.map(row =>
-  (row.match(/data-event-id="([^"]+)/) || [])[1]),
-  foSpan: rows.slice(0, 3).map(row => row.includes('data-flow-key="fo:codex:focus-1"')),
-  taskSpan: rows.slice(1, 4).map(row => row.includes(
-    'data-flow-key="task:workflow:project-cockpit"'))}));
+console.log(JSON.stringify({html, rows}));
 """
         )
         assert isinstance(out, dict)
         html = out["html"]
 
         self.assertIn('data-next-project-detail="cargento"', html)
-        self.assertIn("FOCUS · THIS BROWSER", html)
-        self.assertIn("SEMANTIC TIMELINE", html)
-        self.assertIn('data-next-cockpit-action="graph-mode"', html)
+        self.assertIn('data-next-cockpit-panel="course"', html)
+        self.assertIn("Project cockpit · User direction", html)
+        self.assertIn("Project cockpit · Observed work", html)
+        self.assertNotIn("FOCUS · THIS BROWSER", html)
+        self.assertNotIn("SEMANTIC TIMELINE", html)
+        self.assertNotIn('data-next-cockpit-action="graph-mode"', html)
         self.assertNotIn('data-calm="project-graph-mode"', html)
-        self.assertEqual(["fo-a", "task-a", "fo-b", "task-b", "gate-a"], out["order"])
-        self.assertEqual([True, True, True], out["foSpan"])
-        self.assertEqual([True, True, True], out["taskSpan"])
+        self.assertEqual(4, len(out["rows"]))
         self.assertNotIn("pc-project-tabs", html)
         self.assertNotIn("Other project sessions", html)
         self.assertNotIn("Evidence / limits", html)
         self.assertNotIn("data-branch-edge=", html)
         self.assertNotIn("data-merge-edge=", html)
+
+    def test_task_subject_and_four_tabs_own_one_operator_question_each(self) -> None:
+        out = self.run_fixture(
+            """
+const html = __els.app.innerHTML;
+const tabs = [...html.matchAll(/<button[^>]*role="tab"[^>]*>[\\s\\S]*?<\\/button>/g)]
+  .map(match => match[0]);
+const panel = (html.match(/<section[^>]*role="tabpanel"[\\s\\S]*?<\\/section>/) || [""])[0];
+console.log(JSON.stringify({html,tabs,panel}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("<h2>Project cockpit <small>· Shaping</small></h2>", out["html"])
+        self.assertEqual(4, len(out["tabs"]))
+        for label in ("Now", "Course", "Decisions", "Console"):
+            self.assertTrue(any(f">{label}</button>" in tab for tab in out["tabs"]))
+        self.assertTrue(
+            any('aria-selected="true"' in tab and ">Now</button>" in tab for tab in out["tabs"])
+        )
+        self.assertEqual(1, out["html"].count('role="tabpanel"'))
+        self.assertIn('data-next-cockpit-panel="now"', out["html"])
+        self.assertIn("FOCUS · THIS BROWSER", out["html"])
+        self.assertIn("OUTCOME", out["html"])
+        self.assertIn("CURRENT FOCUS · DERIVED", out["html"])
+        self.assertIn('data-next-project-section="plan"', out["html"])
+        self.assertIn('data-next-project-section="going-on"', out["html"])
+        self.assertIn("data-next-delegation", out["html"])
+        self.assertNotIn("SEMANTIC TIMELINE", out["html"])
+        self.assertNotIn('data-semantic-kind="decision"', out["html"])
+        self.assertNotIn("EXACT SESSION TERMINAL", out["html"])
+        self.assertNotIn('data-next-project-section="workstream"', out["html"])
+
+    def test_local_tab_permalink_and_arrow_keys_preserve_project_session_route(self) -> None:
+        out = self.run_fixture(
+            """
+const parsed = nextRouteFromFragment("#n=project:cargento:pi%3Api-idle:course");
+const roundTrip = nextFragmentForRoute(parsed);
+nextRoute = parsed;
+renderNext();
+await __settle();await __settle();
+const course = __els.app.innerHTML;
+const target = {dataset:{nextCockpitAction:"tab",arg:"course"},
+  closest(selector){ return selector === "[data-next-cockpit-action]" ? this : null; }};
+__fire("keydown", {target,key:"ArrowRight",preventDefault(){}});
+const afterKey = __els.app.innerHTML;
+console.log(JSON.stringify({parsed,roundTrip,course,afterKey,hash:location.hash}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual("pi:pi-idle", out["parsed"]["focus"])
+        self.assertEqual("course", out["parsed"]["tab"])
+        self.assertEqual("#n=project:cargento:pi%3Api-idle:course", out["roundTrip"])
+        self.assertIn('data-next-cockpit-panel="course"', out["course"])
+        self.assertIn('aria-selected="true" tabindex="0">Course</button>', out["course"])
+        self.assertIn('data-next-cockpit-panel="decisions"', out["afterKey"])
+        self.assertEqual("#n=project:cargento:pi%3Api-idle:decisions", out["hash"])
+
+    def test_console_waits_for_origin_lookup_then_opens_read_only_terminal(self) -> None:
+        out = self.run_fixture(
+            """
+__fetchImpl = async url => String(url).startsWith("/api/interaction/origin")
+  ? ({ok:true,json:async()=>({state:"registered",origin:{session_name:"Cargento",
+      window_index:1,pane_index:1},origin_id_hint:"origin-1"})})
+  : ({ok:true,json:async()=>({semantic:__semantic,child_assignments:[],observers:[]})});
+nextRoute = nextRouteFromFragment("#n=project:cargento:codex%3Afocus-1:console");
+renderNext();
+const pending = __els.app.innerHTML;
+await __settle();
+const available = __els.app.innerHTML;
+const open = {dataset:{nextCockpitAction:"terminal-open",arg:"codex:focus-1"},
+  closest(selector){ return selector === "[data-next-cockpit-action]" ? this : null; }};
+__fire("click", {target:open,preventDefault(){}});
+const opened = __els.app.innerHTML;
+console.log(JSON.stringify({pending,available,opened}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn('data-next-cockpit-panel="console"', out["pending"])
+        self.assertNotIn("Open terminal", out["pending"])
+        self.assertIn("Open terminal", out["available"])
+        self.assertIn("EXACT SESSION TERMINAL", out["available"])
+        self.assertIn("read-only", out["opened"])
+        self.assertIn('aria-label="Read-only terminal output"', out["opened"])
+        for html in out.values():
+            self.assertNotIn("CURRENT FOCUS · DERIVED", html)
+            self.assertNotIn("Project cockpit · User direction", html)
+            self.assertNotIn('data-semantic-kind="decision"', html)
+
+    def test_course_is_task_first_source_labeled_and_omits_future_history(self) -> None:
+        out = self.run_fixture(
+            """
+nextCockpitContexts.clear();
+const semantic = JSON.parse(JSON.stringify(__semantic));
+semantic.facts.push(
+  {fact_id:"review-result",at:102.5,type:"result",summary:"Review synthesis returned",
+    detail:"Review changed the course:\\n- Show task ownership, not lifecycle noise.\\n" +
+      "- Separate project overview from session evidence.\\n\\nFuture — proposed, not dispatched",
+    source_session:{harness:"codex",sid:"focus-1"},work_item_id:__task,
+    evidence:{source:"assistant final_answer followed by terminal turn state",confidence:"exact"}},
+  {fact_id:"live-result",at:102.4,type:"result",summary:"Fixed and live on port 8766.",
+    detail:"Fixed and live on port 8766.\\n\\nCheckpoint: `179a80d`.",
+    source_session:{harness:"codex",sid:"focus-1"},work_item_id:__task,
+    evidence:{source:"assistant final_answer followed by terminal turn state",confidence:"exact"}}
+);
+__fetchImpl = async url => ({ok:true,json:async() => ({semantic,
+  child_assignments:[{name:"Banach",workItemId:__task,source:"structured assignment"}],
+  observers:[]})});
+nextRoute = nextRouteFromFragment("#n=project:cargento:course");
+renderNext();
+await __settle();await __settle();await __settle();
+console.log(JSON.stringify({html:__els.app.innerHTML}));
+"""
+        )
+        assert isinstance(out, dict)
+        html = out["html"]
+
+        self.assertIn('data-next-cockpit-panel="course"', html)
+        self.assertIn("Project cockpit · User direction", html)
+        self.assertIn("EXACT INPUT", html)
+        self.assertIn("Project cockpit · Observed work", html)
+        self.assertIn("EXACT WORK", html)
+        self.assertIn("Project cockpit · Course change", html)
+        self.assertIn("DERIVED COURSE CHANGE", html)
+        self.assertIn("Show task ownership, not lifecycle noise.", html)
+        self.assertIn("Separate project overview from session evidence.", html)
+        self.assertIn("Banach", html)
+        self.assertIn("<details", html[: html.index("Banach")])
+        self.assertNotIn("Future", html)
+        self.assertNotIn("proposed, not dispatched", html)
+        self.assertIn("179a80d", html)
+        self.assertIn("<h2>Project cockpit <small>· Shaping</small></h2>", html)
+        self.assertNotIn("CURRENT FOCUS · DERIVED", html)
 
     def test_defaults_to_all_sessions_and_links_every_idle_peer(self) -> None:
         out = self.run_fixture(
@@ -130,7 +265,7 @@ console.log(JSON.stringify({html, query:[...nextCockpitContexts.keys()]}));
         out = self.run_fixture(
             """
 const html = __els.app.innerHTML;
-const task = (html.match(/<article[^>]*data-work-item="workflow:project-cockpit"[\\s\\S]*?<\\/article>/) || [""])[0];
+const task = (html.match(/<section[^>]*data-next-cockpit-active-delegation[\\s\\S]*?<\\/section>/) || [""])[0];
 console.log(JSON.stringify({html, task}));
 """
         )
@@ -138,9 +273,9 @@ console.log(JSON.stringify({html, task}));
 
         self.assertIn("Banach", out["task"])
         self.assertIn("Copernicus", out["task"])
-        self.assertIn('data-task-current="true"', out["task"])
+        self.assertIn("Project cockpit · 2 active assignments", out["task"])
+        self.assertIn('data-work-item="workflow:project-cockpit"', out["task"])
         self.assertIn('data-parent-session="codex:focus-1"', out["task"])
-        self.assertNotIn("No active worker · no return observed", out["task"])
 
     def test_session_switcher_is_below_header_and_outcome_first(self) -> None:
         out = self.run_fixture(
@@ -170,7 +305,11 @@ nextCockpitContexts.clear();
 const focused = {facts:[
   {fact_id:"task-focus",at:110,type:"prepared_dispatch",summary:"Opaque dispatch",
     source_session:{harness:"pi",sid:"pi-idle"},work_item_id:__task,
-    evidence:{source:"dispatch artifact",confidence:"exact"}}
+    evidence:{source:"dispatch artifact",confidence:"exact"}},
+  {fact_id:"gate-focus",at:109,type:"gate_decision",source_kind:"gate",
+    summary:"opaque-id · review · approve",scope:"project",by:"person:captain",
+    decision:"approve",stage:"review",application_state:"consumed",target_stage:"shaping",
+    work_item_id:__task,evidence:{source:"entity gate",confidence:"exact"}}
 ],work_items:[{work_item_id:__task,label:"opaque-id",kind:"workflow_item"}],
 relations:[],projections:{operator_intents:[],steering_episodes:[],trail_heads:[
   {work_item_id:__task,status:"prepared",latest_meaningful_event:"task-focus"}],
@@ -179,8 +318,7 @@ __fetchImpl = async url => ({ok:true,json:async() => ({
   semantic:String(url).includes("session=") ? focused : __semantic,
   child_assignments:[],observers:[]
 })});
-nextRoute = nextRouteFromFragment("#n=project:cargento:pi%3Api-idle");
-projectGraphModeBySession.set("pi:pi-idle", "all");
+nextRoute = nextRouteFromFragment("#n=project:cargento:pi%3Api-idle:decisions");
 renderNext();
 await __settle();await __settle();await __settle();
 const html=__els.app.innerHTML;
@@ -191,16 +329,13 @@ console.log(JSON.stringify({html,requests:[...nextCockpitContexts.keys()]}));
 
         self.assertTrue(any(key.endswith("\n") for key in out["requests"]))
         self.assertTrue(any(key.endswith("\npi:pi-idle") for key in out["requests"]))
-        self.assertIn("Project cockpit · review → shaping", out["html"])
         self.assertIn('data-object="Project cockpit"', out["html"])
         self.assertNotIn('data-object="Opaque id"', out["html"])
-        self.assertIn("PROJECT OVERVIEW", out["html"])
         self.assertIn("SESSION EVIDENCE", out["html"])
-        self.assertIn(
-            "Session selection filters Timeline and Terminal; project overview remains project-wide.",
-            out["html"],
-        )
-        self.assertIn(">All events</button>", out["html"])
+        self.assertIn("<h2>Project cockpit <small>· Shaping</small></h2>", out["html"])
+        self.assertIn('data-next-cockpit-panel="decisions"', out["html"])
+        self.assertNotIn("PROJECT OVERVIEW", out["html"])
+        self.assertNotIn("All events", out["html"])
 
     def test_session_permalink_selects_exact_focus_and_decisions_filter_is_present(self) -> None:
         out = self.run_fixture(
@@ -224,8 +359,9 @@ console.log(JSON.stringify({html, focus:nextCockpitFocusedSession(nextProjectGro
     def test_decisions_view_preserves_canonical_metadata_and_compacts_scan_line(self) -> None:
         out = self.run_fixture(
             """
-projectGraphModeBySession.set("", "decisions");
+nextRoute = nextRouteFromFragment("#n=project:cargento:decisions");
 renderNext();
+await __settle();await __settle();
 const html = __els.app.innerHTML;
 const rows = [...html.matchAll(/<article class="pc-graph-row[\\s\\S]*?<\\/article>/g)]
   .map(match => match[0]);

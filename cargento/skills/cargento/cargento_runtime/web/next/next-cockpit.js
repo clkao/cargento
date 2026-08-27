@@ -42,7 +42,8 @@ function nextCockpitSessionResult(session){
 function nextCockpitSessionNav(group, focus){
   const selected = focus ? sessKey(focus) : "all";
   const link = (key, label, subtitle) => {
-    const route = {view:"project", project:group.label, focus:key === "all" ? null : key};
+    const route = {view:"project",project:group.label,focus:key === "all" ? null : key,
+      tab:nextRoute && nextRoute.tab || "now"};
     return `<a href="${esc(nextFragmentForRoute(route))}" data-next-cockpit-session="${esc(key)}"` +
       (selected === key ? ` aria-current="page"` : "") + `>` +
       `<strong>${esc(label)}</strong>` +
@@ -306,7 +307,7 @@ function nextCockpitFocus(group){
 function nextCockpitProjectScope(){
   return '<section class="next-cockpit-scope next-cockpit-scope--project">' +
     '<strong>PROJECT OVERVIEW</strong>' +
-    '<span>Session selection filters Timeline and Terminal; project overview remains project-wide.</span>' +
+    '<span>Session selection filters Course, Decisions, and Console; Now remains project-wide.</span>' +
     '</section>';
 }
 
@@ -317,7 +318,201 @@ function nextCockpitEvidenceScope(focus){
     `<strong>SESSION EVIDENCE</strong><span>${esc(selected)}</span></header>`;
 }
 
-function nextCockpitTimeline(group, focus){
+function nextCockpitSemantic(observation){
+  return observation && observation.semantic || {facts:[],work_items:[],projections:{}};
+}
+
+function nextCockpitCurrentTask(observation){
+  const semantic = nextCockpitSemantic(observation);
+  const items = new Map((semantic.work_items || []).map(item =>
+    [String(item.work_item_id || ""), item]));
+  const heads = semantic.projections && Array.isArray(semantic.projections.trail_heads)
+    ? semantic.projections.trail_heads : [];
+  const head = heads.find(row => row && row.status === "current stage") ||
+    heads.find(row => row && row.stage) || null;
+  const item = head && items.get(String(head.work_item_id || ""));
+  const fallback = (semantic.work_items || []).find(row => row && row.kind === "workflow_item");
+  return {
+    id:String(head && head.work_item_id || fallback && fallback.work_item_id || ""),
+    label:nextCockpitHumanLabel(item && item.label || fallback && fallback.label || "Project work"),
+    stage:nextCockpitHumanLabel(head && head.stage || "state unavailable"),
+  };
+}
+
+function nextCockpitTaskSubject(observation){
+  const task = nextCockpitCurrentTask(observation);
+  return '<section class="next-cockpit-task-subject" data-next-cockpit-task-subject ' +
+    `data-work-item="${esc(task.id)}"><span>CURRENT TASK</span>` +
+    `<h2>${esc(task.label)} <small>· ${esc(task.stage)}</small></h2>` +
+    '<p>Task and stage come from exact workflow evidence.</p></section>';
+}
+
+function nextCockpitTabList(){
+  const selected = NEXT_PROJECT_TABS.includes(nextRoute && nextRoute.tab)
+    ? nextRoute.tab : "now";
+  return '<nav class="next-cockpit-tabs" role="tablist" aria-label="Project cockpit views">' +
+    NEXT_PROJECT_TABS.map(tab => {
+      const label = nextCockpitHumanLabel(tab);
+      const current = tab === selected;
+      return `<button type="button" role="tab" data-next-cockpit-action="tab" ` +
+        `data-arg="${tab}" aria-controls="next-cockpit-panel-${tab}" ` +
+        `aria-selected="${current}" tabindex="${current ? 0 : -1}">${label}</button>`;
+    }).join("") + '</nav>';
+}
+
+function nextCockpitLatestCompletedResult(semantic){
+  const results = (semantic.facts || []).filter(fact => fact && fact.type === "result")
+    .sort((left, right) => Number(right.at || 0) - Number(left.at || 0));
+  for(const fact of results){
+    const detail = String(fact.detail || fact.summary || "");
+    const firstLine = detail.trimStart().split(/\r?\n/, 1)[0];
+    if(!/^(?:fixed|completed|done)\b.*\blive\b/i.test(firstLine)) continue;
+    const checkpoint = detail.match(/(?:checkpoint\s*:?\s*|\bat\s+)`?([0-9a-f]{7,40})`?/i);
+    if(checkpoint) return {fact,checkpoint:checkpoint[1]};
+  }
+  return null;
+}
+
+function nextCockpitNowState(observation){
+  const semantic = nextCockpitSemantic(observation);
+  const task = nextCockpitCurrentTask(observation);
+  const completed = nextCockpitLatestCompletedResult(semantic);
+  const result = completed
+    ? `<div><span>COMPLETED RESULT · EXACT</span><strong>${esc(completed.checkpoint)}</strong>` +
+      `<small>${esc(completed.fact.summary || "Exact returned result")}</small></div>`
+    : '<div><span>COMPLETED RESULT</span><strong>No completed result observed</strong></div>';
+  return '<section class="next-cockpit-now-state" aria-label="Current task state">' +
+    `<div><span>CURRENT · EXACT WORKFLOW STATE</span><strong>${esc(task.label + " · " + task.stage)}</strong></div>` +
+    '<div><span>CURRENT FOCUS · DERIVED</span><strong>Browser-local operator interpretation</strong></div>' +
+    result + '</section>';
+}
+
+function nextCockpitActiveDelegation(group, observation){
+  const task = nextCockpitCurrentTask(observation);
+  const delegationGroup = {label:nextCockpitStableKey(group)};
+  const lanes = group.sessions.flatMap(session => projectDelegationLanes(session, delegationGroup));
+  if(!lanes.length){
+    return '<section class="next-cockpit-active-delegation"><h2>ACTIVE DELEGATION</h2>' +
+      '<p>No active task delegation observed.</p></section>';
+  }
+  const rows = lanes.map(lane => `<li data-work-item="${esc(lane.workItemId || "")}" ` +
+    `data-parent-session="${esc(lane.parentSession || "")}"><strong>${esc(lane.worker)}</strong> · ` +
+    `${esc(lane.assignment)}<small>${esc(lane.source || "source unavailable")}</small></li>`).join("");
+  return '<section class="next-cockpit-active-delegation" data-next-cockpit-active-delegation>' +
+    '<h2>ACTIVE DELEGATION</h2>' +
+    `<strong>${esc(task.label)} · ${lanes.length} active ` +
+    `${lanes.length === 1 ? "assignment" : "assignments"}</strong>` +
+    `<details><summary>${lanes.length} ${lanes.length === 1 ? "contributor" : "contributors"}</summary>` +
+    `<ul>${rows}</ul></details></section>`;
+}
+
+function nextCockpitReviewFindings(detail){
+  const lines = String(detail || "").split(/\r?\n/);
+  let collecting = false;
+  const findings = [];
+  for(const raw of lines){
+    const line = raw.replace(/^\s*\d+\.\s*/, "").replace(/\*\*/g, "").trim();
+    if(/^review changed the course\s*:/i.test(line)){
+      collecting = true;
+      continue;
+    }
+    if(!collecting) continue;
+    const bullet = line.match(/^[-*]\s+(.+)/);
+    if(bullet){ findings.push(bullet[1].trim()); continue; }
+    if(line) break;
+  }
+  return findings;
+}
+
+function nextCockpitCourseEvidence(fact, contributors){
+  const evidence = fact.evidence || {};
+  const names = contributors.length
+    ? `<div><b>Contributors</b> · ${esc(contributors.join(" · "))}</div>` : "";
+  return '<details class="next-course-evidence"><summary>Evidence</summary>' +
+    `<div><b>Source</b> · ${esc(evidence.source || fact.source_kind || "source unavailable")} · ` +
+    `${esc(evidence.confidence || "confidence unavailable")}</div>` +
+    `<div><b>Fact</b> · ${esc(fact.fact_id || "identity unavailable")}</div>${names}</details>`;
+}
+
+function nextCockpitCourseRow(episode){
+  const body = episode.findings && episode.findings.length
+    ? `<ul>${episode.findings.map(finding => `<li>${esc(finding)}</li>`).join("")}</ul>`
+    : `<p>${esc(episode.summary)}</p>`;
+  return `<article class="next-course-episode" data-epistemic-kind="${esc(episode.epistemic)}">` +
+    `<header><span>${esc(episode.badge)}</span></header>` +
+    `<strong>${esc(episode.task + " · " + episode.label)}</strong>${body}` +
+    nextCockpitCourseEvidence(episode.fact, episode.contributors || []) + '</article>';
+}
+
+function nextCockpitCourseEpisodes(semantic, lanes){
+  const items = new Map((semantic.work_items || []).map(item =>
+    [String(item.work_item_id || ""), nextCockpitHumanLabel(item.label)]));
+  const current = nextCockpitCurrentTask({semantic});
+  const taskFor = fact => items.get(String(fact.work_item_id || "")) || current.label;
+  const intentIds = new Set((semantic.projections && semantic.projections.operator_intents || [])
+    .map(row => String(row && row.derived_from || "")).filter(Boolean));
+  const contributorNames = fact => [...new Set((lanes || []).filter(lane =>
+    !fact.work_item_id || String(lane.workItemId || "") === String(fact.work_item_id))
+    .map(lane => String(lane.worker || "")).filter(Boolean))];
+  const episodes = [];
+  const used = new Set();
+  const results = (semantic.facts || []).filter(fact => fact && fact.type === "result")
+    .sort((left, right) => Number(right.at || 0) - Number(left.at || 0));
+  const review = results.find(fact => nextCockpitReviewFindings(fact.detail).length);
+  if(review){
+    used.add(String(review.fact_id || ""));
+    episodes.push({at:Number(review.at || 0),fact:review,task:taskFor(review),
+      label:"Course change",badge:"DERIVED COURSE CHANGE",epistemic:"derived-course-change",
+      findings:nextCockpitReviewFindings(review.detail),contributors:contributorNames(review)});
+  }else{
+    const unavailable = results.find(fact => /\breview\b/i.test(String(fact.summary || fact.detail || "")));
+    if(unavailable){
+      used.add(String(unavailable.fact_id || ""));
+      episodes.push({at:Number(unavailable.at || 0),fact:unavailable,task:taskFor(unavailable),
+        label:"Course change",badge:"DERIVED COURSE CHANGE",epistemic:"derived-course-change",
+        summary:"Review outcome unavailable from collected result detail.",
+        contributors:contributorNames(unavailable)});
+    }
+  }
+  const lifecycle = new Set();
+  for(const fact of semantic.facts || []){
+    if(!fact || fact.type === "gate_decision" || used.has(String(fact.fact_id || ""))) continue;
+    if(fact.type === "user_message"){
+      if(fact.intent_promoted !== true && !intentIds.has(String(fact.fact_id || ""))) continue;
+      episodes.push({at:Number(fact.at || 0),fact,task:taskFor(fact),label:"User direction",
+        badge:"EXACT INPUT",epistemic:"exact-input",summary:String(fact.summary || "Direction unavailable")});
+      continue;
+    }
+    if(!["prepared_dispatch", "stage_transition", "result"].includes(fact.type)) continue;
+    const lifecycleKey = fact.type === "result" ? String(fact.fact_id || "") :
+      `${fact.type}\n${String(fact.work_item_id || "")}\n${String(fact.stage || fact.source_kind || "")}`;
+    if(lifecycle.has(lifecycleKey)) continue;
+    lifecycle.add(lifecycleKey);
+    const completed = fact.type === "result"
+      ? nextCockpitLatestCompletedResult({facts:[fact]}) : null;
+    const summary = String(fact.summary || fact.stage || "Work observed") +
+      (completed ? ` · checkpoint ${completed.checkpoint}` : "");
+    episodes.push({at:Number(fact.at || 0),fact,task:taskFor(fact),label:"Observed work",
+      badge:"EXACT WORK",epistemic:"exact-work",summary,
+      contributors:contributorNames(fact)});
+  }
+  return episodes.sort((left, right) => left.at - right.at);
+}
+
+function nextCockpitCourse(group, semantic, lanes){
+  const episodes = nextCockpitCourseEpisodes(semantic, lanes);
+  if(!episodes.length){
+    return '<p class="next-cockpit-empty">No source-backed course-changing episodes observed.</p>';
+  }
+  const visible = episodes.slice(-8);
+  const earlier = episodes.slice(0, -8);
+  const disclosure = earlier.length ? '<details class="next-course-earlier"><summary>' +
+    `${earlier.length} Earlier</summary>${earlier.map(nextCockpitCourseRow).join("")}</details>` : "";
+  return `<div class="next-cockpit-course" data-next-cockpit-course>${disclosure}` +
+    visible.map(nextCockpitCourseRow).join("") + '</div>';
+}
+
+function nextCockpitTimeline(group, focus, mode = "active"){
   const key = nextCockpitContextKey(group, focus);
   const entry = nextCockpitContexts.get(key);
   const projectEntry = nextCockpitContexts.get(nextCockpitContextKey(group, null));
@@ -338,10 +533,38 @@ function nextCockpitTimeline(group, focus){
     group,
     entry.data.semantic || {facts:[], work_items:[], projections:{}},
   );
-  const timeline = projectSemanticTimeline(nextData, semantic, lanes, focus, group.sessions)
+  if(mode === "decisions" && !(semantic.facts || []).some(fact =>
+    fact && fact.type === "gate_decision" && fact.by === "person:captain")){
+    return '<section class="next-cockpit-semantic" data-next-cockpit-semantic>' +
+      '<h2>CAPTAIN DECISIONS</h2>' +
+      '<p class="next-cockpit-empty">No explicit captain decisions observed.</p></section>';
+  }
+  const timeline = projectSemanticTimeline(nextData, semantic, lanes, focus, group.sessions,
+    mode === "decisions" ? {mode:"decisions",controls:false} : null)
     .replaceAll('data-calm="project-graph-mode"', 'data-next-cockpit-action="graph-mode"');
   return '<section class="next-cockpit-semantic" data-next-cockpit-semantic>' +
-    '<h2>SEMANTIC TIMELINE</h2>' + timeline + '</section>';
+    `<h2>${mode === "decisions" ? "CAPTAIN DECISIONS" : "SEMANTIC TIMELINE"}</h2>` +
+    timeline + '</section>';
+}
+
+function nextCockpitCoursePanel(group, focus){
+  const key = nextCockpitContextKey(group, focus);
+  const entry = nextCockpitContexts.get(key);
+  const projectEntry = nextCockpitContexts.get(nextCockpitContextKey(group, null));
+  nextCockpitLoadContext(group, focus);
+  if(!entry || !entry.data || focus && (!projectEntry || !projectEntry.data)){
+    const failed = entry && entry.error || focus && projectEntry && projectEntry.error;
+    return `<p class="next-cockpit-empty">${failed ? "Course evidence unavailable." :
+      "Loading course evidence…"}</p>`;
+  }
+  const delegationGroup = {label:nextCockpitStableKey(group)};
+  const lanes = focus ? projectDelegationLanes(focus, delegationGroup) :
+    group.sessions.flatMap(session => projectDelegationLanes(session, delegationGroup));
+  const semantic = nextCockpitCanonicalSemantic(
+    group,
+    entry.data.semantic || {facts:[],work_items:[],projections:{}},
+  );
+  return nextCockpitCourse(group, semantic, lanes);
 }
 
 function nextCockpitTerminal(group, focus){
@@ -355,14 +578,40 @@ function nextCockpitTerminal(group, focus){
     '</section>';
 }
 
-function nextProjectCockpit(context){
+function nextCockpitPanel(context, focus, observation, commandAttention, status){
+  const tab = NEXT_PROJECT_TABS.includes(nextRoute && nextRoute.tab) ? nextRoute.tab : "now";
+  let body = "";
+  if(tab === "now"){
+    body = nextCockpitProjectScope() + status +
+      nextCockpitRecoveryStrip(context.group, observation, commandAttention) +
+      nextCockpitNowState(observation) + nextCockpitFocus(context.group) +
+      nextCockpitActiveDelegation(context.group, observation) +
+      '<div class="next-project-detail-layout"><main class="next-project-detail-main" data-next-project-main>' +
+      `<div data-next-project-section="plan">${nextProjectPlanBlock(context)}</div>` +
+      `<div data-next-project-section="going-on">${nextProjectGoingOn(context, commandAttention)}</div>` +
+      `<div data-next-project-section="done">${nextProjectDone(context)}</div></main>` +
+      '<aside class="next-project-detail-rail" data-next-project-rail>' +
+      `${nextProjectDelegation(context)}${nextProjectControls(context)}</aside></div>`;
+  }else if(tab === "course"){
+    body = nextCockpitEvidenceScope(focus) + nextCockpitCoursePanel(context.group, focus);
+  }else if(tab === "decisions"){
+    body = nextCockpitEvidenceScope(focus) + nextCockpitTimeline(context.group, focus, "decisions");
+  }else{
+    body = nextCockpitEvidenceScope(focus) + (focus
+      ? nextCockpitTerminal(context.group, focus)
+      : '<p class="next-cockpit-empty">Select one exact session to open its read-only console.</p>');
+  }
+  return `<section class="next-cockpit-panel" id="next-cockpit-panel-${tab}" role="tabpanel" ` +
+    `data-next-cockpit-panel="${tab}" aria-label="${nextCockpitHumanLabel(tab)}">${body}</section>`;
+}
+
+function nextProjectCockpit(context, observation, commandAttention, status){
   const group = context.group;
   const focus = nextCockpitFocusedSession(group);
   projectQuerySession = focus ? sessKey(focus) : "";
   lastData = nextData;
-  return nextCockpitFocus(group) + nextCockpitEvidenceScope(focus) +
-    nextCockpitTimeline(group, focus) +
-    nextCockpitTerminal(group, focus);
+  return nextCockpitTaskSubject(observation) + nextCockpitTabList() +
+    nextCockpitPanel(context, focus, observation, commandAttention, status);
 }
 
 function nextCockpitBeforeRender(){
@@ -392,6 +641,13 @@ document.addEventListener("click", event => {
   const action = String(target.dataset.nextCockpitAction || "");
   const group = nextRoute.view === "project"
     ? nextProjectGroups().find(candidate => candidate.label === nextRoute.project) : null;
+  if(action === "tab"){
+    const tab = String(target.dataset.arg || "");
+    if(!group || !NEXT_PROJECT_TABS.includes(tab)) return;
+    event.preventDefault();
+    navigateNext({view:"project",project:group.label,focus:nextRoute.focus || null,tab});
+    return;
+  }
   if(action === "focus-save" || action === "focus-clear"){
     if(!group) return;
     event.preventDefault();
@@ -428,3 +684,18 @@ document.addEventListener("click", event => {
     projectTerminalScrollToLive();
   }
 });
+
+function nextCockpitHandleKeydown(event){
+  const target = nextCockpitActionTarget(event);
+  if(!target || String(target.dataset.nextCockpitAction || "") !== "tab") return false;
+  if(!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return false;
+  const current = String(target.dataset.arg || "now");
+  const index = Math.max(0, NEXT_PROJECT_TABS.indexOf(current));
+  const next = event.key === "Home" ? 0 : event.key === "End" ? NEXT_PROJECT_TABS.length - 1 :
+    (index + (event.key === "ArrowRight" ? 1 : -1) + NEXT_PROJECT_TABS.length) %
+      NEXT_PROJECT_TABS.length;
+  event.preventDefault();
+  navigateNext({view:"project",project:nextRoute.project,focus:nextRoute.focus || null,
+    tab:NEXT_PROJECT_TABS[next]});
+  return true;
+}
