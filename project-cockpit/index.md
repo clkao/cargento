@@ -522,3 +522,27 @@ Cycle 17 removes the layered dashboard from Now and gives each secondary mechani
 ### Summary
 
 Cycle 18 corrects the Round-1 truthfulness failure without adding another surface: unknown workflow task identity is visibly unobserved, while exact working-session activity remains visible as a separate fact. The four-region, low-text Now briefing, scope grammar, content-tab ownership, exact-scope memos, and read-only root console remain intact. Checkpoint `02e37c8` is live on 8766 with the exact root terminal renewed read-only; candidate 8767 is stopped and the correction is ready for first-officer review.
+
+## Stage Report: shaping (cycle 19)
+
+- DONE: Selected-session views explicitly distinguish project task/project-wide briefing facts from the viewing-session filter, including a compact narrow scope switcher rather than the full tree above content.
+  Commit `1b78d7bb562c16231e0f6734194a00a01838a7e2` adds one PROJECT cue to the known/unobserved workflow-task subject, Needs you, and Active work; selected views add `Viewing session · Codex · working`, while the 760px contract hides the wide tree and exposes a selected-scope `Change scope` disclosure containing exact project/session links.
+- DONE: Course defaults to source-backed course changes; exact directions that did not change course are preserved in one collapsed disclosure rather than becoming equal primary episodes.
+  The failing 16-direction/zero-change regression now has zero primary episodes and one chronological `Other directions (16)` disclosure with source evidence; stage changes, decisions, completed checkpoint results, paired adaptations, and review findings remain primary, and a paired-direction test fails on either duplication or loss.
+- DONE: Closed human memos visibly remain browser-local, and stale exact-session permalinks render an explicit outside-window state instead of silently falling back to project scope.
+  Closed Outcome/Focus always says `This browser only`; removing the selected session from the payload preserves `#n=project:cargento:pi%3Api-idle:course`, renders `Session filter is outside this payload window` plus a tab-preserving project-root link, and emits no project memo or Course panel.
+- DONE: Preserve the four-region subtraction, task truthfulness, scope grammar, exact memo isolation, and four content-tab ownership.
+  All 179 Next tests and 228 shared page/project/context/snapshot tests pass; Ruff, format, strict mypy over 116 files, embedded JS/CSS lint, plugin validation, byte oracles, and diff checks pass, including a 54-test cockpit/page group that fails if the new IA surfaces regress.
+- DONE: Exercise the exact live payload across project/session × Now/Course/Decisions/Console before swapping the stable server.
+  All eight states rendered the requested panel with PROJECT task ownership and no stale fallback; live Now retained four regions at 33 project / 34 session visible words, exact memo owners, and persistent browser-only copy, while both Course views rendered zero primary episodes and a collapsed `Other directions (17)` for the current exact payload.
+- DONE: Record the captain feedback, resulting criterion, and accepted interaction.
+  The Round-2 authorized correction identified missing shared-scope ownership, direction-heavy Course, mobile tree dominance, hidden persistence limits, and silent stale-route fallback; the accepted criterion was explicit project/session IA without promoting the session to task subject or adding another primary Now region, and this served checkpoint implements that dispatched interaction.
+- DONE: Serve the isolated checkpoint and preserve the exact read-only interaction origin.
+  Candidate 8767 served 392,214 bytes at SHA-256 `5f7b190a6b3a95c1ade16368af3da56b60f647b33846520212601a388b301284`, passed the exact matrix, and is stopped. Stable `http://127.0.0.1:8766/?next=true#n=project:spacedock-research%2Fcargento` runs PID `93831` with the same bytes and digest.
+  Exact root `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` is registered at tmux `$4/@4/%10`, stream connected, `read-only-control-stream`, keyboard input `not-exposed`, through renewal client `@19/%73` created only after the new one-use registration file existed.
+- DONE: Preserve the authorized prototype-only boundary.
+  The code commit remains local to `spacedock-ensign/project-cockpit`; no code ref was pushed or integrated, no version field changed, and `.spacedock/dev` was neither read nor mutated.
+
+### Summary
+
+Cycle 19 makes scope and ownership explicit without undoing the compact Now briefing: project-wide facts name their project scope, a selected session remains a filter, and mobile users get a compact scope disclosure. Course now separates source-backed changes from retrievable exact directions, while browser-local memos and stale session permalinks state their limits honestly. Checkpoint `1b78d7b` is live on 8766 with the exact root console renewed read-only and is ready for the next review round.
