@@ -500,3 +500,25 @@ Cycle 16 makes scope legible through one structural grammar rather than repeated
 ### Summary
 
 Cycle 17 removes the layered dashboard from Now and gives each secondary mechanism one owner, leaving a four-region command briefing whose exact live payload is under one seventh of the failing screenshot fixture's text. Human memos remain exact-scope and edit-on-demand, captain attention is truthful, active work rejects unavailable assignments, and all retained detail is reachable through Course, Decisions, Console, or disclosure. Checkpoint `f673d04` is live on 8766 with the exact root terminal renewed read-only; the candidate is stopped and the unrelated baseline suite failures are recorded rather than hidden.
+
+## Stage Report: shaping (cycle 18)
+
+- DONE: Missing semantic task identity is now explicitly unobserved instead of being replaced with an invented current task.
+  Commit `02e37c8f0f3a7096dededc81b1b52fe709b58f05` requires an exact matching work-item ID, label, and trail-head stage before rendering `CURRENT TASK`; otherwise Now renders `WORKFLOW TASK` / `Not observed`, omits the task identity attribute, and never emits `Project work`, `State unavailable`, or an empty `data-work-item`.
+- DONE: Observed session activity remains independent of workflow-task identity.
+  An exact working session without an exact task binding renders `Work is active` with its measured `running 1 subagent · Codex` detail; `Current task is active` is reserved for a non-empty matching session work-item binding, and an unassigned child is neither promoted nor named.
+- DONE: The scope tree removes duplicated state text while retaining one useful exact activity detail and correct plurality.
+  The live root appears once as `working` with `running 1 subagent` beneath it, and the project root says `1 session`; empty or state-duplicating subtitles are omitted rather than replaced with another fallback label.
+- DONE: The exact Round-1 live-shape falsifier preserves the cycle-17 subtraction and phone-width tab ownership.
+  A working untitled Codex root, one unassigned child, and empty semantic `work_items` / `trail_heads` render four primary Now regions and 27 visible words, with no invented task/current-task wording, empty task identity, unavailable assignment, or contributor promoted as subject. A 420px contract fixes the four content tabs to equal min-width columns without overflow or pill styling.
+- DONE: Focused renderer and static gates pass before the stable swap.
+  All 175 Next tests and 228 shared page/project/context/snapshot tests pass; Ruff, format, strict mypy over 116 files, embedded JS/CSS lint, plugin validation, byte oracles, and diff checks pass. The initial validator invocation used a system Python without PyYAML; the repository virtual environment completed the validator successfully.
+- DONE: The isolated candidate and served checkpoint match the committed bytes, with the exact read-only origin restored after the controlled swap.
+  Candidate 8767 served 387,068 bytes at SHA-256 `499c360b15c9af3d9671e0997b9705231489bf2d5e6c0f00b13e4ce471c631d2` and proved the empty semantic payload plus exact working-state DOM before it was stopped.
+  Stable `http://127.0.0.1:8766/?next=true#n=project:spacedock-research%2Fcargento` runs PID `18543` with the same bytes and digest. Exact root `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` is registered at tmux `$4/@4/%10`, stream connected, `read-only-control-stream`, keyboard input `not-exposed`; post-start renewal client `@18/%70` replaced a waiting client whose pre-stop registration deadline expired during shutdown.
+- DONE: Preserve the authorized prototype-only boundary.
+  The code commit remains local to `spacedock-ensign/project-cockpit`; no code ref was pushed or integrated, no version field changed, and `.spacedock/dev` was neither read nor mutated.
+
+### Summary
+
+Cycle 18 corrects the Round-1 truthfulness failure without adding another surface: unknown workflow task identity is visibly unobserved, while exact working-session activity remains visible as a separate fact. The four-region, low-text Now briefing, scope grammar, content-tab ownership, exact-scope memos, and read-only root console remain intact. Checkpoint `02e37c8` is live on 8766 with the exact root terminal renewed read-only; candidate 8767 is stopped and the correction is ready for first-officer review.
