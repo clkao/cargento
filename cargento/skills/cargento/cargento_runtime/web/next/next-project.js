@@ -192,16 +192,13 @@ function nextProjectDetailHeader(context){
   if(context.plans.length){
     const unhealthy = nextProjectUnhealthyCount(context.plans);
     const entityLabel = `${unhealthy} ${unhealthy === 1 ? "entity" : "entities"} unhealthy`;
-    health = '<span class="next-project-detail-divider" aria-hidden="true">|</span>' +
-      `<span>${esc(entityLabel)} — <span data-next-withheld>estimate withheld</span></span>`;
+    health = `<div class="next-project-detail-status"><span>${esc(entityLabel)} — ` +
+      '<span data-next-withheld>estimate withheld</span></span></div>';
   }
   return '<header class="next-project-detail-header">' +
     `<div><span class="next-project-detail-label">project</span>` +
     `<h1 class="next-project-detail-name">${esc(context.group.label)}</h1>${workflows}</div>` +
-    last + collision +
-    '<div class="next-project-detail-status">' +
-    `<span data-next-withheld>${nextWithheldLine("no estimate left", "no confidence")}</span>` +
-    `${health}</div>` +
+    last + collision + health +
     '</header>';
 }
 

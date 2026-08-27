@@ -158,11 +158,11 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         self.assertIsNotNone(status)
         status_html = status.group(0) if status else ""
         self.assertIn(
-            "no estimate left · no confidence</span>"
-            '<span class="next-project-detail-divider" aria-hidden="true">|</span>'
-            "<span>2 entities unhealthy — <span data-next-withheld>estimate withheld",
+            "2 entities unhealthy — <span data-next-withheld>estimate withheld",
             status_html,
         )
+        self.assertNotIn("no estimate left", status_html)
+        self.assertNotIn("no confidence", status_html)
 
     def test_the_unhealthy_entity_label_uses_the_singular(self) -> None:
         html = self.render(
