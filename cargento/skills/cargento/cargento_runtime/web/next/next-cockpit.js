@@ -409,12 +409,14 @@ function nextCockpitRecoveryActive(group){
 }
 
 function nextCockpitLatestSessionResult(group){
-  const outputs = group.sessions.map(session => ({
-    summary:typeof session.last_output === "string" ? session.last_output.trim() : "",
-    at:Number(session.last_activity) || 0,
-    source_session:{harness:String(session.harness || ""),sid:String(session.sid || "")},
-    evidence:{source:"attributable session output",confidence:"uncertain"},
-  })).filter(result => result.summary && result.source_session.harness && result.source_session.sid)
+  const outputs = group.sessions.map(session => {
+    const summary = typeof session.last_output === "string" ? session.last_output.trim() : "";
+    const firstLine = summary.split(/\r?\n/).map(line => line.trim()).find(Boolean) || "";
+    const display = firstLine.length > 180 ? firstLine.slice(0, 177).trimEnd() + "…" : firstLine;
+    return {summary,display,at:Number(session.last_activity) || 0,
+      source_session:{harness:String(session.harness || ""),sid:String(session.sid || "")},
+      evidence:{source:"attributable session output",confidence:"uncertain"}};
+  }).filter(result => result.summary && result.source_session.harness && result.source_session.sid)
     .sort((left, right) => right.at - left.at);
   return outputs[0] || null;
 }
@@ -536,7 +538,8 @@ function nextCockpitRecoveryStrip(group, observation, commandAttention){
   const copyLabel = copyState === "copied" ? "Copied" :
     copyState === "error" ? "Copy unavailable" : "Copy briefing";
   const direction = briefing.latest.direction ? briefing.latest.direction.summary : "Not observed";
-  const result = briefing.latest.result ? briefing.latest.result.summary :
+  const result = briefing.latest.result ? briefing.latest.result.display ||
+    briefing.latest.result.summary :
     "Result evidence not captured";
   const exactLabel = briefing.latest.stale ? "ACTIONABLE DIRECTION · STALE CACHED" :
     "LATEST ACTIONABLE DIRECTION";

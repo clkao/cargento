@@ -1294,7 +1294,7 @@ console.log(JSON.stringify({text:briefing.text,
         out = self.run_fixture(
             """
 const group=nextProjectGroups()[0];
-group.sessions[0].last_output="Candidate verification completed";
+group.sessions[0].last_output="Candidate verification completed\\n\\nDetailed verification transcript";
 group.sessions[0].last_activity=120;
 const semantic=JSON.parse(JSON.stringify(__semantic));
 semantic.facts=semantic.facts.filter(fact=>fact.type!=="result");
@@ -1313,12 +1313,14 @@ console.log(JSON.stringify({text:briefing.text,
             self.assertIn("latest session result", value.casefold())
         self.assertIn("codex:focus-1", out["text"])
         self.assertIn("session output; semantic result not captured", out["text"])
+        self.assertIn("Detailed verification transcript", out["text"])
         start = out["html"].index("LATEST ACTIONABLE DIRECTION")
         disclosure = out["html"].find("<details", start)
         self.assertGreater(disclosure, start)
         primary = out["html"][start:disclosure]
         evidence = out["html"][disclosure : out["html"].index("</details>", disclosure)]
         self.assertNotIn("codex:focus-1", primary)
+        self.assertNotIn("Detailed verification transcript", primary)
         self.assertIn("Evidence", evidence)
         self.assertIn("codex:focus-1", evidence)
         self.assertIn("session output; semantic result not captured", evidence)
