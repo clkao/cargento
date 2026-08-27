@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 MAX_PROJECT_EVENTS = 100
 MAX_PROJECT_OBSERVERS = 3
+MAX_PROJECT_ATTENTION_SESSIONS = 64
 MAX_ACTIVE_CHILD_OBSERVERS = 3
 MAX_SEMANTIC_LINE = 112
 SEMANTIC_CURRENT_HORIZON_SEC = 15 * 60
@@ -747,6 +748,24 @@ def _subagent_result_counts(text: str, tasks: list[str]) -> tuple[int, int]:
     return completed_count, failed_count
 
 
+def _subagent_has_substantive_review(result: Mapping[str, Any]) -> bool:
+    for key in ("review_findings", "findings"):
+        findings = result.get(key)
+        if isinstance(findings, list) and any(
+            isinstance(finding, str) and finding.strip() for finding in findings
+        ):
+            return True
+    text = str(result.get("text", ""))
+    match = re.search(r"(?im)^\s*review changed the course\s*:\s*$", text)
+    if match is None:
+        return False
+    return any(
+        re.match(r"^\s*[-*]\s+\S", line)
+        for line in text[match.end() :].splitlines()
+        if line.strip()
+    )
+
+
 def _subagent_result_title(tasks: list[str], result: dict[str, Any]) -> str:
     if _subagent_result_pending(result):
         return ""
@@ -762,6 +781,8 @@ def _subagent_result_title(tasks: list[str], result: dict[str, Any]) -> str:
     title = _subagent_category(combined)
     if not title:
         return ""
+    if re.match(r"^(?:review|inspect)\b", combined):
+        return title if _subagent_has_substantive_review(result) else "Review call returned"
     contributors, failures = _subagent_result_counts(text, tasks)
     if contributors > 1:
         title += f" by {contributors} contributors"
@@ -1346,6 +1367,30 @@ def _analysis_context_sessions(
         scope,
         surrounding_active,
     )
+
+
+def _attention_context_sessions(
+    sessions: Sequence[Mapping[str, Any]], project: str
+) -> tuple[list[Mapping[str, Any]], dict[str, Any]]:
+    selected = [
+        session
+        for session in sessions
+        if (
+            str(session.get("project_key") or session.get("project") or "") == project
+            or str(session.get("project") or "") == project
+        )
+        and session.get("active") is True
+    ]
+    selected.sort(key=lambda item: float(item.get("last_activity") or 0), reverse=True)
+    scanned = selected[:MAX_PROJECT_ATTENTION_SESSIONS]
+    omitted = max(0, len(selected) - len(scanned))
+    return scanned, {
+        "state": "incomplete" if omitted else "complete",
+        "scanned": len(scanned),
+        "total": len(selected),
+        "omitted": omitted,
+        "source": "bounded active-session final-output scan",
+    }
 
 
 def _gate_event(
@@ -2914,12 +2959,15 @@ def _command_attention_projection(semantic: Mapping[str, Any]) -> list[dict[str,
     return sorted(projected, key=lambda item: float(item.get("at") or 0), reverse=True)
 
 
-def _with_command_attention(semantic: dict[str, Any]) -> dict[str, Any]:
+def _with_command_attention(
+    semantic: dict[str, Any], coverage: Mapping[str, Any]
+) -> dict[str, Any]:
     projections = semantic.get("projections")
     if not isinstance(projections, dict):
         projections = {}
         semantic["projections"] = projections
     projections["command_attention"] = _command_attention_projection(semantic)
+    projections["command_attention_coverage"] = dict(coverage)
     return semantic
 
 
@@ -3042,6 +3090,7 @@ def collect(
     analysis_sessions, omitted, scope, surrounding_active = _analysis_context_sessions(
         sessions, project, focus
     )
+    attention_sessions, attention_coverage = _attention_context_sessions(sessions, project)
     workflow_discovery = _project_workflow_discovery(
         config,
         state,
@@ -3147,7 +3196,7 @@ def collect(
         state,
         project,
         history_semantic,
-        analysis_sessions,
+        attention_sessions,
         child_assignments,
         now=now,
         source_scans=history_source_scans,
@@ -3158,7 +3207,8 @@ def collect(
             focus,
             child_assignments,
             now=now,
-        )
+        ),
+        attention_coverage,
     )
     return {
         "project": project,

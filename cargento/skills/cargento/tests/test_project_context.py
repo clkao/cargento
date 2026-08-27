@@ -381,6 +381,69 @@ class ProjectContextTest(unittest.TestCase):
         )
         self.assertEqual(1, len(result["sources"]["observer"]["omitted"]))
 
+    def test_attention_scan_includes_fourth_active_session_beyond_observer_cap(self) -> None:
+        state = build_runtime_state(self.config, started=self.NOW)
+        sessions = [
+            {
+                "project": "repo/proj",
+                "harness": "pi",
+                "sid": f"newer-{index}",
+                "state": "working",
+                "last_activity": self.NOW - index,
+                "active": True,
+            }
+            for index in range(project_context.MAX_PROJECT_OBSERVERS)
+        ]
+        sessions.append(
+            {
+                "project": "repo/proj",
+                "harness": "codex",
+                "sid": "fourth-auth",
+                "title": "Exact fourth-session authorization",
+                "state": "idle",
+                "last_activity": self.NOW - 10,
+                "last_output": (
+                    "A separate authorization is required to push and create the PR.\n"
+                    "Approve pushing this candidate and creating the PR?"
+                ),
+                "active": True,
+            }
+        )
+
+        result = project_context.collect(
+            self.config, state, sessions, "repo/proj", now=self.NOW, refresh=False
+        )
+
+        attention = result["semantic"]["projections"]["command_attention"]
+        coverage = result["semantic"]["projections"]["command_attention_coverage"]
+        self.assertEqual(1, len(attention))
+        self.assertEqual("Exact fourth-session authorization", attention[0]["label"])
+        self.assertEqual("complete", coverage["state"])
+        self.assertEqual(4, coverage["scanned"])
+
+    def test_attention_scan_reports_incomplete_bounded_coverage(self) -> None:
+        state = build_runtime_state(self.config, started=self.NOW)
+        sessions = [
+            {
+                "project": "repo/proj",
+                "harness": "pi",
+                "sid": f"session-{index}",
+                "state": "working",
+                "last_activity": self.NOW - index,
+                "active": True,
+            }
+            for index in range(project_context.MAX_PROJECT_ATTENTION_SESSIONS + 1)
+        ]
+
+        result = project_context.collect(
+            self.config, state, sessions, "repo/proj", now=self.NOW, refresh=False
+        )
+
+        coverage = result["semantic"]["projections"]["command_attention_coverage"]
+        self.assertEqual("incomplete", coverage["state"])
+        self.assertEqual(project_context.MAX_PROJECT_ATTENTION_SESSIONS, coverage["scanned"])
+        self.assertEqual(1, coverage["omitted"])
+
     def test_focus_identity_excludes_surrounding_sessions_from_analysis(self) -> None:
         state = build_runtime_state(self.config, started=self.NOW)
         sessions = [
@@ -565,7 +628,7 @@ class ProjectContextTest(unittest.TestCase):
         )
         self.assertEqual("task-one → shaping", events[0]["title"])
         self.assertEqual("Inspect architecture", events[1]["title"])
-        self.assertEqual("Technical review completed by 2 contributors", events[3]["title"])
+        self.assertEqual("Review call returned", events[3]["title"])
         self.assertNotIn("raw-status-id", json.dumps(events))
         self.assertNotIn("preparing", json.dumps(events))
 
@@ -1260,6 +1323,12 @@ class ProjectContextTest(unittest.TestCase):
 
     def test_subagent_result_category_uses_directive_and_rejects_unavailable_review(self) -> None:
         succeeded = {"succeeded": True, "text": "A substantive result was returned."}
+        substantive_review = {
+            "succeeded": True,
+            "text": "Review changed the course:\n- Preserve the exact project boundary.",
+        }
+        empty_review = {"succeeded": True, "text": ""}
+        contributor_count_only = {"succeeded": True, "text": "Children: 2 completed."}
         unavailable = {
             "succeeded": True,
             "text": "Acceptance cannot be requested explicitly; no reviewer result was supplied.",
@@ -1272,9 +1341,27 @@ class ProjectContextTest(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            "Implementation review completed",
+            "Review call returned",
             project_context._subagent_result_title(
                 ["Review the implementation for correctness."], succeeded
+            ),
+        )
+        self.assertEqual(
+            "Review call returned",
+            project_context._subagent_result_title(
+                ["Review the implementation for correctness."], empty_review
+            ),
+        )
+        self.assertEqual(
+            "Review call returned",
+            project_context._subagent_result_title(
+                ["Review the implementation for correctness."], contributor_count_only
+            ),
+        )
+        self.assertEqual(
+            "Implementation review completed",
+            project_context._subagent_result_title(
+                ["Review the implementation for correctness."], substantive_review
             ),
         )
         self.assertEqual(

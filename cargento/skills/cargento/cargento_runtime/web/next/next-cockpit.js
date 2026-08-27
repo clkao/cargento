@@ -249,6 +249,13 @@ function nextCockpitCommandAttention(group, observation){
     attention.push({owner:item.owner,label,question:String(item.question || ""),
       evidence:item.evidence || {}});
   }
+  const coverage = semantic.projections && semantic.projections.command_attention_coverage || {};
+  if(coverage.state === "incomplete"){
+    attention.push({owner:"CAPTAIN",label:"Captain-attention coverage incomplete",
+      question:"Captain-attention coverage incomplete",
+      evidence:{source:String(coverage.source || "active-session attention scan"),
+        confidence:"bounded"}});
+  }
   const needs = nextCockpitProjectNeeds(group);
   if(needs) add("CAPTAIN", `${needs} gate or ask ${needs === 1 ? "needs" : "need"} attention`,
     "AskRegistry or exact session needs-input state");
@@ -632,8 +639,8 @@ function nextCockpitCourseRow(episode){
 function nextCockpitCourseEpisodes(semantic, lanes){
   const items = new Map((semantic.work_items || []).map(item =>
     [String(item.work_item_id || ""), nextCockpitHumanLabel(item.label)]));
-  const current = nextCockpitCurrentTask({semantic});
-  const taskFor = fact => items.get(String(fact.work_item_id || "")) || current.label;
+  const taskFor = fact => items.get(String(fact.work_item_id || "")) || "Task not observed";
+  const exactlyBound = fact => items.has(String(fact && fact.work_item_id || ""));
   const facts = (semantic.facts || []).filter(Boolean);
   const factsById = new Map(facts.map(fact => [String(fact.fact_id || ""), fact]));
   const projections = semantic.projections || {};
@@ -644,7 +651,12 @@ function nextCockpitCourseEpisodes(semantic, lanes){
       String(row && row.adaptation_fact || "") === String(fact.fact_id || ""));
     const intent = episode && intents.get(String(episode.intent_id || ""));
     const direction = intent && factsById.get(String(intent.derived_from || ""));
-    return direction && direction.type === "user_message" ? direction : null;
+    const sameTask = String(direction && direction.work_item_id || "") &&
+      String(direction && direction.work_item_id || "") === String(fact.work_item_id || "");
+    const ordered = Number.isFinite(Number(direction && direction.at)) &&
+      Number.isFinite(Number(fact.at)) && Number(direction.at) <= Number(fact.at);
+    return direction && direction.type === "user_message" && exactlyBound(direction) &&
+      sameTask && ordered ? direction : null;
   };
   const contributorNames = fact => [...new Set((lanes || []).filter(lane =>
     !fact.work_item_id || String(lane.workItemId || "") === String(fact.work_item_id))
@@ -658,8 +670,11 @@ function nextCockpitCourseEpisodes(semantic, lanes){
     const completed = fact.type === "result"
       ? nextCockpitLatestCompletedResult({facts:[fact]}) : null;
     const directionFact = pairedDirection(fact);
-    if(!findings.length && !completed && !directionFact &&
-      !["stage_transition", "gate_decision"].includes(fact.type)) continue;
+    const evidence = fact.evidence || {};
+    const review = findings.length > 0 && Boolean(String(evidence.source || "").trim());
+    const decision = fact.type === "gate_decision" && Boolean(String(fact.decision || "").trim());
+    const state = fact.type === "stage_transition" && Boolean(String(fact.stage || "").trim());
+    if(!exactlyBound(fact) || !review && !completed && !decision && !state) continue;
     const lifecycleKey = fact.type === "result" ? String(fact.fact_id || "") :
       `${fact.type}\n${String(fact.work_item_id || "")}\n${String(fact.stage || fact.source_kind || "")}`;
     if(lifecycle.has(lifecycleKey)) continue;
@@ -667,9 +682,6 @@ function nextCockpitCourseEpisodes(semantic, lanes){
     const summary = String(fact.summary || fact.stage || "Work observed") +
       (completed ? ` · checkpoint ${completed.checkpoint}` : "");
     const sourceFacts = directionFact ? [directionFact, fact] : [fact];
-    const review = findings.length > 0;
-    const decision = fact.type === "gate_decision";
-    const state = fact.type === "stage_transition";
     episodes.push({at:Number(fact.at || 0),fact,sourceFacts,task:taskFor(fact),
       label:review ? "Course change" : decision ? "Decision" : state ? "State change" : "Result",
       badge:review ? "DERIVED COURSE CHANGE" : decision ? "EXACT DECISION" :

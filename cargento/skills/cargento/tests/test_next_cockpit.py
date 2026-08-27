@@ -308,7 +308,9 @@ console.log(JSON.stringify({html,rows,directions}));
         out = self.run_fixture(
             """
 const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.facts.find(fact=>fact.fact_id==="fo-a").work_item_id=__task;
 semantic.facts.push({fact_id:"paired-result",at:106,type:"result",summary:"Layout corrected",
+  detail:"Fixed and live on port 8766.\\n\\nCheckpoint: `abc1234`.",
   source_session:{harness:"codex",sid:"focus-1"},work_item_id:__task,
   evidence:{source:"assistant result",confidence:"exact"}});
 semantic.projections.steering_episodes=[{episode_id:"pair-a",intent_id:"intent-a",
@@ -327,6 +329,54 @@ console.log(JSON.stringify({html,primary,other}));
         self.assertIn("assistant result", out["primary"])
         self.assertNotIn("Newest direction", out["other"])
         self.assertEqual(1, out["html"].count("Newest direction"))
+
+    def test_course_pairing_requires_ordered_exact_task_binding_and_meaningful_change(self) -> None:
+        out = self.run_fixture(
+            """
+const courseCase=(direction,result,workItems=[])=>{
+  const semantic={facts:[direction,result],work_items:[
+    {work_item_id:__task,label:"project-cockpit",kind:"workflow_item"},...workItems],
+    relations:[],projections:{operator_intents:[{projection_id:"intent",at:direction.at,
+      summary:direction.summary,derived_from:direction.fact_id}],steering_episodes:[{
+      episode_id:"pair",intent_id:"intent",adaptation_fact:result.fact_id,
+      confidence:"structural"}],trail_heads:[]}};
+  const html=nextCockpitCourse(nextProjectGroups()[0],semantic,[]);
+  return {html,primary:(html.match(/<article class="next-course-episode"/g)||[]).length,
+    other:(html.match(/<article class="next-course-direction"/g)||[]).length};
+};
+const direction={fact_id:"direction",at:100,type:"user_message",intent_promoted:true,
+  summary:"Keep the exact task boundary",work_item_id:__task,
+  source_session:{harness:"codex",sid:"focus-1"},
+  evidence:{source:"root transcript",confidence:"exact"}};
+const unbound=courseCase(direction,{fact_id:"generic",at:101,type:"result",
+  summary:"Ordinary worker returned",source_session:{harness:"codex",sid:"child"},
+  evidence:{source:"ordinary child result",confidence:"exact"}});
+const inverted=courseCase({...direction,at:103},{fact_id:"stage-before",at:102,
+  type:"stage_transition",stage:"review",summary:"Review stage",work_item_id:__task,
+  evidence:{source:"workflow state",confidence:"exact"}});
+const otherTask="workflow:other";
+const mismatched=courseCase(direction,{fact_id:"other-stage",at:104,
+  type:"stage_transition",stage:"review",summary:"Other review stage",work_item_id:otherTask,
+  evidence:{source:"workflow state",confidence:"exact"}},[
+    {work_item_id:otherTask,label:"other-task",kind:"workflow_item"}]);
+const positive=courseCase(direction,{fact_id:"exact-stage",at:105,
+  type:"stage_transition",stage:"review",summary:"Exact review stage",work_item_id:__task,
+  evidence:{source:"workflow state",confidence:"exact"}});
+console.log(JSON.stringify({unbound,inverted,mismatched,positive}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual(
+            {"primary": 0, "other": 1}, {key: out["unbound"][key] for key in ("primary", "other")}
+        )
+        for key in ("inverted", "mismatched"):
+            self.assertEqual(1, out[key]["primary"])
+            self.assertEqual(1, out[key]["other"])
+            self.assertNotIn("<b>Direction</b>", out[key]["html"])
+        self.assertEqual(1, out["positive"]["primary"])
+        self.assertEqual(0, out["positive"]["other"])
+        self.assertIn("<b>Direction</b>", out["positive"]["html"])
 
     def test_sixteen_exact_directions_fold_when_no_course_change_is_observed(self) -> None:
         out = self.run_fixture(
@@ -949,6 +999,26 @@ console.log(JSON.stringify({items,html:nextCockpitRecoveryStrip(group, observati
         self.assertIn("assistant final_answer followed by terminal turn state", out["html"])
         self.assertIn("exact", out["html"])
         self.assertLess(out["html"].index("CAPTAIN"), out["html"].index("FO"))
+
+    def test_incomplete_attention_coverage_suppresses_nothing_needs_you(self) -> None:
+        out = self.run_fixture(
+            """
+const group=nextProjectGroups()[0];
+const semantic=JSON.parse(JSON.stringify(__semantic));
+semantic.projections.command_attention=[];
+semantic.projections.command_attention_coverage={state:"incomplete",scanned:64,total:65,
+  omitted:1,source:"bounded active-session final-output scan"};
+const observation={semantic,workflow_discovery:{state:"observed"},sources:{}};
+const items=nextCockpitCommandAttention(group,observation);
+console.log(JSON.stringify({items,html:nextCockpitNeedsYou(items)}));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertEqual("CAPTAIN", out["items"][0]["owner"])
+        self.assertEqual("Captain-attention coverage incomplete", out["items"][0]["label"])
+        self.assertIn("Captain-attention coverage incomplete", out["html"])
+        self.assertNotIn("Nothing needs you", out["html"])
 
     def test_human_outcome_and_focus_autosave_per_exact_scope(self) -> None:
         out = self.run_fixture(
