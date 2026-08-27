@@ -450,3 +450,28 @@ Cycle 14 reshapes the project mirror around four operator questions while keepin
 ### Summary
 
 Cycle 15 separates the cockpit's two navigation axes: a project-rooted scope tree chooses whose evidence and notes are in view, while Now, Course, Decisions, and Console remain content tabs. Outcome and Focus are now explicit human memos with exact-scope browser persistence, storage failure boundaries, and no inheritance or semantic-history contamination. The committed Explore-only checkpoint is live on 8766 with the root terminal preserved and is ready for the first-officer gate.
+
+## Stage Report: shaping (cycle 16)
+
+- DONE: Project-wide and session-specific content use one consistent, non-color-only scope grammar: explicit label, distinct marker shape, and structural position/connector.
+  Commit `e5ef8f5d3fc7fb097ac4f71465662841567bcd35` renders flush-left solid-rule square `PROJECT`, indented branch-connector round `SESSION`, and quiet `SCOPE UNKNOWN` cues; selection remains an independent inset state, and the layout test fails if marker shape, connector, or 760px stack regresses.
+- DONE: The cue follows exact scope provenance across the scope tree, selected-scope human memos, Course episodes, Decisions, and Console without relabeling derived or unknown records as exact.
+  Renderer tests classify exact `source_session` as session, proven sessionless workflow/task/gate contracts as project, and everything else as unknown; mixed-source derivation stays at one exact session only when all cited facts agree, while `DERIVED COURSE CHANGE` remains a separate epistemic label.
+- DONE: Exact mixed-scope live-payload and narrow-layout falsifiers pass with no duplicate legend/panel, preserved tab/filter permalinks, and the stable server swaps only after focused/static checks.
+  The fresh 16-session/30-fact project and exact root-session payloads render project tree/memo/root-Console cues beside truthfully session-scoped Course/root-Console evidence, retain an empty Decisions state because no live gate fact exists, reload isolated project/session memos, and round-trip the exact Decisions permalink; no legend or horizontal cockpit scroller appears.
+- DONE: Preserve project decision scope under session focus and use the narrowest truthful Course scope.
+  Executed mixed-provenance tests interleave project, session, and unknown Course rows; a project gate decision stays `PROJECT` while viewing a session, an explicit session gate becomes `SESSION`, and a session-sourced derived review change stays both `SESSION` and `DERIVED COURSE CHANGE`.
+- DONE: Keep the task/page subject primary while annotating scoped Now evidence and human ownership.
+  `Project cockpit · Shaping` remains above the four tabs; project workflow state, unknown browser-derived focus, selected-scope Outcome/Focus, completed results, and exact active delegation now reuse the same grammar without IDs, models, reasoning settings, contributor names, or a legend as the cue.
+- DONE: Record the captain feedback, resulting criterion, and accepted interaction.
+  The captain-authorized cycle-16 correction made non-color scope legibility the acceptance criterion—square/flush project versus round/branched session everywhere scope is material—and this served checkpoint is the direct implementation of that accepted direction without another panel or metadata strip.
+- DONE: Exercise, serve, and preserve the exact read-only interaction origin.
+  Twenty-four cockpit tests, all 169 next-UI tests, 50 shared project-renderer tests, classic/next byte oracles, Ruff, format, strict mypy over 116 files, embedded lint, plugin validation, version parity, and diff checks pass; isolated 8767 was stopped only after the controlled swap.
+  Stable `http://127.0.0.1:8766/?next=true#n=project:spacedock-research%2Fcargento` runs PID `57468`, serving 381,667 bytes at SHA-256 `b7708594c701768d1110746b2dfa890153390b6223a17cd6ec9b9faa908f3d3b`.
+  Exact root `codex:01a035ee-2a7b-76f0-873f-eaddc97860c3` is registered at tmux `$4/@4/%10`, stream connected, `read-only-control-stream`, keyboard input `not-exposed`; durable renewal client window `@15` passed nine renewals across more than one lease after the stale-window/process-bound renewal failure was isolated and corrected.
+- DONE: Preserve the authorized prototype-only boundary.
+  The code commit remains local to `spacedock-ensign/project-cockpit`; no code ref was pushed or integrated, no version field changed, and `.spacedock/dev` was neither read nor mutated.
+
+### Summary
+
+Cycle 16 makes scope legible through one structural grammar rather than repeated explanatory UI: project items are square and flush to a solid spine, session items are round and branched, and uncertain provenance stays explicitly unknown. Scope now follows evidence rather than screen selection across the tree, human memos, Course, Decisions, Console, and scoped Now evidence, while epistemic labels and the task subject remain independent. Checkpoint `e5ef8f5` is live on 8766 with the exact root terminal durably renewed and is ready for the first-officer gate.
