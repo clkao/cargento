@@ -35,6 +35,7 @@ from .support import (
     collect_json,
     make_runtime,
     make_server,
+    poll_fast,
     serve_until_closed,
     state_of,
     store_patch,
@@ -61,7 +62,7 @@ def _application(os_name: str) -> Any:
 class CargentoServerTest(RuntimeTestCase):
     def test_notify_endpoint_accepts_valid_non_object_and_deep_json(self) -> None:
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         bodies = [
             json.dumps({"session_id": "12345678", "message": "before\u0000after"}).encode(),
@@ -92,7 +93,7 @@ class CargentoServerTest(RuntimeTestCase):
 
     def test_cross_site_fetch_metadata_is_rejected(self) -> None:
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=2)
@@ -168,7 +169,7 @@ class CargentoServerTest(RuntimeTestCase):
             ("GET", "/", {"Host": "evil.example"}, 403, "DNS rebinding"),
         ]
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             for method, path, headers, expected, why in cases:
@@ -228,7 +229,7 @@ class CargentoServerTest(RuntimeTestCase):
         contract and every curl caller are untouched.
         """
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             port = httpd.server_port
@@ -256,7 +257,7 @@ class CargentoServerTest(RuntimeTestCase):
     def test_only_api_data_carries_a_revision(self) -> None:
         """A page load or a liveness probe must not look like a cursor."""
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             for path in ("/", "/api/health"):
@@ -299,7 +300,7 @@ class CargentoServerTest(RuntimeTestCase):
 
     def test_health_reports_identity_without_scanning_any_store(self) -> None:
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             # The readiness wait and --status poll this in a loop. If it ever
@@ -325,7 +326,7 @@ class CargentoServerTest(RuntimeTestCase):
 
     def test_health_is_refused_from_a_non_local_host_header(self) -> None:
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=2)
@@ -349,7 +350,7 @@ class OverlayLedgerEndpointTest(RuntimeTestCase):
     @contextlib.contextmanager
     def _serving(observation: Any) -> Any:
         httpd = make_server(observation=observation)
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             yield httpd.server_port
@@ -1274,6 +1275,34 @@ class AskShutdownTest(RuntimeTestCase):
 
 
 class HostAndSocketTest(unittest.TestCase):
+    def test_a_bind_never_reverse_resolves_the_address(self) -> None:
+        """`HTTPServer.server_bind` calls `socket.getfqdn()`; this one must not.
+
+        It is a reverse DNS lookup on the startup path for a value nothing
+        reads, and a resolver with no answer for 127.0.0.1 waits rather than
+        failing fast. Measured on the macOS CI runner at ~17.5s per bind — seven
+        tests that bind, or spawn something that binds, were 285s of that leg's
+        316s, while the other 1936 finished in 31s.
+
+        Asserted by patching the lookup rather than by timing it: on a machine
+        with a working resolver the call is instant, so a duration assertion
+        here would be a test that cannot fail.
+        """
+        with mock.patch.object(
+            socket, "getfqdn", side_effect=AssertionError("bind reverse-resolved the address")
+        ) as getfqdn:
+            httpd = make_server()
+            try:
+                self.assertEqual(0, getfqdn.call_count)
+                # Still set, because the base class promises them, and the port
+                # is the one the OS actually handed out rather than the 0 asked
+                # for.
+                self.assertEqual("127.0.0.1", httpd.server_name)
+                self.assertEqual(httpd.socket.getsockname()[1], httpd.server_port)
+                self.assertNotEqual(0, httpd.server_port)
+            finally:
+                httpd.server_close()
+
     def test_host_header_forms_that_are_all_loopback(self) -> None:
         # rsplit(":", 1) mangled the bracketed IPv6 form into "[:" and never
         # folded case, so both were rejected as non-local.
@@ -1342,7 +1371,7 @@ class HostAndSocketTest(unittest.TestCase):
 
     def test_server_binds_and_serves(self) -> None:
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=5)
@@ -1506,7 +1535,7 @@ class HostAndSocketTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with store_patch(**dict.fromkeys(STORE_KEYS, tmp)):
                 httpd = make_server(host="0.0.0.0")
-            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread = threading.Thread(target=poll_fast(httpd), daemon=True)
             thread.start()
             try:
                 port = httpd.server_port
@@ -1547,7 +1576,7 @@ class HostAndSocketTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with store_patch(**dict.fromkeys(STORE_KEYS, tmp)):
                 httpd = make_server(host="0.0.0.0")
-            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread = threading.Thread(target=poll_fast(httpd), daemon=True)
             thread.start()
             try:
                 port = httpd.server_port
@@ -1575,7 +1604,7 @@ class HostAndSocketTest(unittest.TestCase):
         if ip is None:
             self.skipTest("no non-loopback IPv4 address available")
         httpd = make_server()  # default host 127.0.0.1
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             port = httpd.server_port
@@ -1605,7 +1634,7 @@ class ReviewFixTest(unittest.TestCase):
         # Origin check trusted it, and text/plain is CORS-safelisted so no
         # preflight would have stopped the request.
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         port = httpd.server_port
         cases = [
@@ -1708,7 +1737,7 @@ class ReviewFixTest(unittest.TestCase):
 
     def test_shutdown_endpoint_answers_before_it_stops_the_server(self) -> None:
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=5)
@@ -1740,7 +1769,7 @@ class ReviewFixTest(unittest.TestCase):
 
     def test_shutdown_endpoint_refuses_a_cross_site_post(self) -> None:
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=2)
@@ -1860,7 +1889,7 @@ class RejectedPostDrainTest(unittest.TestCase):
         purpose, so this is a real caller and not a hypothetical one.
         """
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             started = time.monotonic()
@@ -1885,6 +1914,68 @@ class RejectedPostDrainTest(unittest.TestCase):
                 elapsed,
                 3.0,
                 f"a refusal must not wait out the connection timeout, took {elapsed:.1f}s",
+            )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_a_body_already_read_is_not_drained_a_second_time(self) -> None:
+        """The drain is for a peer still mid-write, not for one already read.
+
+        Every validation refusal reads the whole body first and only then decides
+        to reject. Re-reading Content-Length bytes that are already gone leaves
+        `read1` blocking on a peer with nothing left to send, so the refusal
+        waits out REJECT_DRAIN_SECONDS.
+        """
+        handler = self._Handler("2048", b"a" * 2048)
+        self.assertEqual(2048, len(handler._read_body(2048)))
+        # The attempt is what matters, not the result. BytesIO answers a read
+        # past the end immediately; a socket blocks there until the deadline,
+        # which is the whole cost. Counting calls catches it either way.
+        reads = 0
+        original = handler.rfile.read1
+
+        def counting_read1(size: int = -1) -> bytes:
+            nonlocal reads
+            reads += 1
+            return original(size)
+
+        handler.rfile.read1 = counting_read1  # type: ignore[method-assign]
+        handler._reject(400)
+        self.assertEqual([400], handler.sent)
+        self.assertEqual(0, reads, "the drain went back to a body already consumed")
+
+    def test_a_validation_refusal_answers_without_waiting_out_the_drain(self) -> None:
+        """The same thing over a real socket, where the cost was measured.
+
+        A POST whose body is fully sent and fully read, then refused on its
+        contents, took the whole 250ms drain deadline on the shipped /api/ask
+        route — per request, on the handler thread.
+        """
+        httpd = make_server()
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
+        thread.start()
+        try:
+            port = httpd.server_port
+            # A non-string question: read in full, then refused as unusable.
+            body = json.dumps(
+                {"harness": "claude", "session_id": "aaa1", "project": "p", "question": 42}
+            ).encode()
+            started = time.monotonic()
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            try:
+                conn.request("POST", "/api/ask", body=body, headers={"Content-Type": "text/plain"})
+                response = conn.getresponse()
+                self.assertEqual(400, response.status)
+                response.read()
+            finally:
+                conn.close()
+            elapsed = time.monotonic() - started
+            self.assertLess(
+                elapsed,
+                http_api._RequestHandler.REJECT_DRAIN_SECONDS,
+                f"the refusal waited out the drain deadline, took {elapsed:.3f}s",
             )
         finally:
             httpd.shutdown()
@@ -1931,7 +2022,7 @@ class StreamEndpointTest(RuntimeTestCase):
 
     def test_the_stream_opens_as_an_event_stream(self) -> None:
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             conn, response = self._open(httpd.server_port)
@@ -1949,7 +2040,7 @@ class StreamEndpointTest(RuntimeTestCase):
     def test_the_current_revision_arrives_immediately(self) -> None:
         """A client must not wait for the next change to learn where it is."""
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             # Publish something first, so there is a current revision to send.
@@ -1968,7 +2059,7 @@ class StreamEndpointTest(RuntimeTestCase):
 
     def test_a_new_revision_is_delivered_to_an_open_stream(self) -> None:
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             httpd.application.collect_json(show_all=False)
@@ -1996,7 +2087,7 @@ class StreamEndpointTest(RuntimeTestCase):
         a stream any site could open.
         """
         httpd = make_server()
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             conn, response = self._open(
@@ -2023,7 +2114,7 @@ class StreamEndpointTest(RuntimeTestCase):
         httpd.application.config = dataclasses.replace(
             httpd.application.config, stream_max_clients=1
         )
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             first_conn, first = self._open(httpd.server_port)
@@ -2058,7 +2149,7 @@ class StreamShutdownTest(RuntimeTestCase):
         httpd.application.config = dataclasses.replace(
             httpd.application.config, stream_heartbeat_sec=60.0
         )
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=10)
@@ -2091,7 +2182,7 @@ class StreamShutdownTest(RuntimeTestCase):
         httpd.application.config = dataclasses.replace(
             httpd.application.config, stream_heartbeat_sec=60.0
         )
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread = threading.Thread(target=poll_fast(httpd), daemon=True)
         thread.start()
         try:
             stream_conn = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=10)

@@ -8,6 +8,7 @@ import ipaddress
 import json
 import os
 import socket
+import socketserver
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -150,7 +151,24 @@ class CargentoHTTPServer(ThreadingHTTPServer):
                     f"Cargento: could not claim the port exclusively ({exc}); continuing",
                     self.application.diagnostic_sink,
                 )
-        super().server_bind()
+        # Deliberately NOT `super().server_bind()`. `HTTPServer.server_bind`
+        # resolves the bind address to a name with `socket.getfqdn()` — a
+        # reverse DNS lookup, on the startup path, for a value nothing here
+        # reads. Where the resolver has no answer for 127.0.0.1 it does not fail
+        # fast, it waits: on the macOS CI runner that was ~17.5s per bind, which
+        # is most of what made the macOS test leg take 316s against Ubuntu's 29s,
+        # and it is the same stall a person starting the dashboard on a machine
+        # with a slow resolver would sit through before the page came up.
+        #
+        # `server_name` and `server_port` are still set, because the base class
+        # promises them; the name is the host as given rather than whatever the
+        # resolver would have called it.
+        socketserver.TCPServer.server_bind(self)
+        # Read off the bound socket rather than the requested address, so a
+        # port of 0 reports the port the OS actually gave.
+        bound = self.socket.getsockname()
+        self.server_name = str(bound[0])
+        self.server_port = int(bound[1])
 
 
 class _RequestHandler(BaseHTTPRequestHandler):
@@ -171,6 +189,26 @@ class _RequestHandler(BaseHTTPRequestHandler):
     # bytes: a peer may declare a length it never sends, which a limit test does
     # on purpose and a hostile client would do to stall a handler.
     REJECT_DRAIN_SECONDS: ClassVar[float] = 0.25
+
+    # Body bytes this request has already taken off the wire. Reset per request,
+    # and a class default so a handler-level test that calls one method directly
+    # still has it.
+    _body_consumed: int = 0
+
+    def _read_body(self, length: int) -> bytes:
+        """Read a declared body, remembering how much of it is now gone.
+
+        Every refusal that follows a successful read used to re-drain the same
+        bytes: `_drain_body` reads Content-Length again, the peer has nothing
+        left to send, and `read1` blocks until REJECT_DRAIN_SECONDS gives up. So
+        a validation 400 — an unusable question, a bad option list — cost its
+        handler thread the full 250ms drain, measured on the shipped /api/ask
+        route. Counting what was consumed leaves the drain for what it is for: a
+        peer still mid-write.
+        """
+        body: bytes = self.rfile.read(length)
+        self._body_consumed += len(body)
+        return body
 
     def _drain_body(self) -> None:
         """Read and discard a rejected request's body before answering.
@@ -193,7 +231,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             declared = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             return
-        remaining = max(0, min(declared, self.REJECT_DRAIN_CAP_BYTES))
+        remaining = max(0, min(declared - self._body_consumed, self.REJECT_DRAIN_CAP_BYTES))
         if not remaining:
             return
         deadline = time.monotonic() + self.REJECT_DRAIN_SECONDS
@@ -682,7 +720,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._reject(413)
             return
         try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = json.loads(self._read_body(length) or b"{}")
         except (ValueError, json.JSONDecodeError, RecursionError):
             payload = {}
         if not isinstance(payload, dict):
@@ -728,7 +766,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._reject(413)
             return
         try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = json.loads(self._read_body(length) or b"{}")
         except (ValueError, json.JSONDecodeError, RecursionError):
             payload = {}
         if not isinstance(payload, dict):
@@ -792,7 +830,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._reject(413)
             return
         try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = json.loads(self._read_body(length) or b"{}")
         except (ValueError, json.JSONDecodeError, RecursionError):
             payload = {}
         if not isinstance(payload, dict):
@@ -807,6 +845,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:
+        self._body_consumed = 0
         if not self._local_ok():
             self._reject(403)
             return
@@ -845,7 +884,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._reject(413)
             return
         try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = json.loads(self._read_body(length) or b"{}")
         except (ValueError, json.JSONDecodeError, RecursionError):
             payload = {}
         if not isinstance(payload, dict):
@@ -951,7 +990,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._reject(413)
             return
         try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = json.loads(self._read_body(length) or b"{}")
         except (ValueError, json.JSONDecodeError, RecursionError):
             payload = {}
         if not isinstance(payload, dict):
@@ -1091,7 +1130,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._reject(413)
             return
         try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = json.loads(self._read_body(length) or b"{}")
         except (ValueError, json.JSONDecodeError, RecursionError):
             payload = {}
         if not isinstance(payload, dict):
@@ -1130,7 +1169,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self._reject(413)
             return
         try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = json.loads(self._read_body(length) or b"{}")
         except (ValueError, json.JSONDecodeError, RecursionError):
             payload = {}
         if not isinstance(payload, dict):
