@@ -31,6 +31,9 @@ cargento/                           # plugin root: Claude Code, Codex, Antigravi
         ├── SKILL.md                # shared skill body (all harnesses)
         ├── server.py               # the stable launcher: calls cargento_runtime.cli.main
         ├── notify_hook.py          # loopback POST forwarder for the user-installed Claude hooks
+        ├── event_hook.py           # posts Claude and Codex command-hook lifecycle events
+        ├── agy_hook.py             # posts Antigravity's hook events
+        ├── statusline_hook.py      # posts Antigravity's status-line state
         ├── mcp_server.py           # stdio MCP server: the one tool a session calls to ask the reader
         ├── cargento_runtime/       # importable dashboard runtime package
         │   ├── aggregate.py        # harness registry, failure boundary, and the application
@@ -284,7 +287,7 @@ choose. Nobody asked for twelve hours; they asked for the work.
 
 ## Quality Gate
 
-Every PR must pass the `quality-gate` required check (`.github/workflows/quality-gate.yml`): ruff with `select = ALL` (curated ignores documented in `pyproject.toml`), `ruff format --check`, `mypy --strict`, the HTML/CSS/JS frontend source linter (`scripts/lint_embedded.py`), a direct-launch smoke test on the Python 3.11 runtime floor, the full unittest suite under `coverage` with the `fail_under` threshold from `pyproject.toml`, and `platform-tests` — the same unit suite re-run natively on Ubuntu, macOS and Windows. The threshold only ratchets up — never lower it in a PR. A PR that must merge below threshold needs the `coverage-exception` label, which is visible in the PR timeline.
+Every PR must pass the `quality-gate` required check (`.github/workflows/quality-gate.yml`): ruff with `select = ALL` (curated ignores documented in `pyproject.toml`), `ruff format --check`, `mypy --strict`, the HTML/CSS/JS frontend source linter (`scripts/lint_embedded.py`), a direct-launch smoke test on the Python 3.11 runtime floor followed by the whole suite under `coverage` there, the same suite under `coverage` on 3.12 with the `fail_under` threshold from `pyproject.toml`, and `platform-tests` — the same unit suite re-run natively on Ubuntu, macOS and Windows. The threshold only ratchets up — never lower it in a PR. A PR that must merge below threshold needs the `coverage-exception` label, which is visible in the PR timeline.
 
 **The required context always reports; its constituent jobs may not run.** A `changes` job decides
 whether the diff contains anything the gate can measure, and the five measurable jobs are gated on
