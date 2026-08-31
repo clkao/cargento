@@ -415,6 +415,7 @@ __els.app = {
             all(
                 selector
                 in {
+                    "details[data-pc-disclosure]",
                     "[data-next-session]",
                     "[data-next-subject-key]",
                     "[data-next-attention-toggle]",
@@ -422,7 +423,8 @@ __els.app = {
                     ".next-attention h1",
                 }
                 for selector in out["selectors"]
-            )
+            ),
+            out["selectors"],
         )
 
     def test_focused_session_row_survives_refresh(self) -> None:
@@ -598,7 +600,7 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         self.assertIn(
             '<span class="next-running next-live">'
             '<span class="next-status-dot" aria-label="live">●</span> '
-            "1 running · 3 subagents</span>",
+            "All projects · 1 running · 2 active children</span>",
             out,
         )
         self.assertIn(
@@ -637,6 +639,33 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
             'data-next-fleet-fact="reported-blocks"><span>REPORTED BLOCKS</span><strong>1</strong>',
             out,
         )
+
+    def test_all_projects_header_counts_the_same_active_children_as_briefing(self) -> None:
+        out = self._run_page_js(
+            """
+await __settle();
+console.log(JSON.stringify(__els.app.innerHTML));
+""",
+            """
+location.hash = "#n=project:recce";
+__els.app = {innerHTML: ""};
+__fetchImpl = async url => ({ok: true, json: async () =>
+  String(url).startsWith("/api/project-context")
+    ? {semantic:{projections:{command_attention:[],command_attention_coverage:{
+        state:"complete",scanned:1,total:1,omitted:0,source:"bounded scan"}}}}
+    : ({window_hours:24,summary:{working:1,needs_input:0},
+      harnesses:[{key:"codex",label:"Codex"}],sessions:[{
+        sid:"root",harness:"codex",project:"recce",project_key:"org/recce",
+        state:"working",active:true,last_activity:10,subagents:[],
+        subagent_hierarchy:[{name:"Ohm",observer_sid:"child-ohm",depth:1}]
+      }]})});
+""",
+        )
+
+        self.assertIn("All projects · 1 running · 1 active child", out)
+        self.assertNotIn("0 subagents", out)
+        self.assertIn('<h1 class="next-project-detail-name">recce</h1>', out)
+        self.assertNotIn("org/recce", out)
 
     def test_the_need_you_pill_opens_the_session_queue(self) -> None:
         out = self._run_page_js(
@@ -685,7 +714,7 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         self.assertIn(
             '<span class="next-running next-live">'
             '<span class="next-status-dot" aria-label="live">●</span> '
-            "0 running · 0 subagents</span>",
+            "All projects · 0 running</span>",
             out,
         )
         self.assertNotIn('class="next-gate"', out)
@@ -911,9 +940,12 @@ __fetchImpl = async () => {
         self.assertEqual(2, out["during"]["failures"])
         self.assertEqual(1000, out["during"]["generated"])
         self.assertIn('data-next-action="retry-refresh" disabled', out["during"]["html"])
-        self.assertIn('aria-label="live">●</span> 1 running', out["during"]["html"])
+        self.assertIn(
+            'aria-label="live">●</span> All projects · 1 running',
+            out["during"]["html"],
+        )
         self.assertNotIn('data-next-state="stalled"', out["recovered"])
-        self.assertIn('aria-label="live">●</span> 2 running', out["recovered"])
+        self.assertIn('aria-label="live">●</span> All projects · 2 running', out["recovered"])
         self.assertEqual(0, out["recoveredFailures"])
         self.assertEqual(2000, out["recoveredGenerated"])
 

@@ -6,6 +6,7 @@ import dataclasses
 import http.client
 import json
 import os
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -297,6 +298,112 @@ class ObserverAnalyzerTest(unittest.TestCase):
         self.assertEqual("implementation", result["stage"])
         # The block comes from recent assistant text containing a block indicator.
         self.assertIn("blocked", result["block"])
+
+    def test_claude_outer_role_records_supply_a_real_goal(self) -> None:
+        """Claude writes `type: user`, while Pi writes `type: message`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_transcript(
+                tmp,
+                [
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "uuid": "captain-1",
+                            "timestamp": "2026-08-24T20:00:00Z",
+                            "message": {
+                                "role": "user",
+                                "content": "Show the project observer goal",
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "uuid": "meta-1",
+                            "isMeta": True,
+                            "message": {
+                                "role": "user",
+                                "content": [{"type": "text", "text": "Injected skill body"}],
+                            },
+                        }
+                    ),
+                ],
+            )
+
+            result = self.analyze(path)
+
+        self.assertEqual("Show the project observer goal", result["goal"])
+
+    def test_codex_response_messages_supply_goal_and_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_transcript(
+                tmp,
+                [
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "id": "user-1",
+                                "role": "user",
+                                "content": [
+                                    {"type": "input_text", "text": "Shape my session mirror"}
+                                ],
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "id": "assistant-1",
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": "I am blocked on a missing browser connection.",
+                                    }
+                                ],
+                            },
+                        }
+                    ),
+                ],
+            )
+
+            result = self.analyze(path)
+
+        self.assertEqual("Shape my session mirror", result["goal"])
+        self.assertIn("blocked", result["block"])
+
+    def test_child_assignment_can_be_model_derived_from_readable_assistant_activity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_transcript(
+                tmp,
+                [
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "id": "assistant-1",
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": "I am revising the assignment roster.",
+                                    }
+                                ],
+                            },
+                        }
+                    )
+                ],
+            )
+            model = mock.Mock(return_value="Improve the assignment roster")
+            result = observer.derive_child_assignment(self.config, path, model)
+
+        self.assertEqual("Improve the assignment roster", result)
+        model.assert_called_once()
 
     def _fo_transcript(
         self, tmp: str, *, stage: str, declared: list[str], age_sec: float = 0.0
@@ -626,6 +733,53 @@ class ObserverAnalyzerTest(unittest.TestCase):
         # The deterministic goal survives the model crash.
         self.assertIn("Review the PR", result["goal"])
         self.assertIsNone(result["reason"])
+
+    def test_codex_goal_model_pins_luna_max_and_runs_ephemerally(self) -> None:
+        recorded: dict[str, Any] = {}
+
+        def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            recorded["command"] = command
+            recorded["prompt"] = kwargs["input"]
+            output = Path(command[command.index("--output-last-message") + 1])
+            output.write_text("Resume the accepted project checkpoint\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = dataclasses.replace(
+                self.config,
+                state_dir=Path(tmp),
+                state_home=tmp,
+            )
+            caller = observer.CodexGoalModel(
+                config,
+                runner=run,
+                binary_resolver=lambda _name: "/opt/bin/codex",
+            )
+
+            result = caller("Captain requested the exact checkpoint", "shaping")
+
+        command = recorded["command"]
+        self.assertEqual("Resume the accepted project checkpoint", result)
+        self.assertEqual("gpt-5.6-luna", command[command.index("--model") + 1])
+        self.assertIn("model_reasoning_effort=max", command)
+        self.assertIn("--ephemeral", command)
+        self.assertEqual("read-only", command[command.index("--sandbox") + 1])
+        self.assertIn("<transcript_excerpt>", recorded["prompt"])
+        self.assertEqual("used", caller.metadata()["status"])
+
+    def test_codex_no_goal_output_keeps_the_deterministic_goal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_transcript(
+                tmp,
+                [
+                    _pi_session("model-empty-001"),
+                    _pi_message("m1", None, "user", "Review the release checkpoint"),
+                ],
+            )
+
+            result = self.analyze(path, model=lambda _recent, _stage: observer.NO_GOAL + ".")
+
+        self.assertEqual("Review the release checkpoint", result["goal"])
 
     def test_no_goal_sentinel_not_overridden_by_model(self) -> None:
         """The deterministic short-circuit bypasses the model entirely: a
@@ -1162,6 +1316,58 @@ class ObserverTranscriptResolutionTest(RuntimeTestCase):
             self.assertIsNone(observer.resolve_transcript(config, state, "codex", "abc"))
             self.assertIsNone(observer.resolve_transcript(config, state, "gemini", "abc"))
             self.assertIsNone(observer.resolve_transcript(config, state, "pi", "a/../b"))
+
+    def test_a_codex_session_id_resolves_through_first_line_metadata(self) -> None:
+        sid = "01a035ee-2a7b-76f0-873f-eaddc97860c3"
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = Path(tmp) / "sessions"
+            rollout = sessions / "2026" / "08" / "24" / f"rollout-{sid}.jsonl"
+            rollout.parent.mkdir(parents=True)
+            rollout.write_text(
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {"id": sid, "cwd": "/repo", "source": "cli"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with store_patch(CODEX_SESSIONS_DIR=str(sessions)):
+                config, state = runtime()
+                found = observer.resolve_transcript(config, state, "codex", sid)
+
+        self.assertEqual(str(rollout), found)
+
+    def test_a_codex_child_thread_id_resolves_to_its_rollout(self) -> None:
+        root_sid = "11111111-1111-1111-1111-111111111111"
+        child_sid = "22222222-2222-2222-2222-222222222222"
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = Path(tmp) / "sessions"
+            rollout = sessions / "2026" / "01" / "01" / "rollout-child.jsonl"
+            rollout.parent.mkdir(parents=True)
+            rollout.write_text(
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {
+                            "id": child_sid,
+                            "session_id": root_sid,
+                            "thread_source": "subagent",
+                            "source": {
+                                "subagent": {"thread_spawn": {"parent_thread_id": root_sid}}
+                            },
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with store_patch(CODEX_SESSIONS_DIR=str(sessions)):
+                config, state = runtime()
+                found = observer.resolve_transcript(config, state, "codex", child_sid)
+
+        self.assertEqual(str(rollout), found)
 
 
 class ObserverRouteTest(RuntimeTestCase):
