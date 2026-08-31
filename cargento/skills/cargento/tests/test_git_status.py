@@ -18,8 +18,8 @@ arm now skips with its reason rather than passing.
 
 from __future__ import annotations
 
+import ast
 import os
-import re
 import shutil
 import stat
 import subprocess
@@ -159,12 +159,19 @@ class SingleInvocationTest(unittest.TestCase):
 
     def test_only_git_status_constructs_a_git_subprocess(self) -> None:
         runtime = Path(__file__).resolve().parent.parent / "cargento_runtime"
-        pattern = re.compile(r"""["']git["']""")
-        offenders = sorted(
-            path.name
-            for path in runtime.rglob("*.py")
-            if pattern.search(path.read_text(encoding="utf-8"))
-        )
+        offenders = []
+        for path in runtime.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            constructs_git_argv = any(
+                isinstance(node, (ast.List, ast.Tuple))
+                and bool(node.elts)
+                and isinstance(node.elts[0], ast.Constant)
+                and node.elts[0].value == "git"
+                for node in ast.walk(tree)
+            )
+            if constructs_git_argv:
+                offenders.append(path.name)
+        offenders.sort()
         self.assertEqual(["git_status.py"], offenders)
 
     def test_the_argv_is_a_tuple_a_caller_cannot_extend(self) -> None:

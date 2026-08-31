@@ -1683,8 +1683,9 @@ class WiringTest(unittest.TestCase):
                 coordinator: Any = None,
                 *,
                 next_page_bytes: bytes | None = None,
+                interaction_prototype: Any = None,
             ) -> None:
-                del next_page_bytes
+                del interaction_prototype, next_page_bytes
                 captured["application"] = application
                 captured["coordinator"] = coordinator
 
@@ -1710,8 +1711,9 @@ class WiringTest(unittest.TestCase):
                 coordinator: Any = None,
                 *,
                 next_page_bytes: bytes | None = None,
+                interaction_prototype: Any = None,
             ) -> None:
-                del next_page_bytes
+                del interaction_prototype, next_page_bytes
                 captured["application"] = application
                 captured["coordinator"] = coordinator
 

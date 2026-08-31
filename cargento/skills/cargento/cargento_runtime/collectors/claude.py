@@ -495,6 +495,7 @@ def collect(
         if not (active or show_all):
             continue
 
+        cwd = claude_data.session_cwd(config, state, transcript) if transcript else ""
         # Registered, joined long enough ago that a healthy agent would have
         # written its first record, and still holding no transcript anywhere.
         # Sandwiched between two windows that already exist rather than a
@@ -516,12 +517,9 @@ def collect(
             and runtime_sessions.is_fresh(config, now, m["joined"], window_hours * 3600)
         ]
         pending_members.sort(key=lambda m: m["joined"])
-
         project = (
             (
-                runtime_sessions.project_from_cwd(
-                    config, claude_data.session_cwd(config, state, transcript)
-                )
+                runtime_sessions.project_from_cwd(config, cwd)
                 # Lossy fallback: the encoded name cannot be split back into
                 # segments, so it stays whole rather than guessing at a split.
                 or runtime_sessions.project_label(
@@ -586,7 +584,11 @@ def collect(
         elif pending_members:
             session_state = "needs_input"
             blocked_since = pending_members[0]["joined"]
-            waited = runtime_sessions.fmt_duration(runtime_sessions.age(config, now, blocked_since))
+            wait_age = runtime_sessions.age(config, now, blocked_since)
+            # joinedAt has millisecond precision, so absorb only float conversion noise.
+            waited = runtime_sessions.fmt_duration(
+                wait_age + 1e-6 if wait_age is not None else None
+            )
             state_detail = (
                 f"{pending_members[0]['label']} has not started, waiting {waited}"
                 if len(pending_members) == 1
@@ -667,6 +669,7 @@ def collect(
             else None
         )
         s = runtime_sessions.base_session("claude", prefix, project)
+        runtime_sessions.apply_project_identity(config, s, cwd)
         s.update(
             {
                 "title": (info or {}).get("title"),

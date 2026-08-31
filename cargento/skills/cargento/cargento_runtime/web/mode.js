@@ -8,8 +8,16 @@ const DISPLAY_MODE_KEY = "cargento.displayMode";
 let displayMode = "regular";
 try{
   const saved = localStorage.getItem(DISPLAY_MODE_KEY);
-  if(saved === "calm" || saved === "regular" || saved === "session") displayMode = saved;
+  if(saved === "calm" || saved === "project" || saved === "regular" || saved === "session"){
+    displayMode = saved;
+  }
 }catch(e){ /* private mode, or a context with no storage — regular it is */ }
+try{
+  const routed = new URLSearchParams(location.search || "").get("mode");
+  if(routed === "calm" || routed === "project" || routed === "regular" || routed === "session"){
+    displayMode = routed;
+  }
+}catch(e){ /* a URL-less embed keeps the browser fallback */ }
 
 let calmSort = "attention";   /* attention | recent | repo | burn */
 let calmStateOnly = null;     /* needs | work | idle */
@@ -91,10 +99,18 @@ if(typeof window !== "undefined" && window.addEventListener){
 }
 
 function setDisplayMode(mode){
-  if(mode !== "calm" && mode !== "regular" && mode !== "session" || mode === displayMode) return;
+  if(mode !== "calm" && mode !== "project" && mode !== "regular" && mode !== "session" ||
+     mode === displayMode) return;
   displayMode = mode;
   if(mode !== "session") sessionViewKey = null;
   try{ localStorage.setItem(DISPLAY_MODE_KEY, mode); }catch(e){ /* nothing to persist to */ }
+  try{
+    const url = new URL(location.href);
+    url.searchParams.set("mode", mode);
+    if(typeof history !== "undefined" && history.pushState){
+      history.pushState({}, "", url.toString());
+    }
+  }catch(e){ /* the mode still changes without a routable URL */ }
   syncSessionHash();
   calmResetScroll = true;
   if(lastData) render(lastData);

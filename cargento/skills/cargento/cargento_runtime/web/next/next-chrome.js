@@ -163,8 +163,7 @@ function nextBreadcrumb(){
   const projects = '<a class="next-crumb" href="#n=projects">Projects</a>';
   const project = esc(nextRoute.project);
   if(nextRoute.view === "project"){
-    return `${sessions}<span aria-hidden="true"> &gt; </span>${projects}` +
-      `<span aria-hidden="true"> &gt; </span><span>${project}</span>`;
+    return `${sessions}<span aria-hidden="true"> &gt; </span>${projects}`;
   }
   const projectRoute = nextRouteToken({view: "project", project: nextRoute.project});
   const session = nextSessionFind(nextRoute.project, nextRoute.harness, nextRoute.session);
@@ -210,9 +209,19 @@ function nextCounts(){
     (total, row) => total + (Array.isArray(row.subagents) ? row.subagents.length : 0),
     0,
   );
+  const projects = new Set(rows.map(row => String(row.project || ""))).size;
+  const activeChildren = rows.filter(row => row.state === "working").reduce(
+    (total, row) => total + (Array.isArray(row.subagent_hierarchy)
+      ? row.subagent_hierarchy.length
+      : Array.isArray(row.subagents) ? row.subagents.length : 0),
+    0,
+  );
   return {
     gates: rows.filter(row => nextOperationsIsBlocked(row, asks)).length,
+    projects,
     running: rows.filter(row => row.state === "working").length,
+    sessions: rows.length,
+    activeChildren,
     subagents,
   };
 }
@@ -241,6 +250,7 @@ function nextRefreshNotice(){
 function renderNext(focus = nextCaptureFocus()){
   const app = document.getElementById("app");
   if(!app) return;
+  nextCockpitBeforeRender();
   const counts = nextCounts();
   document.title = nextDocumentTitle();
   const gateLabel = counts.gates === 1 ? "reported block" : "reported blocks";
@@ -249,19 +259,27 @@ function renderNext(focus = nextCaptureFocus()){
     : "";
   const stalled = nextRefreshNotice();
   const breadcrumb = nextBreadcrumb();
+  const running = `${nextStatusDot("live")} All projects · ${counts.running} running` +
+    (counts.activeChildren ? ` · ${counts.activeChildren} active ` +
+      `${counts.activeChildren === 1 ? "child" : "children"}` : "");
+  const projectDetail = nextRoute.view === "project";
+  const utility = projectDetail && typeof nextCockpitUtilityMenuItems === "function"
+    ? nextCockpitUtilityMenuItems() : "";
   app.innerHTML = '<header class="next-header">' +
     '<div class="next-header-left">' +
     nextPrimaryNavigation() +
     (breadcrumb ? `<nav class="next-breadcrumb" aria-label="Breadcrumb">${breadcrumb}</nav>` : "") +
     "</div>" +
     '<div class="next-header-right">' +
-    `<span class="next-running next-live">${nextStatusDot("live")} ${counts.running} running · ${counts.subagents} subagents</span>` +
+    (projectDetail ? "" : `<span class="next-running next-live">${running}</span>`) +
     gate +
     '<details class="next-menu"><summary aria-label="More">···</summary>' +
     '<div class="next-menu-items">' +
+    (projectDetail ? `<span class="next-menu-status">${running}</span>${utility}` : "") +
     '<button type="button" data-next-action="dashboard">dashboard mode <kbd>d</kbd></button>' +
     "</div></details></div></header>" +
     stalled + nextViewBody(counts);
+  nextCockpitAfterRender();
   nextAttentionStatus(app);
   nextRestoreFocus(focus, nextAttention);
 }
@@ -338,6 +356,7 @@ document.addEventListener("keydown", event => {
     return;
   }
   if(nextControlsHandleKeydown(event)) return;
+  if(nextCockpitHandleKeydown(event)) return;
   if(nextWorkstreamToggleTarget(event) && ["Enter", " ", "Spacebar"].includes(event.key)){
     event.preventDefault();
     nextWorkstreamToggle();
