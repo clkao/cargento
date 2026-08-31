@@ -46,6 +46,8 @@ class NextPageAssetContractTest(unittest.TestCase):
             asset.parent.mkdir(parents=True, exist_ok=True)
             asset.write_text("d09GMg==\n", encoding="ascii")
         (next_web / "next-boot.js").write_text("const first = 1;\n", encoding="utf-8")
+        (next_web / "next-cockpit-compat.js").write_text("const compat = 1;\n", encoding="utf-8")
+        (web / "project.js").write_text("const shared = 1;\n", encoding="utf-8")
         (next_web / "next-chrome.js").write_text("const middle = 2;\n", encoding="utf-8")
         (next_web / "next-projects.js").write_text("const projects = 3;\n", encoding="utf-8")
         (next_web / "next-project.js").write_text("const project = 4;\n", encoding="utf-8")
@@ -54,6 +56,7 @@ class NextPageAssetContractTest(unittest.TestCase):
         (next_web / "next-workstream.js").write_text("const workstream = 7;\n", encoding="utf-8")
         (next_web / "next-delegation.js").write_text("const delegation = 8;\n", encoding="utf-8")
         (next_web / "next-controls.js").write_text("const controls = 9;\n", encoding="utf-8")
+        (next_web / "next-cockpit.js").write_text("const cockpit = 9;\n", encoding="utf-8")
         (next_web / "next-sessions.js").write_text("const sessions = 3;\n", encoding="utf-8")
         (next_web / "next-render.js").write_text("const second = 2;\n", encoding="utf-8")
         (next_web / "next-live.js").write_text("const live = 10;\n", encoding="utf-8")
@@ -76,11 +79,11 @@ class NextPageAssetContractTest(unittest.TestCase):
             )
         self.assertEqual(
             (f"<style>{embedded_styles}.next{{color:red}}\n</style>").encode()
-            + b"<script>const first = 1;\nconst middle = 2;\n"
+            + b"<script>const first = 1;\nconst compat = 1;\nconst shared = 1;\nconst middle = 2;\n"
             b"const sessions = 3;\nconst projects = 3;\n"
             b"const project = 4;\nconst activity = 5;\n"
             b"const session = 6;\nconst workstream = 7;\nconst delegation = 8;\n"
-            b"const controls = 9;\n"
+            b"const controls = 9;\nconst cockpit = 9;\n"
             b"const second = 2;\nconst live = 10;\n</script>",
             actual,
         )
@@ -175,6 +178,7 @@ class NextPageAssetContractTest(unittest.TestCase):
         self.assertEqual(
             (
                 "next-boot.js",
+                "next-cockpit-compat.js",
                 "next-chrome.js",
                 "next-sessions.js",
                 "next-projects.js",
@@ -184,6 +188,7 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "next-workstream.js",
                 "next-delegation.js",
                 "next-controls.js",
+                "next-cockpit.js",
                 "next-render.js",
                 "next-live.js",
             ),
@@ -516,18 +521,111 @@ class NextPageAssetContractTest(unittest.TestCase):
                 self.assertIsNotNone(rule)
                 self.assertIn(f"box-shadow:inset 3px 0 {color}", rule.group(1) if rule else "")
 
+    def test_project_scope_tree_is_left_at_wide_width_and_stacks_when_narrow(self) -> None:
+        styles = (frontend_page.WEB_DIR / "next" / "styles.css").read_text(encoding="utf-8")
+        wide = re.search(r"\.next-cockpit-shell\{([^}]*)\}", styles)
+        narrow = re.search(
+            r"@media\(max-width:760px\)\{[\s\S]*?"
+            r"\.next-cockpit-shell\{([^}]*)\}",
+            styles,
+        )
+
+        self.assertIsNotNone(wide)
+        self.assertIn(
+            "grid-template-columns:minmax(180px,230px) minmax(0,1fr)", wide.group(1) if wide else ""
+        )
+        self.assertIsNotNone(narrow)
+        self.assertIn("grid-template-columns:1fr", narrow.group(1) if narrow else "")
+        self.assertNotIn("overflow-x:auto", wide.group(1) if wide else "")
+
+        wide_switcher = re.search(r"\.next-cockpit-scope-switcher\{([^}]*)\}", styles)
+        narrow_tree = re.search(
+            r"@media\(max-width:760px\)\{[\s\S]*?\.next-cockpit-scope-tree\{([^}]*)\}",
+            styles,
+        )
+        narrow_switcher = re.search(
+            r"@media\(max-width:760px\)\{[\s\S]*?\.next-cockpit-scope-switcher\{([^}]*)\}",
+            styles,
+        )
+        self.assertIsNotNone(wide_switcher)
+        self.assertIn("display:none", wide_switcher.group(1) if wide_switcher else "")
+        self.assertIsNotNone(narrow_tree)
+        self.assertIn("display:none", narrow_tree.group(1) if narrow_tree else "")
+        self.assertIsNotNone(narrow_switcher)
+        self.assertIn("display:block", narrow_switcher.group(1) if narrow_switcher else "")
+
+        project_cue = re.search(r"\.next-scope-cue--project\{([^}]*)\}", styles)
+        session_cue = re.search(r"\.next-scope-cue--session\{([^}]*)\}", styles)
+        square = re.search(r"\.next-scope-marker--square\{([^}]*)\}", styles)
+        round_marker = re.search(r"\.next-scope-marker--round\{([^}]*)\}", styles)
+        branch = re.search(r"\.next-scope-cue--session:before\{([^}]*)\}", styles)
+        self.assertIsNotNone(project_cue)
+        self.assertIn("border-left:2px solid", project_cue.group(1) if project_cue else "")
+        self.assertIsNotNone(session_cue)
+        self.assertIn("padding-left:18px", session_cue.group(1) if session_cue else "")
+        self.assertIsNotNone(square)
+        self.assertIn("border-radius:0", square.group(1) if square else "")
+        self.assertIsNotNone(round_marker)
+        self.assertIn("border-radius:50%", round_marker.group(1) if round_marker else "")
+        self.assertIsNotNone(branch)
+        self.assertIn("border-top:1px solid", branch.group(1) if branch else "")
+        tree = re.search(r"\.next-cockpit-scope-tree\{([^}]*)\}", styles)
+        self.assertIsNotNone(tree)
+        self.assertNotIn("overflow-x:auto", tree.group(1) if tree else "")
+
+        now_wide = re.search(
+            r'\.next-cockpit-panel\[data-next-cockpit-panel="now"\]\{([^}]*)\}', styles
+        )
+        now_narrow = re.search(
+            r"@media\(max-width:760px\)\{[\s\S]*?"
+            r'\.next-cockpit-panel\[data-next-cockpit-panel="now"\]\{([^}]*)\}',
+            styles,
+        )
+        self.assertIsNotNone(now_wide)
+        self.assertIn(
+            "grid-template-columns:minmax(180px,2fr) minmax(0,5fr)",
+            now_wide.group(1) if now_wide else "",
+        )
+        self.assertIsNotNone(now_narrow)
+        self.assertIn("grid-template-columns:1fr", now_narrow.group(1) if now_narrow else "")
+
+    def test_four_cockpit_tabs_fit_the_smallest_phone_without_pills(self) -> None:
+        styles = (frontend_page.WEB_DIR / "next" / "styles.css").read_text(encoding="utf-8")
+        phone_tabs = re.search(
+            r"@media\(max-width:420px\)\{[\s\S]*?\.next-cockpit-tabs\{([^}]*)\}",
+            styles,
+        )
+        phone_buttons = re.search(
+            r"@media\(max-width:420px\)\{[\s\S]*?\.next-cockpit-tabs button\{([^}]*)\}",
+            styles,
+        )
+
+        self.assertIsNotNone(phone_tabs)
+        self.assertIn(
+            "grid-template-columns:repeat(4,minmax(0,1fr))",
+            phone_tabs.group(1) if phone_tabs else "",
+        )
+        self.assertNotIn("overflow-x:auto", phone_tabs.group(1) if phone_tabs else "")
+        self.assertIsNotNone(phone_buttons)
+        self.assertIn("min-width:0", phone_buttons.group(1) if phone_buttons else "")
+        self.assertNotIn("border-radius", phone_buttons.group(1) if phone_buttons else "")
+
     def test_load_next_page_preserves_its_byte_oracles(self) -> None:
         # Per-part first, deliberately. Every part feeds the assembled page, so a
         # one-part edit fails the assembled oracle too. Naming the part that moved
         # is the more useful failure of the two.
         expected_parts = {
             "next-boot.js": (
-                7_727,
-                "74498e03f2790d6e288666a2cffd60d419e6d248382b3f51c47f164f37f69b4c",
+                8_702,
+                "df8d4571541fe4f25a5051d49ebd9de53dd95e61258aaeb2b670391e447c74e4",
+            ),
+            "next-cockpit-compat.js": (
+                599,
+                "ebc70801be79cd5805a85a281dd0566a08a97bab72d0356ae923d20f60310db4",
             ),
             "next-chrome.js": (
-                6_990,
-                "a1937f422d61aba21c0f96d11731649705d1b5aac1889220759d0f61c2f9010a",
+                7_818,
+                "987141ba226493ef57a9f5405bfd3fc4bcd2d8c211d6d86c9d7aaf1467f6f0fb",
             ),
             "next-sessions.js": (
                 5_346,
@@ -538,12 +636,12 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "82e41b3d2e606c86ac5f65aee1429988a861c74f39c07e9041cb50afadca2089",
             ),
             "next-project.js": (
-                8_057,
-                "6896fd91fe77c9a239ae4282c530697aac7b9281855ccb50d9f41c1e14f8c62c",
+                11_236,
+                "c24e6e7d1a5a663ae13cc393bbd89368e1b6efa863033d26fe9fba7da58899dd",
             ),
             "next-activity.js": (
-                5_272,
-                "73e9a1cb6f02f818a0bd51ef5832a7766c092d88da564f6ebede654ef430da7b",
+                5_415,
+                "d8aad50d2e4829b13777929d8e79a7fb271e9e7d5d5e4df91c5a4e4ecab07fe0",
             ),
             "next-session.js": (
                 11_823,
@@ -560,6 +658,10 @@ class NextPageAssetContractTest(unittest.TestCase):
             "next-controls.js": (
                 6_777,
                 "4da6527bbf6401db716ab5807748ac01a64aecce996e993ff9e0b42c22fdc811",
+            ),
+            "next-cockpit.js": (
+                74_658,
+                "cd5db034539429b77d6d41193d8d9a3c2a491051e3a15c68751b83b3ced45cf1",
             ),
             "next-render.js": (
                 802,
@@ -578,16 +680,16 @@ class NextPageAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.next_asset_path("styles.css").read_bytes()
-        self.assertEqual(24_753, len(styles))
+        self.assertEqual(45_772, len(styles))
         self.assertEqual(
-            "d50aa0b059e00a6335dbf6c07c822faafd1e247f8920f5083d1ba3bc4e4c5e0e",
+            "d4c06b5d17fd6c06bb27a0ac44148257fc58650670964776cbdbd7a39ffa5e41",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_next_page()
-        self.assertEqual(232_651, len(assembled))
+        self.assertEqual(433_102, len(assembled))
         self.assertEqual(
-            "3aa7ef1b34df305ef17fcf1328a8099f71da24049aeb4b4a70e4d8a535531185",
+            "e0744eba4e6f2dc05510fda1c0142e048471136bb93913f2afffd6fc386b4bf7",
             hashlib.sha256(assembled).hexdigest(),
         )
 

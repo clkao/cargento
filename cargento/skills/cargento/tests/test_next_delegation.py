@@ -10,7 +10,7 @@ from .next_harness import NextPageJsHarness
 @unittest.skipUnless(shutil.which("node"), "node not available")
 class NextDelegationBehaviorTest(NextPageJsHarness):
     FIXTURE = """
-location.hash = "#n=project:alpha%2Frepo";
+location.hash = "#n=project:alpha%2Frepo:console";
 __els.app = {innerHTML: ""};
 let __delegationPayload = {
   generated: 1000,

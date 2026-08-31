@@ -15,6 +15,7 @@ APP_PARTS: tuple[str, ...] = (
     "usage.js",  # the usage band, configure, and the disclosure banner
     "controls.js",  # the stop control, stopped panel, and mode bar
     "ask.js",  # the asks band: a session's question and its answer POST
+    "project.js",  # the project cockpit and browser-owned remembered outcome
     "calm.js",  # the calm ledger: tables, actions, listeners, renderers
     "session.js",  # the session view: one session's dispatch tree and goal line
     "notify.js",  # desktop notifications
@@ -28,6 +29,7 @@ APP_PARTS: tuple[str, ...] = (
 # than a convention every later frontend change has to remember.
 NEXT_PARTS: tuple[str, ...] = (
     "next-boot.js",
+    "next-cockpit-compat.js",
     "next-chrome.js",
     "next-sessions.js",
     "next-projects.js",
@@ -37,9 +39,17 @@ NEXT_PARTS: tuple[str, ...] = (
     "next-workstream.js",
     "next-delegation.js",
     "next-controls.js",
+    "next-cockpit.js",
     "next-render.js",
     "next-live.js",  # namespaced leader election starts the refresh loop last
 )
+
+# The accepted semantic timeline and terminal remain one implementation across
+# the stable and next artifacts. Inject their stable owner after the next-only
+# compatibility vocabulary instead of copying those mechanisms into web/next.
+NEXT_SHARED_AFTER: dict[str, tuple[str, ...]] = {
+    "next-cockpit-compat.js": ("project.js",),
+}
 
 # The next page remains one self-contained response. Encoding the packaged font
 # subsets into that response keeps a missing font inside the next-only startup
@@ -118,7 +128,14 @@ def next_asset_path(name: str) -> Path:
 
 def load_next_script() -> str:
     """Every next-UI script part, in order, as one executable text."""
-    return "".join(next_asset_path(name).read_text(encoding="utf-8") for name in NEXT_PARTS)
+    parts: list[str] = []
+    for name in NEXT_PARTS:
+        parts.append(next_asset_path(name).read_text(encoding="utf-8"))
+        parts.extend(
+            asset_path(shared).read_text(encoding="utf-8")
+            for shared in NEXT_SHARED_AFTER.get(name, ())
+        )
+    return "".join(parts)
 
 
 def load_next_styles() -> str:

@@ -2360,13 +2360,14 @@ class InstalledContractCharacterizationTest(unittest.TestCase):
                 _observation: Any = None,
                 *,
                 next_page_bytes: bytes | None = None,
+                interaction_prototype: Any = None,
             ) -> None:
                 # The coordinator and optional page ride along with the address
                 # and required page. Accepted and ignored here: this test
                 # characterizes the bind address and the required page bytes,
                 # and a double that refused either would fail for an unrelated
                 # reason.
-                del next_page_bytes
+                del interaction_prototype, next_page_bytes
                 captured_addresses.append(address)
                 captured_pages.append(page_bytes)
 

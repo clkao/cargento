@@ -63,12 +63,14 @@ function nextProjectActivityCard(session, harnesses, project){
     `<span class="next-activity-metric">${esc(metric)}</span></button>`;
 }
 
-function nextProjectGoingOn(context){
+function nextProjectGoingOn(context, commandAttention = []){
   const cards = nextProjectGoingOnSessions(context.group.sessions).map(session =>
     nextProjectActivityCard(session, context.harnesses, context.group.label),
   ).join("");
-  const body = cards || '<p class="next-activity-empty">' +
-    "Nothing active or waiting on you in this project.</p>";
+  const empty = commandAttention.length
+    ? "No session currently running. Command attention remains above."
+    : "Nothing active or waiting on you in this project.";
+  const body = cards || `<p class="next-activity-empty">${empty}</p>`;
   return '<section class="next-project-activity" data-next-project-activity="going-on">' +
     '<h2>GOING ON</h2><div class="next-activity-cards">' + body + "</div></section>";
 }

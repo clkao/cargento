@@ -341,7 +341,13 @@ def default_harnesses(*, usage_fetch_enabled: bool = True) -> tuple[HarnessSpec,
 # the sweep runs — and it is read at ten render sites across six web files,
 # including the browser notification body, which is the one published string
 # that leaves the page.
-_RAW_ROW_TEXT: Final = ("title", "last_prompt", "state_detail")
+_RAW_ROW_TEXT: Final = (
+    "title",
+    "last_prompt",
+    "state_detail",
+    "project_key",
+    "project_name",
+)
 
 # `(the row field holding a list of dicts, the keys inside each one)`.
 #

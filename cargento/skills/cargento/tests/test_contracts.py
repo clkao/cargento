@@ -978,6 +978,7 @@ class RuntimeImportGraphTest(unittest.TestCase):
             "cargento_runtime.config",
             "cargento_runtime.diagnostics",
             "cargento_runtime.http_api",
+            "cargento_runtime.interaction_prototype",
             "cargento_runtime.io",
             "cargento_runtime.lifecycle",
             "cargento_runtime.notifications",
@@ -1211,10 +1212,12 @@ class RuntimeImportGraphTest(unittest.TestCase):
             "cargento_runtime.asks",
             "cargento_runtime.dismissals",
             "cargento_runtime.events",
+            "cargento_runtime.interaction_prototype",
             "cargento_runtime.io",
             "cargento_runtime.notifications",
             "cargento_runtime.observation",
             "cargento_runtime.observer",
+            "cargento_runtime.project_context",
             "cargento_runtime.quota",
             "cargento_runtime.records",
             "cargento_runtime.snapshot",
@@ -1234,10 +1237,35 @@ class RuntimeImportGraphTest(unittest.TestCase):
         "cargento_runtime.lifecycle": {
             "cargento_runtime.config",
             "cargento_runtime.http_api",
+            "cargento_runtime.interaction_prototype",
             "cargento_runtime.io",
         },
+        # The read-only terminal substrate uses only the standard library. Its
+        # CLI, lifecycle and HTTP integrations stay above it.
+        "cargento_runtime.interaction_prototype": set(),
         "cargento_runtime.io": {
             "cargento_runtime.config",
+            "cargento_runtime.state",
+        },
+        # Read-only project composition sits above the bounded observer,
+        # Spacedock, and record readers. The HTTP route is its only caller.
+        "cargento_runtime.project_context": {
+            "cargento_runtime.claude_data",
+            "cargento_runtime.config",
+            "cargento_runtime.io",
+            "cargento_runtime.observer",
+            "cargento_runtime.records",
+            "cargento_runtime.semantic_history",
+            "cargento_runtime.sessions",
+            "cargento_runtime.spacedock",
+            "cargento_runtime.state",
+            "cargento_runtime.transcripts",
+        },
+        # Semantic history is a pure reducer over bounded records and process
+        # state. Project composition owns the higher-level joins.
+        "cargento_runtime.semantic_history": {
+            "cargento_runtime.config",
+            "cargento_runtime.records",
             "cargento_runtime.state",
         },
         # The coarse store probe: stat only, no globbing and no reads. Imports
@@ -1267,6 +1295,7 @@ class RuntimeImportGraphTest(unittest.TestCase):
             "cargento_runtime.config",
             "cargento_runtime.io",
             "cargento_runtime.records",
+            "cargento_runtime.sessions",
             "cargento_runtime.state",
         },
         "cargento_runtime.turns": {

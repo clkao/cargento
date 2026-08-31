@@ -6,13 +6,18 @@ function nextRouteToken(route){
   return nextFragmentForRoute(route).slice(3);
 }
 
+function nextBreadcrumbProjectLabel(project){
+  const parts = String(project || "").split("/").filter(Boolean);
+  return parts[parts.length - 1] || String(project || "project");
+}
+
 function nextBreadcrumb(){
   const overview = nextRoute.view === "overview"
     ? "<span>Cargento | overview</span>"
     : '<button type="button" class="next-crumb" data-next-route="overview">Cargento | overview</button>';
   if(nextRoute.view === "overview") return overview;
-  const project = esc(nextRoute.project);
-  if(nextRoute.view === "project") return `${overview}<span aria-hidden="true"> &gt; </span><span>${project}</span>`;
+  const project = esc(nextBreadcrumbProjectLabel(nextRoute.project));
+  if(nextRoute.view === "project") return overview;
   const projectRoute = esc(nextRouteToken({view: "project", project: nextRoute.project}));
   return `${overview}<span aria-hidden="true"> &gt; </span>` +
     `<button type="button" class="next-crumb" data-next-route="${projectRoute}">${project}</button>` +
@@ -27,8 +32,10 @@ function nextCounts(){
   const rows = nextRows();
   const summary = nextData && nextData.summary ? nextData.summary : {};
   const projects = new Set(rows.map(row => String(row.project || ""))).size;
-  const subagents = rows.reduce(
-    (total, row) => total + (Array.isArray(row.subagents) ? row.subagents.length : 0),
+  const activeChildren = rows.filter(row => row.state === "working").reduce(
+    (total, row) => total + (Array.isArray(row.subagent_hierarchy)
+      ? row.subagent_hierarchy.length
+      : Array.isArray(row.subagents) ? row.subagents.length : 0),
     0,
   );
   return {
@@ -36,7 +43,7 @@ function nextCounts(){
     projects,
     running: Number(summary.working) || 0,
     sessions: rows.length,
-    subagents,
+    activeChildren,
   };
 }
 
@@ -70,6 +77,7 @@ function nextViewBody(counts){
 function renderNext(){
   const app = document.getElementById("app");
   if(!app) return;
+  nextCockpitBeforeRender();
   const counts = nextCounts();
   const gate = counts.gates > 0
     ? `<button type="button" class="next-gate" data-next-action="needs-input">${counts.gates} need you</button>`
@@ -77,18 +85,26 @@ function renderNext(){
   const stalled = nextRefreshFailures >= 2
     ? '<div class="next-stalled" data-next-state="stalled" role="status">Refresh stalled</div>'
     : "";
+  const running = `${nextStatusDot("live")} All projects · ${counts.running} running` +
+    (counts.activeChildren ? ` · ${counts.activeChildren} active ` +
+      `${counts.activeChildren === 1 ? "child" : "children"}` : "");
+  const projectDetail = nextRoute.view === "project";
+  const utility = projectDetail && typeof nextCockpitUtilityMenuItems === "function"
+    ? nextCockpitUtilityMenuItems() : "";
   app.innerHTML = '<header class="next-header">' +
     `<nav class="next-breadcrumb" aria-label="Breadcrumb">${nextBreadcrumb()}</nav>` +
     '<div class="next-header-right">' +
-    `<span class="next-running next-live">${nextStatusDot("live")} ${counts.running} running · ${counts.subagents} subagents</span>` +
+    (projectDetail ? "" : `<span class="next-running next-live">${running}</span>`) +
     gate +
     '<details class="next-menu"><summary aria-label="More">···</summary>' +
     '<div class="next-menu-items">' +
+    (projectDetail ? `<span class="next-menu-status">${running}</span>${utility}` : "") +
     '<button type="button" data-next-action="projects">projects overview <kbd>p</kbd></button>' +
     '<button type="button" data-next-action="sessions">flat session list <kbd>s</kbd></button>' +
     '<button type="button" data-next-action="dashboard">dashboard mode <kbd>d</kbd></button>' +
     "</div></details></div></header>" +
     stalled + nextViewBody(counts);
+  nextCockpitAfterRender();
 }
 
 function navigateNext(route){
@@ -138,6 +154,7 @@ document.addEventListener("keydown", event => {
   const tag = event.target && String(event.target.tagName || "").toLowerCase();
   if(event.metaKey || event.ctrlKey || event.altKey) return;
   if(nextControlsHandleKeydown(event)) return;
+  if(nextCockpitHandleKeydown(event)) return;
   if(nextWorkstreamToggleTarget(event) && ["Enter", " ", "Spacebar"].includes(event.key)){
     event.preventDefault();
     nextWorkstreamToggle();

@@ -125,7 +125,7 @@ function clearedPanel(d){
 function modeBar(){
   const btn = k => `<button type="button" class="modebtn${displayMode === k ? " on" : ""}"` +
     ` data-calm="mode" data-arg="${k}" aria-pressed="${displayMode === k}">${k}</button>`;
-  /* `stop` is past a divider on purpose. Two of these three buttons swap a view
+  /* `stop` is past a divider on purpose. These buttons swap a view
      and the third ends the server, and sitting them in one undifferentiated
      group put an irreversible action one slip away from a display toggle. */
   /* The handled chip goes here rather than beside calm's filter chips, and that
@@ -137,8 +137,7 @@ function modeBar(){
   return `<div class="modebar">` + clearedChip(lastData) +
     `<span class="modebar-k">display</span>` +
     `<div class="modeseg" role="group" aria-label="display mode">` +
-    btn("regular") + btn("calm") + btn("session") + `</div>` +
+    btn("regular") + btn("calm") + btn("project") + btn("session") + `</div>` +
     `<span class="modebar-split" aria-hidden="true"></span>` + stopControl() + `</div>` +
     clearedPanel(lastData);
 }
-

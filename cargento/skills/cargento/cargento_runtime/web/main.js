@@ -28,6 +28,10 @@ function render(d){
     document.title = (queue.length > 0 ? `(${queue.length}!) ` : "") + "Cargento";
     return;
   }
+  if(displayMode !== "project" && projectTerminalOpenKey){
+    projectTerminalOpenKey = null;
+    projectTerminalDispose();
+  }
   if(displayMode === "calm"){
     // Carry the outgoing ledger's scroll offset across the DOM swap — unless
     // the last action re-filtered the list, where the old offset is meaningless.
@@ -45,6 +49,28 @@ function render(d){
     renderInProgress = false;
     calmRestoreScroll();
     calmRestoreFocus(focusKey);
+    restoreStopFocus();
+    document.title = (queue.length > 0 ? `(${queue.length}!) ` : "") + "Cargento";
+    return;
+  }
+  if(displayMode === "project"){
+    /* Keep an in-progress browser goal through the five-second live repaint.
+       A saved goal survives through localStorage; this draft exists only to
+       stop the refresh loop from erasing text while the operator is typing. */
+    const projectDraft = projectCaptureDraft();
+    /* Native <details> state lives only in the DOM. Capture it before the
+       live revision swaps #app so an explicit open or close survives. */
+    projectCaptureDisclosureStates();
+    const projectControlFocus = calmFocusKey();
+    const projectTerminalScreen = projectTerminalBeforeRender();
+    renderInProgress = true;
+    app.className = "wrap project";
+    app.innerHTML = modeBar() + usageBanner(d, true) + projectView(d, projectDraft);
+    renderInProgress = false;
+    projectTerminalAfterRender(projectTerminalScreen);
+    projectRestoreFocus(projectDraft);
+    calmRestoreFocus(projectControlFocus);
+    projectLoadContext(d);
     restoreStopFocus();
     document.title = (queue.length > 0 ? `(${queue.length}!) ` : "") + "Cargento";
     return;

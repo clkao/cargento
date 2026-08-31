@@ -92,8 +92,10 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
 
         self.assertIn('data-next-view-body="project"', html)
         self.assertIn('data-next-project-detail="alpha/repo"', html)
-        self.assertIn("data-next-project-main", html)
-        self.assertIn("data-next-project-rail", html)
+        self.assertNotIn("data-next-project-main", html)
+        self.assertNotIn("data-next-project-rail", html)
+        self.assertIn("data-next-cockpit-plan-details", html)
+        self.assertIn("<summary>Show project plan</summary>", html)
         self.assertIn('class="next-project-detail-name">alpha/repo</', html)
         self.assertIn("launch", html)
         self.assertIn("audit", html)
@@ -156,11 +158,11 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         self.assertIsNotNone(status)
         status_html = status.group(0) if status else ""
         self.assertIn(
-            "no estimate left · no confidence</span>"
-            '<span class="next-project-detail-divider" aria-hidden="true">|</span>'
-            "<span>2 entities unhealthy — <span data-next-withheld>estimate withheld",
+            "2 entities unhealthy — <span data-next-withheld>estimate withheld",
             status_html,
         )
+        self.assertNotIn("no estimate left", status_html)
+        self.assertNotIn("no confidence", status_html)
 
     def test_the_unhealthy_entity_label_uses_the_singular(self) -> None:
         html = self.render(
@@ -225,13 +227,54 @@ console.log(JSON.stringify({fresh, stale, older, floor: NEXT_PROJECT_STALLED_SEC
         self.assertNotIn("in review", plans)
         self.assertNotIn("failed", plans)
 
-    def test_the_three_spacedock_empty_states_are_distinct(self) -> None:
+    def test_project_discovery_renders_two_workflows_without_session_attachment_metadata(
+        self,
+    ) -> None:
+        checks = """
+await __settle();
+await __settle();
+console.log(JSON.stringify(__els.app.innerHTML));
+"""
+        html = self._run_page_js(
+            checks,
+            """
+location.hash = "#n=project:plain%2Frepo";
+__els.app = {innerHTML: ""};
+const dashboard = {
+  generated: 10000, rate_window_sec: 600, window_hours: 24,
+  summary: {working: 0, needs_input: 0}, harnesses: [], sessions: [
+    {sid: "plain", harness: "codex", project: "plain/repo", project_key: "git:plain",
+     state: "idle", active: true, spacedock: null, subagents: []}
+  ]
+};
+__fetchImpl = async url => ({ok: true, json: async () =>
+  String(url).startsWith("/api/project-context") ? {
+    workflow_discovery: {state: "observed", source: "spacedock status --discover", workflows: [
+      {workflow: "dev", goal: "Build safely", stages: ["shaping", "review"]},
+      {workflow: "explore", goal: "Explore safely", stages: ["discovery", "shaping"]}
+    ]}, semantic: {facts: [], work_items: [], projections: {}}
+  } : dashboard});
+""",
+        )
+        assert isinstance(html, str)
+
+        self.assertEqual(2, html.count("data-next-workflow-definition="))
+        self.assertIn('data-next-workflow-definition="dev"', html)
+        self.assertIn('data-next-workflow-definition="explore"', html)
+        self.assertIn("Build safely", html)
+        self.assertIn("Explore safely", html)
+        self.assertNotIn("declares no workflow", html)
+        self.assertNotIn("data-next-plan=", html)
+
+    def test_workflow_observation_states_keep_their_sources_distinct(self) -> None:
         checks = """
 await __settle();
 const cases = {};
 for(const project of ["plain/repo", "empty/fo", "worker/repo"]){
   nextRoute = {view: "project", project, session: null};
   renderNext();
+  await __settle();
+  await __settle();
   cases[project] = __els.app.innerHTML;
 }
 console.log(JSON.stringify(cases));
@@ -241,7 +284,7 @@ console.log(JSON.stringify(cases));
             """
 location.hash = "#n=project:plain%2Frepo";
 __els.app = {innerHTML: ""};
-__fetchImpl = async () => ({ok: true, json: async () => ({
+const dashboard = {
   generated: 10000, rate_window_sec: 600, window_hours: 24,
   summary: {working: 0, needs_input: 0}, harnesses: [], sessions: [
     {sid: "plain", project: "plain/repo", state: "idle", spacedock: null, subagents: []},
@@ -250,16 +293,34 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
     {sid: "worker", project: "worker/repo", state: "working",
      spacedock: {role: "ensign", workflows: []}, subagents: []}
   ]
-})});
+};
+const contexts = {
+  "plain/repo": {workflow_discovery: {state: "none", workflows: []},
+    semantic: {facts: [], work_items: [], projections: {}}},
+  "empty/fo": {workflow_discovery: {state: "unavailable", reason: "project root unavailable", workflows: []},
+    semantic: {facts: [], work_items: [], projections: {}}},
+  "worker/repo": {workflow_discovery: {state: "error", reason: "discovery timed out", workflows: []},
+    semantic: {facts: [], work_items: [{kind: "workflow_item"}], projections: {}}}
+};
+__fetchImpl = async url => ({ok: true, json: async () => {
+  const value = String(url);
+  if(!value.startsWith("/api/project-context")) return dashboard;
+  const project = decodeURIComponent((value.match(/[?&]project=([^&]+)/) || [])[1] || "");
+  return contexts[project];
+}});
 """,
         )
         assert isinstance(out, dict)
 
-        self.assertIn("declares no workflow", out["plain/repo"])
-        self.assertIn("nothing is fresh enough to show", out["empty/fo"])
-        self.assertIn("plan lives with its first officer", out["worker/repo"])
+        self.assertNotIn("no commissioned workflow directories", out["plain/repo"])
+        self.assertNotIn("first-officer attachment", out["empty/fo"])
+        self.assertIn("project root unavailable", out["empty/fo"])
+        self.assertNotIn("semantic timeline", out["worker/repo"])
+        self.assertIn("discovery timed out", out["worker/repo"])
         for html in out.values():
+            self.assertNotIn("Show project plan", html)
             self.assertNotIn("data-next-plan=", html)
+            self.assertNotIn("declares no workflow", html)
             self.assertNotIn("unhealthy", html)
             self.assertNotRegex(html, r"\bsteps?\b")
             self.assertNotIn("next-project-detail-divider", html)

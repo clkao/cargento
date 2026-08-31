@@ -1,0 +1,727 @@
+from __future__ import annotations
+
+import dataclasses
+import http.client
+import json
+import os
+import socket
+import stat
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from typing import Any
+from unittest import mock
+
+from cargento_runtime import cli, http_api
+from cargento_runtime import interaction_prototype as interaction
+
+from .support import PAGE_BYTES, build_app, make_server
+
+
+class FakeTmuxAdapter:
+    """Exercise the registry over HTTP without requiring tmux on every runner."""
+
+    def __init__(self) -> None:
+        self.connected_value = False
+        self.prepare_count = 0
+        self.capture_count = 0
+        self.stream_frame_count = 0
+        self.registration_token = ""
+        self.cargento_session_id = ""
+        self.origin: interaction.TmuxOrigin | None = None
+        self.inspected_origin: interaction.TmuxOrigin | None = None
+        self.on_output: Any = None
+        self.on_disconnect: Any = None
+        self.renewal_stop = threading.Event()
+        self.renewal_thread: threading.Thread | None = None
+
+    def prepare(self) -> interaction.TmuxOrigin:
+        self.prepare_count += 1
+        self.connected_value = True
+        self.renewal_stop = threading.Event()
+        suffix = str(self.prepare_count)
+        return interaction.TmuxOrigin(
+            server_socket=f"/tmp/disposable-{suffix}.sock",
+            server_pid=f"10{suffix}",
+            session_id=f"${suffix}",
+            session_name=f"disposable-{suffix}",
+            window_id=f"@{suffix}",
+            window_index="0",
+            window_name="registered-origin",
+            pane_id=f"%{suffix}",
+            pane_index="0",
+            pane_tty=f"/dev/pts/{suffix}",
+            pane_cols="202",
+            pane_rows="58",
+        )
+
+    def start_client(
+        self,
+        port: int,
+        registration_token: str,
+        cargento_session_id: str,
+        lease_sec: float,
+        origin: interaction.TmuxOrigin,
+    ) -> None:
+        self.registration_token = registration_token
+        self.cargento_session_id = cargento_session_id
+        self.origin = origin
+
+        def register_and_renew() -> None:
+            status, registered = interaction.request(
+                port,
+                "POST",
+                "/api/interaction/register",
+                {
+                    "registration_token": registration_token,
+                    "cargento_session_id": cargento_session_id,
+                    "origin": origin.as_dict(),
+                },
+            )
+            if status != 200 or registered.get("state") != "registered":
+                return
+            origin_id = registered["origin_id"]
+            lease_token = registered["lease_token"]
+            interval = max(0.01, lease_sec / 3)
+            while not self.renewal_stop.wait(interval):
+                try:
+                    _status, result = interaction.request(
+                        port,
+                        "POST",
+                        "/api/interaction/renew",
+                        {"origin_id": origin_id, "lease_token": lease_token},
+                    )
+                except OSError:
+                    return
+                if result.get("state") != "renewed":
+                    return
+
+        self.renewal_thread = threading.Thread(target=register_and_renew, daemon=True)
+        self.renewal_thread.start()
+
+    def bind_origin(self, origin: interaction.TmuxOrigin) -> None:
+        if self.origin is not None and origin != self.origin:
+            raise interaction.OriginUnavailableError("fake external origin changed")
+        self.origin = origin
+
+    def start_read_only_stream(
+        self,
+        origin: interaction.TmuxOrigin,
+        on_output: Any,
+        on_disconnect: Any,
+    ) -> None:
+        self.on_output = on_output
+        self.on_disconnect = on_disconnect
+        self.emit_frame(origin)
+
+    def stop_read_only_stream(self) -> None:
+        callback = self.on_disconnect
+        self.on_disconnect = None
+        if callback is not None:
+            callback()
+
+    def emit_frame(self, origin: interaction.TmuxOrigin | None = None) -> None:
+        active_origin = origin or self.origin
+        if active_origin is None or self.on_output is None:
+            return
+        self.stream_frame_count += 1
+        self.on_output(active_origin.pane_id, f"stream frame {self.stream_frame_count}\n")
+
+    def inspect(self, origin: interaction.TmuxOrigin) -> interaction.TmuxOrigin:
+        if not self.connected_value:
+            raise interaction.OriginUnavailableError("fake tmux disconnected")
+        return self.inspected_origin or origin
+
+    def capture(self, origin: interaction.TmuxOrigin) -> str:
+        self.inspect(origin)
+        self.capture_count += 1
+        return f"Cargento skill-shaped origin client\nframe {self.capture_count}\n"
+
+    def connected(self, _origin: interaction.TmuxOrigin) -> bool:
+        return self.connected_value
+
+    def stop(self) -> None:
+        self.stop_read_only_stream()
+        self.connected_value = False
+        self.renewal_stop.set()
+        if self.renewal_thread is not None:
+            self.renewal_thread.join(1.0)
+            self.renewal_thread = None
+
+
+class InteractionPrototypeHTTPTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.adapter = FakeTmuxAdapter()
+        self.prototype = interaction.InteractionPrototype(self.adapter, lease_sec=0.3)
+        self.httpd = http_api.CargentoHTTPServer(
+            ("127.0.0.1", 0),
+            build_app(),
+            PAGE_BYTES,
+            interaction_prototype=self.prototype,
+        )
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(2.0)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        connection = http.client.HTTPConnection(
+            "127.0.0.1",
+            self.httpd.server_port,
+            timeout=2,
+        )
+        raw = None if body is None else json.dumps(body).encode()
+        headers = {"Content-Type": "application/json"} if raw is not None else {}
+        try:
+            connection.request(method, path, body=raw, headers=headers)
+            response = connection.getresponse()
+            response_body = response.read()
+            try:
+                result = json.loads(response_body or b"{}")
+            except ValueError:
+                result = {}
+            return response.status, result if isinstance(result, dict) else {}
+        finally:
+            connection.close()
+
+    def _open_stream(self) -> socket.socket:
+        client = socket.create_connection(("127.0.0.1", self.httpd.server_port), timeout=2)
+        request = (
+            "GET /api/interaction/stream HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{self.httpd.server_port}\r\n"
+            f"Origin: http://127.0.0.1:{self.httpd.server_port}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+        )
+        client.sendall(request.encode("ascii"))
+        headers = bytearray()
+        while not headers.endswith(b"\r\n\r\n"):
+            headers.extend(client.recv(1))
+        self.assertIn(b" 101 ", headers)
+        return client
+
+    @staticmethod
+    def _read_stream_frame(client: socket.socket) -> tuple[int, bytes]:
+        header = client.recv(2)
+        if len(header) != 2:
+            raise AssertionError("incomplete WebSocket frame header")
+        length = header[1] & 0x7F
+        if length == 126:
+            length = int.from_bytes(client.recv(2), "big")
+        elif length == 127:
+            length = int.from_bytes(client.recv(8), "big")
+        payload = bytearray()
+        while len(payload) < length:
+            payload.extend(client.recv(length - len(payload)))
+        return header[0] & 0x0F, bytes(payload)
+
+    def test_exact_tmux_origin_renews_and_attaches_read_only(self) -> None:
+        status, initial = self._request("GET", "/api/interaction/state")
+        self.assertEqual(200, status)
+        self.assertEqual("registered", initial["origin_state"])
+        self.assertEqual("codex:disposable-tmux-origin:1", initial["cargento_session_id"])
+        self.assertEqual("read-only-control-stream", initial["terminal_power"])
+        self.assertEqual("not-exposed", initial["keyboard_input"])
+        self.assertEqual(
+            {
+                "server_socket",
+                "server_pid",
+                "session_id",
+                "session_name",
+                "window_id",
+                "window_index",
+                "window_name",
+                "pane_id",
+                "pane_index",
+                "pane_tty",
+                "pane_cols",
+                "pane_rows",
+            },
+            set(initial["origin"]),
+        )
+
+        _status, first_view = self._request("GET", "/api/interaction/view")
+        self.adapter.emit_frame()
+        assert self.adapter.on_output is not None
+        self.adapter.on_output("%altered", "must-not-select\n")
+        _status, reconnected_view = self._request("GET", "/api/interaction/view")
+        self.assertEqual("viewed", first_view["state"])
+        self.assertEqual(first_view["origin_id_hint"], reconnected_view["origin_id_hint"])
+        self.assertEqual("tmux-control-mode-read-only", first_view["bridge"])
+        self.assertEqual("output-only-WebSocket", first_view["browser_transport"])
+        self.assertTrue(first_view["terminal_attachment"])
+        self.assertFalse(first_view["browser_pty"])
+        self.assertEqual("not-exposed", first_view["keyboard_input"])
+        self.assertEqual(1, first_view["capture_sequence"])
+        self.assertEqual(2, reconnected_view["capture_sequence"])
+        self.assertNotEqual(first_view["text"], reconnected_view["text"])
+        self.assertNotIn("must-not-select", reconnected_view["text"])
+        self.assertEqual(0, self.adapter.capture_count)
+
+        time.sleep(0.12)
+        _status, renewed = self._request("GET", "/api/interaction/state")
+        self.assertGreaterEqual(renewed["renewal_count"], 1)
+        self.assertEqual("registered", renewed["origin_state"])
+
+    def test_stale_unregistered_spoofed_and_keyboard_paths_are_refused(self) -> None:
+        self._request("GET", "/api/interaction/state")
+        _status, unregistered = self._request(
+            "POST",
+            "/api/interaction/probe-unregistered",
+            {},
+        )
+        self.assertEqual(
+            {"state": "refused", "reason": "unregistered-origin"},
+            unregistered,
+        )
+        assert self.adapter.origin is not None
+        _status, repeated = self._request(
+            "POST",
+            "/api/interaction/register",
+            {
+                "registration_token": self.adapter.registration_token,
+                "cargento_session_id": self.adapter.cargento_session_id,
+                "origin": self.adapter.origin.as_dict(),
+            },
+        )
+        self.assertEqual(
+            {"state": "refused", "reason": "registration-token-consumed"},
+            repeated,
+        )
+        _status, altered_session = self._request(
+            "POST",
+            "/api/interaction/register",
+            {
+                "registration_token": self.adapter.registration_token,
+                "cargento_session_id": "codex:altered-session",
+                "origin": self.adapter.origin.as_dict(),
+            },
+        )
+        self.assertEqual(
+            {"state": "refused", "reason": "session-mismatch"},
+            altered_session,
+        )
+        _status, spoofed = self._request("POST", "/api/interaction/probe-spoofed", {})
+        self.assertEqual({"state": "refused", "reason": "origin-mismatch"}, spoofed)
+
+        input_status, input_refusal = self._request(
+            "POST",
+            "/api/interaction/input",
+            {"text": "must not reach tmux"},
+        )
+        self.assertEqual(200, input_status)
+        self.assertEqual(
+            {"state": "refused", "reason": "read-only-capability"},
+            input_refusal,
+        )
+        _status, control = self._request(
+            "POST",
+            "/api/interaction/control",
+            {"t": "cmd", "argv": ["send-keys", "-t", "%1", "must-not-arrive"]},
+        )
+        self.assertEqual({"state": "refused", "reason": "read-only-capability"}, control)
+        self.assertEqual(0, self.adapter.capture_count)
+        _status, unchanged = self._request("GET", "/api/interaction/view")
+        self.assertNotIn("must not reach tmux", unchanged["text"])
+        self.assertNotIn("must-not-arrive", unchanged["text"])
+
+        _status, expired = self._request("POST", "/api/interaction/expire", {})
+        self.assertEqual("stale", expired["origin_state"])
+        _status, stale_view = self._request("GET", "/api/interaction/view")
+        self.assertEqual({"state": "refused", "reason": "stale-registration"}, stale_view)
+        time.sleep(0.12)
+        _status, still_stale = self._request("GET", "/api/interaction/state")
+        self.assertEqual("stale", still_stale["origin_state"])
+
+    def test_browser_cannot_name_origin_and_disconnect_is_not_success(self) -> None:
+        _status, initial = self._request("GET", "/api/interaction/state")
+        target_status, _body = self._request(
+            "GET",
+            "/api/interaction/view?pane_id=%25arbitrary&server_socket=%2Ftmp%2Fother",
+        )
+        self.assertEqual(400, target_status)
+
+        _status, disconnected = self._request("POST", "/api/interaction/disconnect", {})
+        self.assertTrue(disconnected["connected"])
+        self.assertFalse(disconnected["stream_connected"])
+        _status, unknown = self._request("GET", "/api/interaction/view")
+        self.assertEqual({"state": "unknown", "reason": "control-mode-disconnected"}, unknown)
+
+        _status, reconnected = self._request("POST", "/api/interaction/reconnect", {})
+        self.assertEqual("reconnected", reconnected["state"])
+        assert self.adapter.origin is not None
+        self.assertEqual(initial["origin"]["pane_id"], self.adapter.origin.pane_id)
+        _status, same_origin = self._request("GET", "/api/interaction/view")
+        self.assertEqual("viewed", same_origin["state"])
+        self.assertEqual(reconnected["origin_id_hint"], same_origin["origin_id_hint"])
+
+        _status, reset = self._request("POST", "/api/interaction/reset", {})
+        self.assertGreater(reset["generation"], initial["generation"])
+        self.assertNotEqual(reset["origin"]["server_socket"], initial["origin"]["server_socket"])
+        _status, restored = self._request("GET", "/api/interaction/view")
+        self.assertEqual("viewed", restored["state"])
+
+    def test_output_websocket_streams_and_rejects_every_client_frame(self) -> None:
+        self._request("GET", "/api/interaction/state")
+        client = self._open_stream()
+        try:
+            opcode, payload = self._read_stream_frame(client)
+            frame = json.loads(payload)
+            self.assertEqual(1, opcode)
+            self.assertEqual("streamed", frame["state"])
+            self.assertTrue(frame["reset"])
+            self.assertIn("stream frame 1", frame["data"])
+            self.assertEqual((202, 58), (frame["cols"], frame["rows"]))
+            self.assertEqual(
+                [{"sequence": 1, "data": "stream frame 1\n", "cols": 202, "rows": 58}],
+                frame["chunks"],
+            )
+
+            origin = self.adapter.origin
+            assert origin is not None
+            self.adapter.inspected_origin = dataclasses.replace(
+                origin,
+                pane_cols="210",
+                pane_rows="60",
+            )
+            self.adapter.emit_frame()
+            opcode, payload = self._read_stream_frame(client)
+            delta = json.loads(payload)
+            self.assertEqual(1, opcode)
+            self.assertFalse(delta["reset"])
+            self.assertEqual((210, 60), (delta["cols"], delta["rows"]))
+            self.assertEqual(
+                [{"sequence": 2, "data": "stream frame 2\n", "cols": 210, "rows": 60}],
+                delta["chunks"],
+            )
+
+            mask = b"deny"
+            text = b"send-keys"
+            masked = bytes(value ^ mask[index % 4] for index, value in enumerate(text))
+            client.sendall(bytes((0x81, 0x80 | len(text))) + mask + masked)
+            opcode, payload = self._read_stream_frame(client)
+            self.assertEqual(8, opcode)
+            self.assertEqual(1008, int.from_bytes(payload[:2], "big"))
+            self.assertEqual(b"read-only-capability", payload[2:])
+        finally:
+            client.close()
+
+
+class InteractionPrototypeDisabledTest(unittest.TestCase):
+    def test_normal_dashboard_has_no_prototype_routes(self) -> None:
+        httpd = make_server()
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=2)
+            connection.request("GET", "/api/interaction/state")
+            response = connection.getresponse()
+            self.assertEqual(404, response.status)
+            response.read()
+            connection.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(2.0)
+
+
+class SessionEnvironmentTest(unittest.TestCase):
+    def test_only_exact_known_harness_session_environment_matches(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CODEX_THREAD_ID": "exact-codex",
+                "CLAUDE_CODE_SESSION_ID": "exact-claude",
+            },
+            clear=True,
+        ):
+            self.assertTrue(interaction._session_environment_matches("codex:exact-codex"))
+            self.assertTrue(interaction._session_environment_matches("claude:exact-claude"))
+            self.assertFalse(interaction._session_environment_matches("codex:altered"))
+            self.assertFalse(interaction._session_environment_matches("unknown:exact-codex"))
+
+
+class CollectedSessionCliBoundaryTest(unittest.TestCase):
+    def test_interaction_flags_are_an_exact_pair(self) -> None:
+        parser = cli.build_parser()
+        for argv in (
+            ["--interaction-origin-session", "codex:exact"],
+            ["--interaction-origin-registration-file", "/tmp/exact-origin.json"],
+        ):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                cli.validate_interaction_args(parser, parser.parse_args(argv))
+
+    def test_only_prelisten_collected_session_ids_enter_registration_boundary(self) -> None:
+        application = mock.Mock()
+        application.collect_json.return_value = (
+            (1, 1),
+            json.dumps(
+                {
+                    "sessions": [
+                        {"harness": "codex", "sid": "exact"},
+                        {"harness": "codex", "sid": 7},
+                        {"harness": "pi"},
+                    ]
+                }
+            ),
+        )
+        self.assertEqual(frozenset({"codex:exact"}), cli.collected_session_ids(application))
+        application.collect_json.assert_called_once_with(show_all=True)
+
+
+class CollectedSessionOriginHTTPTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.registration_file = Path(self.temporary.name) / "origin.json"
+        self.session_id = "codex:01a035ee-2a7b-76f0-873f-eaddc97860c3"
+        self.adapter = FakeTmuxAdapter()
+        self.origin = self.adapter.prepare()
+        self.adapter.origin = self.origin
+        self.prototype = interaction.InteractionPrototype(
+            self.adapter,
+            lease_sec=0.3,
+            collected_session_id=self.session_id,
+            session_exists=lambda value: value == self.session_id,
+            registration_file=self.registration_file,
+        )
+        self.httpd = http_api.CargentoHTTPServer(
+            ("127.0.0.1", 0),
+            build_app(),
+            PAGE_BYTES,
+            interaction_prototype=self.prototype,
+        )
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(2.0)
+        self.temporary.cleanup()
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        connection = http.client.HTTPConnection(
+            "127.0.0.1",
+            self.httpd.server_port,
+            timeout=2,
+        )
+        raw = None if body is None else json.dumps(body).encode()
+        headers = {"Content-Type": "application/json"} if raw is not None else {}
+        try:
+            connection.request(method, path, body=raw, headers=headers)
+            response = connection.getresponse()
+            raw_response = response.read()
+            value = json.loads(raw_response or b"{}")
+            return response.status, value if isinstance(value, dict) else {}
+        finally:
+            connection.close()
+
+    def test_new_server_generation_atomically_supersedes_old_bootstrap(self) -> None:
+        adapter_a = FakeTmuxAdapter()
+        adapter_b = FakeTmuxAdapter()
+        adapter_a.prepare()
+        origin_b = adapter_b.prepare()
+        prototype_a = interaction.InteractionPrototype(
+            adapter_a,
+            collected_session_id=self.session_id,
+            session_exists=lambda value: value == self.session_id,
+            registration_file=self.registration_file,
+        )
+        prototype_b = interaction.InteractionPrototype(
+            adapter_b,
+            collected_session_id=self.session_id,
+            session_exists=lambda value: value == self.session_id,
+            registration_file=self.registration_file,
+        )
+        prototype_a.start(8766)
+        bootstrap_a = json.loads(self.registration_file.read_text(encoding="utf-8"))
+        prototype_b.start(8766)
+        bootstrap_b = json.loads(self.registration_file.read_text(encoding="utf-8"))
+
+        self.assertNotEqual(bootstrap_a["registration_token"], bootstrap_b["registration_token"])
+        self.assertNotEqual(bootstrap_a["server_generation"], bootstrap_b["server_generation"])
+        prototype_a.stop()
+        self.assertEqual(
+            bootstrap_b,
+            json.loads(self.registration_file.read_text(encoding="utf-8")),
+        )
+        self.assertEqual(
+            {"state": "refused", "reason": "invalid-registration-token"},
+            prototype_b.register(
+                bootstrap_a["registration_token"],
+                self.session_id,
+                origin_b.as_dict(),
+                now=1.0,
+            ),
+        )
+        registered = prototype_b.register(
+            bootstrap_b["registration_token"],
+            self.session_id,
+            origin_b.as_dict(),
+            now=1.0,
+        )
+        self.assertEqual("registered", registered["state"])
+        self.assertEqual(
+            {"state": "refused", "reason": "registration-token-consumed"},
+            prototype_b.register(
+                bootstrap_b["registration_token"],
+                self.session_id,
+                origin_b.as_dict(),
+                now=1.0,
+            ),
+        )
+        prototype_b.stop()
+        self.assertFalse(self.registration_file.exists())
+
+    def test_collected_session_bootstrap_resolves_only_exact_live_origin(self) -> None:
+        _status, waiting = self._request("GET", "/api/interaction/state")
+        self.assertEqual("unregistered", waiting["origin_state"])
+        self.assertEqual("awaiting-session-registration", waiting["reason"])
+        self.assertEqual(self.session_id, waiting["cargento_session_id"])
+        self.assertEqual(0o600, stat.S_IMODE(self.registration_file.stat().st_mode))
+        bootstrap = json.loads(self.registration_file.read_text(encoding="utf-8"))
+
+        _status, registered = self._request(
+            "POST",
+            "/api/interaction/register",
+            {
+                "registration_token": bootstrap["registration_token"],
+                "cargento_session_id": self.session_id,
+                "origin": self.origin.as_dict(),
+            },
+        )
+        self.assertEqual("registered", registered["state"])
+        harness, sid = self.session_id.split(":", 1)
+        _status, resolved = self._request(
+            "GET",
+            f"/api/interaction/origin?harness={harness}&sid={sid}",
+        )
+        self.assertEqual("registered", resolved["state"])
+        self.assertEqual(self.origin.as_dict(), resolved["origin"])
+        self.assertEqual("read-only-control-stream", resolved["terminal_power"])
+
+        renamed = dataclasses.replace(
+            self.origin,
+            session_name="renamed-session",
+            window_index="9",
+            window_name="automatic-rename",
+            pane_index="4",
+            pane_cols="210",
+            pane_rows="60",
+        )
+        self.adapter.inspected_origin = renamed
+        _status, renewed = self._request(
+            "POST",
+            "/api/interaction/renew",
+            {
+                "origin_id": registered["origin_id"],
+                "lease_token": registered["lease_token"],
+            },
+        )
+        self.assertEqual("renewed", renewed["state"])
+        _status, renamed_result = self._request(
+            "GET",
+            f"/api/interaction/origin?harness={harness}&sid={sid}",
+        )
+        self.assertEqual("registered", renamed_result["state"])
+        self.assertEqual(renamed.as_dict(), renamed_result["origin"])
+        _status, renamed_state = self._request("GET", "/api/interaction/state")
+        self.assertEqual(renamed.as_dict(), renamed_state["origin"])
+        self.adapter.inspected_origin = None
+
+        _status, wrong_session = self._request(
+            "GET",
+            "/api/interaction/origin?harness=codex&sid=altered",
+        )
+        self.assertEqual(
+            {"state": "refused", "reason": "session-mismatch"},
+            wrong_session,
+        )
+        altered = dataclasses.replace(self.origin, pane_id="%altered")
+        _status, wrong_origin = self._request(
+            "POST",
+            "/api/interaction/register",
+            {
+                "registration_token": bootstrap["registration_token"],
+                "cargento_session_id": self.session_id,
+                "origin": altered.as_dict(),
+            },
+        )
+        self.assertEqual({"state": "refused", "reason": "origin-mismatch"}, wrong_origin)
+
+    def test_expired_disconnected_replaced_and_input_paths_refuse(self) -> None:
+        self._request("GET", "/api/interaction/state")
+        bootstrap = json.loads(self.registration_file.read_text(encoding="utf-8"))
+        body = {
+            "registration_token": bootstrap["registration_token"],
+            "cargento_session_id": self.session_id,
+            "origin": self.origin.as_dict(),
+        }
+        self._request("POST", "/api/interaction/register", body)
+        harness, sid = self.session_id.split(":", 1)
+        route = f"/api/interaction/origin?harness={harness}&sid={sid}"
+
+        self.adapter.inspected_origin = dataclasses.replace(
+            self.origin,
+            server_pid="replacement-server-pid",
+        )
+        _status, replaced_server = self._request("GET", route)
+        self.assertEqual(
+            {"state": "unknown", "reason": "origin-changed"},
+            replaced_server,
+        )
+
+        self.adapter.inspected_origin = dataclasses.replace(
+            self.origin,
+            pane_tty="/dev/pts/replaced",
+        )
+        _status, replaced = self._request("GET", route)
+        self.assertEqual({"state": "unknown", "reason": "origin-changed"}, replaced)
+        self.adapter.inspected_origin = None
+        self.adapter.connected_value = False
+        _status, disconnected = self._request("GET", route)
+        self.assertEqual({"state": "unknown", "reason": "origin-disconnected"}, disconnected)
+        self.adapter.connected_value = True
+
+        _status, input_result = self._request(
+            "POST",
+            "/api/interaction/input",
+            {"text": "must-not-arrive"},
+        )
+        self.assertEqual(
+            {"state": "refused", "reason": "read-only-capability"},
+            input_result,
+        )
+        self._request("POST", "/api/interaction/expire", {})
+        _status, expired = self._request("GET", route)
+        self.assertEqual({"state": "refused", "reason": "stale-registration"}, expired)
+
+
+class ControlModeParsingTest(unittest.TestCase):
+    def test_output_parser_decodes_tmux_octal_bytes_and_names_exact_pane(self) -> None:
+        self.assertEqual(
+            ("%7", "hello\r\nλ"),
+            interaction._control_mode_output(b"%output %7 hello\\015\\012\xce\xbb"),
+        )
+        self.assertIsNone(interaction._control_mode_output(b"%session-changed $0 disposable"))
+
+
+if __name__ == "__main__":
+    unittest.main()

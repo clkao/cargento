@@ -1,6 +1,7 @@
 const nextQuery = new URLSearchParams(location.search);
 const NEXT_DUPLICATE_LABEL_LIMIT = "Same label is not proof of the same directory: the label is the" +
   " last two segments of each session's path, so sibling worktrees read alike.";
+const NEXT_PROJECT_TABS = ["now", "course", "decisions", "console"];
 
 const qs = name => nextQuery.get(name);
 const esc = value => String(value == null ? "" : value).replace(/[&<>"']/g,
@@ -21,7 +22,23 @@ function nextRouteFromFragment(fragment){
   const parts = token.split(":");
   if(parts.length === 2 && parts[0] === "project"){
     const project = nextDecodeRoutePart(parts[1]);
-    if(project) return {view: "project", project, session: null};
+    if(project) return {view:"project",project,session:null};
+  }
+  if(parts.length === 3 && parts[0] === "project"){
+    const project = nextDecodeRoutePart(parts[1]);
+    const value = nextDecodeRoutePart(parts[2]);
+    if(project && NEXT_PROJECT_TABS.includes(value)){
+      return {view:"project",project,session:null,tab:value};
+    }
+    if(project && value) return {view:"project",project,session:null,focus:value};
+  }
+  if(parts.length === 4 && parts[0] === "project"){
+    const project = nextDecodeRoutePart(parts[1]);
+    const focus = nextDecodeRoutePart(parts[2]);
+    const tab = nextDecodeRoutePart(parts[3]);
+    if(project && focus && NEXT_PROJECT_TABS.includes(tab)){
+      return {view:"project",project,session:null,focus,tab};
+    }
   }
   if(parts.length === 3 && parts[0] === "session"){
     const project = nextDecodeRoutePart(parts[1]);
@@ -36,7 +53,10 @@ function nextFragmentForRoute(route){
     return `#n=session:${encodeURIComponent(route.project)}:${encodeURIComponent(route.session)}`;
   }
   if(route && route.view === "project" && route.project){
-    return `#n=project:${encodeURIComponent(route.project)}`;
+    const focus = route.focus ? `:${encodeURIComponent(route.focus)}` : "";
+    const tab = NEXT_PROJECT_TABS.includes(route.tab) && route.tab !== "now"
+      ? `:${encodeURIComponent(route.tab)}` : "";
+    return `#n=project:${encodeURIComponent(route.project)}${focus}${tab}`;
   }
   return "#n=overview";
 }
