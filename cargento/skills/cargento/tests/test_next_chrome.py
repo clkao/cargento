@@ -8,10 +8,10 @@ from .next_harness import NEXT_STYLES, NextPageJsHarness
 
 @unittest.skipUnless(shutil.which("node"), "node not available")
 class NextChromeBehaviorTest(NextPageJsHarness):
-    def test_sessions_is_default_and_legacy_overviews_normalize_to_it(self) -> None:
+    def test_sessions_is_default_and_invalid_fragments_normalize_to_it(self) -> None:
         out = self._run_page_js(
             """
-const fragments = ["", "#n=overview", "#n=attention", "#n=unknown"];
+const fragments = ["", "#n=overview", "#n=unknown"];
 const routes = fragments.map(nextRouteFromFragment);
 const repaired = routes.map(nextFragmentForRoute);
 console.log(JSON.stringify({routes, repaired}));
@@ -23,6 +23,17 @@ console.log(JSON.stringify({routes, repaired}));
         for route, repaired in zip(out["routes"], out["repaired"], strict=True):
             self.assertEqual("sessions", route["view"])
             self.assertEqual("#n=sessions", repaired)
+
+    def test_attention_route_round_trips(self) -> None:
+        out = self._run_page_js(
+            """
+const route = nextRouteFromFragment("#n=attention");
+console.log(JSON.stringify({route, fragment: nextFragmentForRoute(route)}));
+"""
+        )
+
+        self.assertEqual({"view": "attention", "project": None, "session": None}, out["route"])
+        self.assertEqual("#n=attention", out["fragment"])
 
     def test_primary_routes_are_native_links_with_current_page(self) -> None:
         out = self._run_page_js(
@@ -75,6 +86,11 @@ console.log(JSON.stringify(rendered));
             NEXT_STYLES,
         )
         self.assertIn(".next-menu button{min-block-size:44px", NEXT_STYLES)
+        self.assertIn(
+            '.next-breadcrumb [aria-current="page"]{display:block;margin-top:4px;'
+            "overflow-wrap:anywhere}",
+            NEXT_STYLES,
+        )
 
     def test_route_survives_load_and_browser_history(self) -> None:
         out = self._run_page_js(
@@ -178,7 +194,7 @@ __els.app = {
         self.assertEqual("copied", out["state"])
         self.assertEqual(out["before"], out["after"])
 
-    def test_breadcrumb_segments_are_clickable_and_escape_walks_up(self) -> None:
+    def test_breadcrumb_segments_mark_current_location_and_escape_walks_up(self) -> None:
         out = self._run_page_js(
             """
 const sessionHtml = __els.app.innerHTML;
@@ -197,14 +213,14 @@ console.log(JSON.stringify({sessionHtml, project, attention, stayed: nextRoute})
         self.assertIn('<a href="#n=projects">Projects</a>', out["sessionHtml"])
         self.assertIn('<a class="next-crumb" href="#n=project:recce">recce</a>', out["sessionHtml"])
         self.assertIn("recce", out["sessionHtml"])
-        self.assertIn("<span>Session</span>", out["sessionHtml"])
+        self.assertIn('<span aria-current="page">Session</span>', out["sessionHtml"])
         self.assertNotIn("<span>019a</span>", out["sessionHtml"])
         self.assertEqual(
             {"view": "project", "project": "recce", "session": None},
             out["project"],
         )
         self.assertEqual(
-            {"view": "sessions", "project": None, "session": None},
+            {"view": "attention", "project": None, "session": None},
             out["attention"],
         )
         self.assertEqual(out["attention"], out["stayed"])
@@ -227,13 +243,15 @@ console.log(JSON.stringify({fragments, repaired: location.hash}));
         )
 
         self.assertTrue(all("session=" not in fragment for fragment in out["fragments"]))
-        self.assertEqual("#n=sessions", out["fragments"][0])
+        self.assertEqual("#n=attention", out["fragments"][0])
         self.assertEqual("#n=projects", out["fragments"][1])
         self.assertEqual("#n=sessions", out["fragments"][2])
         self.assertEqual("#n=project:recce%3Acloud", out["fragments"][3])
         self.assertEqual("#n=sessions", out["repaired"])
 
-    def test_shortcuts_select_matching_top_level_routes_and_leave_for_dashboard(self) -> None:
+    def test_shortcuts_select_matching_top_level_routes_and_ignore_retired_dashboard_key(
+        self,
+    ) -> None:
         out = self._run_page_js(
             """
 __fire("keydown", {key: "s", target: {tagName: "BODY"}, preventDefault(){}});
@@ -253,7 +271,7 @@ console.log(JSON.stringify({
   keydownListeners: (__listeners.keydown || []).length
 }));
 """,
-            'location.search = "?next=true";\nlocation.hash = "#n=project:recce";\n'
+            'location.search = "?all=1";\nlocation.hash = "#n=project:recce";\n'
             '__els.app = {innerHTML: ""};\n',
         )
 
@@ -268,12 +286,13 @@ console.log(JSON.stringify({
         self.assertEqual("#n=projects", out["projects"]["hash"])
         self.assertIn("<h1>Projects</h1>", out["projects"]["html"])
         self.assertEqual(
-            {"view": "sessions", "project": None, "session": None}, out["attention"]["route"]
+            {"view": "attention", "project": None, "session": None},
+            out["attention"]["route"],
         )
-        self.assertEqual("#n=sessions", out["attention"]["hash"])
-        self.assertIn("<h1>Session operations</h1>", out["attention"]["html"])
-        self.assertEqual(["/"], out["assigned"])
-        self.assertEqual("?next=true", out["search"])
+        self.assertEqual("#n=attention", out["attention"]["hash"])
+        self.assertIn('<h1 tabindex="-1">Attention</h1>', out["attention"]["html"])
+        self.assertEqual([], out["assigned"])
+        self.assertEqual("?all=1", out["search"])
         self.assertEqual(1, out["keydownListeners"])
 
     def test_projects_shortcut_keeps_modifier_and_form_field_guards(self) -> None:
@@ -643,9 +662,9 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
 """,
         )
 
-        self.assertEqual({"view": "sessions", "project": None, "session": None}, out["route"])
-        self.assertEqual("#n=sessions", out["hash"])
-        self.assertIn("<h1>Session operations</h1>", out["html"])
+        self.assertEqual({"view": "attention", "project": None, "session": None}, out["route"])
+        self.assertEqual("#n=attention", out["hash"])
+        self.assertIn('<h1 tabindex="-1">Attention</h1>', out["html"])
 
     def test_a_payload_with_no_gates_renders_no_pill(self) -> None:
         out = self._run_page_js(
@@ -675,7 +694,8 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         self.assertIn('href="#n=projects"', out)
         self.assertIn('href="#n=sessions"', out)
         self.assertIn("<h1>Session operations</h1>", out)
-        self.assertEqual(1, out.count("dashboard mode"))
+        self.assertNotIn("dashboard mode", out)
+        self.assertNotIn('data-next-action="dashboard"', out)
 
     def test_poll_forwards_only_the_all_flag(self) -> None:
         out = self._run_page_js(
@@ -684,7 +704,7 @@ await __settle();
 console.log(JSON.stringify({calls: __fetchCalls.map(call => call[0]), periods: __intervalPeriods()}));
 """,
             """
-location.search = "?next=true&all=1&view=ignored";
+location.search = "?all=1&view=ignored";
 __els.app = {innerHTML: ""};
 __fetchImpl = async () => ({ok: true, json: async () => ({
   window_hours: 24,
@@ -704,7 +724,7 @@ await __settle();
 console.log(JSON.stringify(__fetchCalls.map(call => call[0])));
 """,
             """
-location.search = "?next=true";
+location.search = "?view=ignored";
 __els.app = {innerHTML: ""};
 __fetchImpl = async () => ({ok: true, json: async () => ({
   window_hours: 24,

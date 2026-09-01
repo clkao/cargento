@@ -111,8 +111,8 @@ def native_notifier(platform_name: str) -> str:
     own browser notification. Exactly one layer notifies for a given
     transition: the server when it has a backend here, the browser when it does
     not. Linux and Windows have no backend yet (tracked in
-    docs/plans/native-notifications.md) — so today the
-    browser covers them and macOS behavior is unchanged.
+    ``docs/plans/native-notifications.md``), so today the browser covers them
+    and macOS behavior is unchanged.
     """
     return "osascript" if platform_name == "darwin" else ""
 

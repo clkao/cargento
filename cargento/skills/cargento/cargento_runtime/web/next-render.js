@@ -25,7 +25,7 @@ function nextDataUrl(){
 }
 
 function nextRefreshRetryMs(){
-  return NEXT_LIVE_SUPPORTED ? NEXT_FALLBACK_POLL_MS : NEXT_LEGACY_POLL_MS;
+  return NEXT_LIVE_SUPPORTED ? NEXT_FALLBACK_POLL_MS : NEXT_UNCOORDINATED_POLL_MS;
 }
 
 async function refreshNext(manual = false){
@@ -43,6 +43,7 @@ async function refreshNext(manual = false){
     const fresh = await response.json();
     if(request !== nextRefreshRequest) return;
     const freshAttention = nextAttentionModel(fresh);
+    nextSyncNotifications(fresh);
     nextObserveWorkstream(fresh);
     focus = nextCaptureFocus();
     const previousAttention = nextData == null ? null : nextAttention;

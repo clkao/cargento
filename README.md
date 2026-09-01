@@ -32,8 +32,8 @@ which one launched it, and it runs standalone with no client installed at all:
 python3 cargento/skills/cargento/server.py --port 4553 --daemon
 ```
 
-`--daemon` detaches so the dashboard keeps running after this shell exits. Stop it from the UI's
-`stop` button or with `--stop`; drop `--daemon` to run it in the foreground instead.
+`--daemon` detaches so the dashboard keeps running after this shell exits. Stop it with `--stop`;
+drop `--daemon` to run it in the foreground instead.
 
 ### Claude Code installation
 
@@ -133,4 +133,4 @@ privately, as described in [SECURITY.md](SECURITY.md).
 
 Cargento's code and documentation are licensed under the [Apache License 2.0](LICENSE). See
 [NOTICE](NOTICE) for attribution. The bundled Space Grotesk and Space Mono font subsets retain their
-SIL Open Font License notices in `cargento/skills/cargento/cargento_runtime/web/next/fonts/`.
+SIL Open Font License notices in `cargento/skills/cargento/cargento_runtime/web/fonts/`.

@@ -164,7 +164,8 @@ function nextBreadcrumb(){
   const project = esc(nextRoute.project);
   if(nextRoute.view === "project"){
     return `${sessions}<span aria-hidden="true"> &gt; </span>${projects}` +
-      `<span aria-hidden="true"> &gt; </span><span>${project}</span>`;
+      `<span class="next-breadcrumb-current-separator" aria-hidden="true"> &gt; </span>` +
+      `<span aria-current="page">${project}</span>`;
   }
   const projectRoute = nextRouteToken({view: "project", project: nextRoute.project});
   const session = nextSessionFind(nextRoute.project, nextRoute.harness, nextRoute.session);
@@ -173,7 +174,8 @@ function nextBreadcrumb(){
     : "Session";
   return `${sessions}<span aria-hidden="true"> &gt; </span>${projects}` +
     `<span aria-hidden="true"> &gt; </span><a class="next-crumb" href="#n=${projectRoute}">${project}</a>` +
-    `<span aria-hidden="true"> &gt; </span><span>${esc(sessionLabel)}</span>`;
+    `<span class="next-breadcrumb-current-separator" aria-hidden="true"> &gt; </span>` +
+    `<span aria-current="page">${esc(sessionLabel)}</span>`;
 }
 
 function nextPrimaryNavigation(){
@@ -247,6 +249,7 @@ function renderNext(focus = nextCaptureFocus()){
   const gate = counts.gates > 0
     ? `<button type="button" class="next-gate" data-next-action="needs-input">${counts.gates} ${gateLabel}</button>`
     : "";
+  const notification = nextNotifyControl(nextData);
   const stalled = nextRefreshNotice();
   const breadcrumb = nextBreadcrumb();
   app.innerHTML = '<header class="next-header">' +
@@ -256,11 +259,7 @@ function renderNext(focus = nextCaptureFocus()){
     "</div>" +
     '<div class="next-header-right">' +
     `<span class="next-running next-live">${nextStatusDot("live")} ${counts.running} running · ${counts.subagents} subagents</span>` +
-    gate +
-    '<details class="next-menu"><summary aria-label="More">···</summary>' +
-    '<div class="next-menu-items">' +
-    '<button type="button" data-next-action="dashboard">dashboard mode <kbd>d</kbd></button>' +
-    "</div></details></div></header>" +
+    gate + notification + "</div></header>" +
     stalled + nextViewBody(counts);
   nextAttentionStatus(app);
   nextRestoreFocus(focus, nextAttention);
@@ -312,6 +311,11 @@ document.addEventListener("click", event => {
     ? event.target.closest("[data-next-action]")
     : null;
   if(!actionTarget) return;
+  if(actionTarget.dataset.nextAction === "enable-notifications"){
+    event.preventDefault();
+    nextRequestNotifyPermission();
+    return;
+  }
   if(actionTarget.dataset.nextAction === "retry-refresh"){
     event.preventDefault();
     void refreshNext(true);
@@ -320,7 +324,6 @@ document.addEventListener("click", event => {
   if(actionTarget.dataset.nextAction === "needs-input"){
     navigateNext({view: "attention", project: null, session: null});
   }
-  if(actionTarget.dataset.nextAction === "dashboard") location.assign("/");
 });
 
 document.addEventListener("keydown", event => {
@@ -363,9 +366,6 @@ document.addEventListener("keydown", event => {
   }else if(String(event.key).toLowerCase() === "s"){
     event.preventDefault();
     navigateNext({view: "sessions", project: null, session: null});
-  }else if(String(event.key).toLowerCase() === "d"){
-    event.preventDefault();
-    location.assign("/");
   }
 });
 
