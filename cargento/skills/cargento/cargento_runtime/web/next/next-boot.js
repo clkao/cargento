@@ -1,6 +1,7 @@
 const nextQuery = new URLSearchParams(location.search);
 const NEXT_DUPLICATE_LABEL_LIMIT = "Same label is not proof of the same directory: the label is the" +
   " last two segments of each session's path, so sibling worktrees read alike.";
+const NEXT_TOP_LEVEL_VIEWS = new Set(["projects", "sessions"]);
 
 const qs = name => nextQuery.get(name);
 const esc = value => String(value == null ? "" : value).replace(/[&<>"']/g,
@@ -17,28 +18,42 @@ function nextDecodeRoutePart(value){
 function nextRouteFromFragment(fragment){
   const token = String(fragment || "").startsWith("#n=")
     ? String(fragment).slice(3)
-    : "overview";
+    : "";
+  if(NEXT_TOP_LEVEL_VIEWS.has(token)){
+    return {view: token, project: null, session: null};
+  }
   const parts = token.split(":");
   if(parts.length === 2 && parts[0] === "project"){
     const project = nextDecodeRoutePart(parts[1]);
     if(project) return {view: "project", project, session: null};
+  }
+  if(parts.length === 4 && parts[0] === "session"){
+    const project = nextDecodeRoutePart(parts[1]);
+    const harness = nextDecodeRoutePart(parts[2]);
+    const session = nextDecodeRoutePart(parts[3]);
+    if(project && harness && session) return {view: "session", project, harness, session};
   }
   if(parts.length === 3 && parts[0] === "session"){
     const project = nextDecodeRoutePart(parts[1]);
     const session = nextDecodeRoutePart(parts[2]);
     if(project && session) return {view: "session", project, session};
   }
-  return {view: "overview", project: null, session: null};
+  return {view: "sessions", project: null, session: null};
 }
 
 function nextFragmentForRoute(route){
   if(route && route.view === "session" && route.project && route.session){
-    return `#n=session:${encodeURIComponent(route.project)}:${encodeURIComponent(route.session)}`;
+    const harness = String(route.harness || "");
+    const prefix = `#n=session:${encodeURIComponent(route.project)}:`;
+    return harness
+      ? `${prefix}${encodeURIComponent(harness)}:${encodeURIComponent(route.session)}`
+      : `${prefix}${encodeURIComponent(route.session)}`;
   }
   if(route && route.view === "project" && route.project){
     return `#n=project:${encodeURIComponent(route.project)}`;
   }
-  return "#n=overview";
+  if(route && NEXT_TOP_LEVEL_VIEWS.has(route.view)) return `#n=${route.view}`;
+  return "#n=sessions";
 }
 
 function nextNumber(value){
@@ -48,6 +63,63 @@ function nextNumber(value){
 function nextFiniteNumber(value){
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function nextPayloadSessions(payload){
+  if(!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+  if(!Array.isArray(payload.sessions)) return [];
+  return payload.sessions.filter(session =>
+    session && typeof session === "object" && !Array.isArray(session));
+}
+
+function nextPayloadAsks(payload){
+  if(!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+  if(!Array.isArray(payload.asks)) return [];
+  return payload.asks.filter(ask => ask && typeof ask === "object" && !Array.isArray(ask));
+}
+
+function nextSessionKey(session){
+  return `session:${JSON.stringify([String(session && session.harness || ""), String(session && session.sid || "")])}`;
+}
+
+function nextExactAskOwner(payload, ask){
+  const sid = String(ask && ask.session_id || "");
+  if(!sid) return null;
+  const harness = String(ask && ask.harness || "");
+  const matches = nextPayloadSessions(payload).filter(session =>
+    String(session.sid || "") === sid &&
+    (!harness || String(session.harness || "") === harness));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function nextSessionCopyControl(session){
+  const sid = String(session && session.sid || "").trim();
+  if(!sid) return "";
+  return `<button type="button" class="next-session-copy" data-next-copy-session="${esc(sid)}" ` +
+    `aria-label="Copy session ID ${esc(sid)}" title="${esc(sid)}">` +
+    '<span aria-hidden="true">COPY ID</span></button>';
+}
+
+function nextAskResponsibility(payload, ask){
+  const owner = nextExactAskOwner(payload, ask);
+  const spacedock = owner && owner.spacedock;
+  return spacedock && typeof spacedock === "object" && !Array.isArray(spacedock)
+    ? "CAPTAIN"
+    : "NEEDS YOU";
+}
+
+function nextPublishedTask(session){
+  const tasks = session && Array.isArray(session.tasks) ? session.tasks : [];
+  const valid = tasks.filter(task => task && typeof task === "object" && !Array.isArray(task));
+  return valid.find(task => task.status === "in_progress") ||
+    valid.find(task => task.status === "pending") || null;
+}
+
+function nextPayloadAgeSeconds(payload, stamp){
+  const generated = nextNumber(payload && payload.generated);
+  const at = nextNumber(stamp);
+  if(generated == null || at == null || at <= 0) return null;
+  return Math.max(0, generated - at);
 }
 
 function nextAgeSeconds(stamp){

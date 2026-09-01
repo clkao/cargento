@@ -5,19 +5,25 @@ const NEXT_SESSION_MCP_TOOL = /\bmcp__([A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*?)__([A-Z
 const NEXT_SESSION_MCP_HOST_PREFIX = /^(?:claude_ai_|claude_code_|plugin_)/;
 const nextSessionAnswerNotes = new Map();
 
-function nextSessionFind(project, sid){
+function nextSessionFind(project, harness, sid){
   const projectKey = String(project == null ? "" : project);
+  const harnessKey = String(harness == null ? "" : harness);
   const sessionKey = String(sid == null ? "" : sid);
-  return nextRows().find(session =>
+  const matches = nextRows().filter(session =>
     String(session.project == null ? "" : session.project) === projectKey &&
-    String(session.sid == null ? "" : session.sid) === sessionKey
-  ) || null;
+    String(session.sid == null ? "" : session.sid) === sessionKey &&
+    (!harnessKey || String(session.harness == null ? "" : session.harness) === harnessKey)
+  );
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function nextSessionAsks(session){
   if(!nextData || nextData.ask !== true || !Array.isArray(nextData.asks)) return [];
-  const sid = String(session.sid == null ? "" : session.sid);
-  return nextData.asks.filter(ask => String(ask && ask.session_id || "") === sid);
+  const key = nextSessionKey(session);
+  return nextData.asks.filter(ask => {
+    const owner = nextExactAskOwner(nextData, ask);
+    return owner && nextSessionKey(owner) === key;
+  });
 }
 
 function nextPruneSessionAnswerNotes(){
@@ -36,6 +42,89 @@ function nextSessionAskingTitle(session){
   return `${nextSessionRegistryLabel(session) || "An agent"} is asking you`;
 }
 
+function nextSessionSourceOwner(session){
+  const harness = String(session && session.harness || "");
+  if(harness === "codex") return "Codex transcript";
+  if(harness === "claude") return "Claude transcript";
+  if(harness === "antigravity") return "AGY CLI log";
+  const label = nextSessionRegistryLabel(session);
+  return label ? `${label} session source` : "Session source";
+}
+
+function nextSessionInstruction(session, label){
+  const instruction = session && session.instruction;
+  if(!instruction || typeof instruction !== "object" || Array.isArray(instruction)) return null;
+  if(String(instruction.label || "") !== label) return null;
+  return String(instruction.text == null ? "" : instruction.text).trim() ? instruction : null;
+}
+
+function nextSessionNextFact(session, asks){
+  if(asks.length){
+    const question = String(asks[0] && asks[0].question || "").trim();
+    if(question) return {kind: "ask", text: question};
+  }
+  const tasks = Array.isArray(session.tasks) ? session.tasks : [];
+  const task = tasks.find(item =>
+    item && item.status === "pending" && String(item.subject || "").trim());
+  return task ? {kind: "task", text: String(task.subject).trim()} : null;
+}
+
+function nextSessionNowFact(session){
+  const tasks = Array.isArray(session.tasks) ? session.tasks : [];
+  const task = tasks.find(item =>
+    item && item.status === "in_progress" && String(item.subject || "").trim());
+  return task ? String(task.subject).trim() : "";
+}
+
+function nextSessionSourceCoverage(owner, next, asks){
+  if(asks.length || next) return "";
+  return '<details class="next-session-source-coverage">' +
+    '<summary>SOURCE COVERAGE</summary>' +
+    `<p>${esc(owner)} did not publish a next action.</p></details>`;
+}
+
+function nextSessionCommandFact(kind, label, body){
+  return `<section data-next-session-command-fact="${kind}"><h2>${label}</h2>${body}</section>`;
+}
+
+function nextSessionCommandSurface(session, asks, identity){
+  const owner = nextSessionSourceOwner(session);
+  const assignment = nextSessionInstruction(session, "asked");
+  const context = nextSessionInstruction(session, "agent") || nextSessionInstruction(session, "earlier");
+  const state = nextSessionDetailState(session.state);
+  const current = nextSessionNowFact(session) || String(session.state_detail || "").trim();
+  const executionText = [state && state.label, current]
+    .filter(Boolean).join(" · ") || "Activity unavailable";
+  const contextLine = context ? nextInstructionLine(session, "", "next-session-command-context") : "";
+  const next = asks.length ? null : nextSessionNextFact(session, []);
+  const facts = [];
+  if(assignment){
+    facts.push(nextSessionCommandFact(
+      "assignment", "ASSIGNMENT", nextInstructionLine(session, "", "next-session-command-context"),
+    ));
+  }
+  if(next){
+    facts.push(nextSessionCommandFact("next", "NEXT", `<strong>${esc(next.text)}</strong>`));
+  }
+  if(asks.length){
+    const question = String(asks[0] && asks[0].question || "").trim();
+    if(question){
+      facts.push(nextSessionCommandFact(
+        "request", nextAskResponsibility(nextData, asks[0]), `<strong>${esc(question)}</strong>`,
+      ));
+    }
+  }
+  const factBlock = facts.length
+    ? `<div class="next-session-command-facts">${facts.join("")}</div>`
+    : "";
+  return '<div class="next-session-command-surface" aria-label="Session command surface">' +
+    '<section class="next-session-current" data-next-session-command="activity">' +
+    '<span class="next-session-current-label">CURRENT ACTIVITY</span>' +
+    `<strong>${esc(executionText)}</strong>${contextLine}` +
+    nextSessionSubagents(session) + `</section>${identity}` + factBlock +
+    nextSessionSourceCoverage(owner, next, asks) + "</div>";
+}
+
 function nextSessionTitle(session, asks){
   const firstAsk = asks.length ? asks[0] : null;
   return String(
@@ -48,8 +137,6 @@ function nextSessionMeta(session){
   const parts = [];
   const harness = nextSessionRegistryLabel(session);
   if(harness) parts.push(harness);
-  const shortSid = String(session.session || session.sid || "").slice(0, 8);
-  if(shortSid) parts.push(shortSid);
   if(session.state_detail) parts.push(String(session.state_detail));
   if(session.state === "needs_input"){
     const blocked = nextDurationSince(session.blocked_since);
@@ -58,7 +145,7 @@ function nextSessionMeta(session){
     const turn = session.turn;
     const elapsed = turn && typeof turn === "object" && !Array.isArray(turn) &&
       typeof turn.elapsed_h === "string" ? turn.elapsed_h.trim() : "";
-    if(elapsed) parts.push(`started ${elapsed} ago`);
+    if(elapsed) parts.push(`turn started ${elapsed} ago`);
   }else if(session.state === "idle"){
     const started = nextDurationSince(session.started_at);
     if(started != null) parts.push(`session started ${started} ago`);
@@ -172,8 +259,9 @@ function nextSessionSubagents(session){
       `<strong class="next-session-subagent-name">${esc(subagent && subagent.name || "subagent")}</strong>` +
       `${measured}</div>`;
   }).join("");
-  return '<section class="next-session-section" data-next-session-section="subagents">' +
-    `<h2>SUBAGENTS</h2>${rows}</section>`;
+  const label = subagents.length === 1 ? "1 RUNNING SUBAGENT" : `${subagents.length} RUNNING SUBAGENTS`;
+  return '<div class="next-session-current-subagents" data-next-session-subagents>' +
+    `<span>${label}</span>${rows}</div>`;
 }
 
 function nextCompactTokens(value){
@@ -202,11 +290,12 @@ function nextSessionDetailState(state){
   return null;
 }
 
-function nextSessionView(project, sid){
-  const session = nextSessionFind(project, sid);
+function nextSessionView(project, harness, sid){
+  const session = nextSessionFind(project, harness, sid);
   if(!session){
     return '<section class="next-session-detail-empty" ' +
-      'data-next-session-state="outside-payload">This session is outside the current payload.</section>';
+      'data-next-session-state="outside-payload"><p>Not present in the current payload.</p>' +
+      '<a href="#n=sessions" data-next-route="sessions">View all sessions</a></section>';
   }
   nextPruneSessionAnswerNotes();
   const asks = nextSessionAsks(session);
@@ -218,14 +307,13 @@ function nextSessionView(project, sid){
   const meta = nextSessionMeta(session);
   const metaLine = meta ? `<p class="next-session-detail-meta">${esc(meta)}</p>` : "";
   const title = nextSessionTitle(session, asks);
-  const instruction = nextInstructionLine(session, title, "next-session-detail-instruction");
+  const identity = `<header class="next-session-detail-header">${stateLabel}` +
+    `<h1>${esc(title)}</h1>${nextSessionCopyControl(session)}${metaLine}</header>`;
   return `<article class="next-session-detail${blocked}" data-next-session-detail="${esc(session.sid)}"` +
     `${stateAttr}>` +
-    `<header class="next-session-detail-header">${stateLabel}` +
-    '<span class="next-session-detail-label">SESSION</span>' +
-    `<h1>${esc(title)}</h1>${instruction}${metaLine}</header>` +
-    nextSessionHealth(session) + nextSessionAskBlock(session, asks) + nextSessionTasks(session) +
-    nextSessionSubagents(session) + nextSessionFooter(session) + "</article>";
+    nextSessionCommandSurface(session, asks, identity) + nextSessionHealth(session) +
+    nextSessionAskBlock(session, asks) + nextSessionTasks(session) +
+    nextSessionFooter(session) + "</article>";
 }
 
 async function nextAnswerAsk(id, index){

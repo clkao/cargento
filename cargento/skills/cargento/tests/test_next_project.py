@@ -94,10 +94,13 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         self.assertIn('data-next-project-detail="alpha/repo"', html)
         self.assertIn("data-next-project-main", html)
         self.assertIn("data-next-project-rail", html)
+        self.assertIn('<div class="next-project-detail-main" data-next-project-main>', html)
+        self.assertNotIn("<main", html)
         self.assertIn('class="next-project-detail-name">alpha/repo</', html)
         self.assertIn("launch", html)
         self.assertIn("audit", html)
-        self.assertIn("last instruction · Finish the project page", html)
+        self.assertNotIn("latest session context", html)
+        self.assertNotIn("latest assignment", html)
         self.assertIn("2 sessions share this label", html)
         self.assertIn("Same label is not proof of the same directory", html)
         self.assertNotIn("Do not fold this project", html)
@@ -225,7 +228,7 @@ console.log(JSON.stringify({fresh, stale, older, floor: NEXT_PROJECT_STALLED_SEC
         self.assertNotIn("in review", plans)
         self.assertNotIn("failed", plans)
 
-    def test_the_three_spacedock_empty_states_are_distinct(self) -> None:
+    def test_workflow_region_requires_positive_spacedock_evidence(self) -> None:
         checks = """
 await __settle();
 const cases = {};
@@ -255,7 +258,10 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
         )
         assert isinstance(out, dict)
 
-        self.assertIn("declares no workflow", out["plain/repo"])
+        self.assertNotIn('data-next-project-section="plan"', out["plain/repo"])
+        self.assertNotIn("Workflow source unavailable", out["plain/repo"])
+        self.assertIn('data-next-project-section="plan"', out["empty/fo"])
+        self.assertIn('data-next-project-section="plan"', out["worker/repo"])
         self.assertIn("nothing is fresh enough to show", out["empty/fo"])
         self.assertIn("plan lives with its first officer", out["worker/repo"])
         for html in out.values():
@@ -263,6 +269,21 @@ __fetchImpl = async () => ({ok: true, json: async () => ({
             self.assertNotIn("unhealthy", html)
             self.assertNotRegex(html, r"\bsteps?\b")
             self.assertNotIn("next-project-detail-divider", html)
+
+    def test_missing_project_is_bounded_and_links_to_the_complete_project_map(self) -> None:
+        html = self.render(
+            """
+nextRoute = {view: "project", project: "missing/repo", session: null};
+renderNext();
+console.log(JSON.stringify(__els.app.innerHTML));
+"""
+        )
+        assert isinstance(html, str)
+
+        self.assertIn("Not present in the current payload", html)
+        self.assertIn('href="#n=projects"', html)
+        self.assertNotIn("deleted", html.lower())
+        self.assertNotIn("completed", html.lower())
 
 
 if __name__ == "__main__":

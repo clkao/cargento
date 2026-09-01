@@ -269,7 +269,7 @@ console.log(JSON.stringify({
         self.assertTrue(out["fallbackFetched"])
         self.assertEqual(2, out["sources"])
 
-    def test_failed_fallback_polls_keep_the_existing_stalled_surface(self) -> None:
+    def test_failed_fallback_polls_explain_the_streaming_retry_cadence(self) -> None:
         html = self._boot(
             """
 await __settle();
@@ -285,7 +285,107 @@ console.log(JSON.stringify(__els.app.innerHTML));
         )
 
         self.assertIn('data-next-state="stalled"', html)
-        self.assertIn("Refresh stalled", html)
+        self.assertIn("Live refresh failed twice in a row", html)
+        self.assertIn("No data has been received in this tab", html)
+        self.assertIn("Retrying automatically every 20s", html)
+        self.assertNotIn("stream stopped", html.lower())
+
+    def test_refresh_classifies_before_publishing_and_retains_the_last_success(self) -> None:
+        out = self._boot(
+            """
+await refreshNext();
+const retainedData = nextData;
+const retainedAttention = nextAttention;
+const firstKeys = nextAttention.needs.map(subject => subject.key);
+const retainedHtml = __els.app.innerHTML;
+const classify = nextAttentionModel;
+nextAttentionModel = payload => {
+  if(payload.generated === 2000) throw new Error("classifier rejected payload");
+  return classify(payload);
+};
+__fetchImpl = async () => ({ok: true, json: async () => ({
+  generated: 2000,
+  window_hours: 24,
+  summary: {working: 0, needs_input: 0},
+  harnesses: [],
+  asks: [{id: "new", question: "Replace retained state", session_id: "new"}],
+  sessions: [{harness: "codex", sid: "new", project: "new", state: "needs_input"}]
+})});
+await refreshNext();
+console.log(JSON.stringify({
+  sameData: nextData === retainedData,
+  sameAttention: nextAttention === retainedAttention,
+  firstKeys,
+  retainedKeys: nextAttention.needs.map(subject => subject.key),
+  retainedHtml,
+  html: __els.app.innerHTML,
+  failures: nextRefreshFailures
+}));
+"""
+        )
+
+        self.assertTrue(out["sameData"])
+        self.assertTrue(out["sameAttention"])
+        self.assertEqual(out["firstKeys"], out["retainedKeys"])
+        self.assertEqual(out["retainedHtml"], out["html"])
+        self.assertEqual(1, out["failures"])
+        self.assertNotIn("Live refresh failed", out["html"])
+
+    def test_older_automatic_refresh_cannot_overwrite_newer_manual_recovery(self) -> None:
+        out = self._boot(
+            """
+await refreshNext();
+let releaseAutomatic = null;
+let releaseManual = null;
+let request = 0;
+__fetchImpl = async () => new Promise(resolve => {
+  request += 1;
+  if(request === 1) releaseAutomatic = resolve;
+  else releaseManual = resolve;
+});
+const automatic = refreshNext();
+const manual = refreshNext(true);
+releaseManual({ok: true, json: async () => ({
+  generated: 3000,
+  window_hours: 24,
+  summary: {working: 0, needs_input: 1},
+  harnesses: [],
+  asks: [{id: "newer", question: "Keep newer", session_id: "newer"}],
+  sessions: [{harness: "codex", sid: "newer", project: "newer", state: "needs_input"}]
+})});
+await manual;
+const afterManual = {
+  generated: nextData.generated,
+  keys: nextAttention.needs.map(subject => subject.key),
+  html: __els.app.innerHTML,
+  failures: nextRefreshFailures
+};
+releaseAutomatic({ok: true, json: async () => ({
+  generated: 2000,
+  window_hours: 24,
+  summary: {working: 0, needs_input: 1},
+  harnesses: [],
+  asks: [{id: "older", question: "Do not restore older", session_id: "older"}],
+  sessions: [{harness: "claude", sid: "older", project: "older", state: "needs_input"}]
+})});
+await automatic;
+console.log(JSON.stringify({
+  afterManual,
+  final: {
+    generated: nextData.generated,
+    keys: nextAttention.needs.map(subject => subject.key),
+    html: __els.app.innerHTML,
+    failures: nextRefreshFailures
+  }
+}));
+"""
+        )
+
+        self.assertEqual(3000, out["afterManual"]["generated"])
+        self.assertEqual(out["afterManual"], out["final"])
+        self.assertIn('data-next-session="newer"', out["final"]["html"])
+        self.assertNotIn('data-next-session="older"', out["final"]["html"])
+        self.assertEqual(0, out["final"]["failures"])
 
     def test_private_browsing_still_streams(self) -> None:
         out = self._boot(

@@ -46,6 +46,7 @@ class NextPageAssetContractTest(unittest.TestCase):
             asset.parent.mkdir(parents=True, exist_ok=True)
             asset.write_text("d09GMg==\n", encoding="ascii")
         (next_web / "next-boot.js").write_text("const first = 1;\n", encoding="utf-8")
+        (next_web / "next-attention.js").write_text("const attention = 2;\n", encoding="utf-8")
         (next_web / "next-chrome.js").write_text("const middle = 2;\n", encoding="utf-8")
         (next_web / "next-projects.js").write_text("const projects = 3;\n", encoding="utf-8")
         (next_web / "next-project.js").write_text("const project = 4;\n", encoding="utf-8")
@@ -76,7 +77,7 @@ class NextPageAssetContractTest(unittest.TestCase):
             )
         self.assertEqual(
             (f"<style>{embedded_styles}.next{{color:red}}\n</style>").encode()
-            + b"<script>const first = 1;\nconst middle = 2;\n"
+            + b"<script>const first = 1;\nconst attention = 2;\nconst middle = 2;\n"
             b"const sessions = 3;\nconst projects = 3;\n"
             b"const project = 4;\nconst activity = 5;\n"
             b"const session = 6;\nconst workstream = 7;\nconst delegation = 8;\n"
@@ -175,6 +176,7 @@ class NextPageAssetContractTest(unittest.TestCase):
         self.assertEqual(
             (
                 "next-boot.js",
+                "next-attention.js",
                 "next-chrome.js",
                 "next-sessions.js",
                 "next-projects.js",
@@ -451,8 +453,8 @@ class NextPageAssetContractTest(unittest.TestCase):
         styles = (frontend_page.WEB_DIR / "next" / "styles.css").read_text(encoding="utf-8")
         live_rule = re.search(r"\.next-live \.next-status-dot\{([^}]*)\}", styles)
         reduced = re.search(
-            r"@media\(prefers-reduced-motion:reduce\)\{"
-            r"\.next-live \.next-status-dot\{([^}]*)\}\}",
+            r"@media\(prefers-reduced-motion:reduce\)\{\s*"
+            r"([^{}]+)\{([^}]*)\}",
             styles,
         )
 
@@ -460,7 +462,8 @@ class NextPageAssetContractTest(unittest.TestCase):
         self.assertIsNotNone(reduced)
         self.assertIn("color:var(--accent-ink)", live_rule.group(1) if live_rule else "")
         self.assertIn("animation:next-live-pulse", live_rule.group(1) if live_rule else "")
-        self.assertIn("animation:none", reduced.group(1) if reduced else "")
+        self.assertIn(".next-live .next-status-dot", reduced.group(1) if reduced else "")
+        self.assertIn("animation:none", reduced.group(2) if reduced else "")
 
     def test_activity_subagent_names_can_shrink_inside_the_card(self) -> None:
         styles = (frontend_page.WEB_DIR / "next" / "styles.css").read_text(encoding="utf-8")
@@ -474,7 +477,7 @@ class NextPageAssetContractTest(unittest.TestCase):
         self.assertIn("min-width:0", name.group(1) if name else "")
         self.assertIn("overflow-wrap:anywhere", name.group(1) if name else "")
 
-    def test_instruction_lines_break_an_unbreakable_token(self) -> None:
+    def test_operator_text_breaks_an_unbreakable_token(self) -> None:
         # The instruction line quotes what the operator typed, and 50 of 1,789
         # published lines carry a single token over 80 characters (longest 113) —
         # pasted URLs, which `shorten_paths` leaves whole on purpose because the
@@ -484,7 +487,7 @@ class NextPageAssetContractTest(unittest.TestCase):
         # in this stylesheet already guards it.
         styles = (frontend_page.WEB_DIR / "next" / "styles.css").read_text(encoding="utf-8")
         for selector in (
-            r"\.next-session-row-instruction",
+            r"\.next-operation-identity,\.next-operation-fact",
             r"\.next-session-detail-instruction",
         ):
             with self.subTest(selector=selector):
@@ -494,14 +497,6 @@ class NextPageAssetContractTest(unittest.TestCase):
 
     def test_session_detail_state_rails_use_the_fixed_palette(self) -> None:
         styles = (frontend_page.WEB_DIR / "next" / "styles.css").read_text(encoding="utf-8")
-        inset = re.search(
-            r"\.next-session-detail\[data-next-session-state\] "
-            r"\.next-session-detail-header\{([^}]*)\}",
-            styles,
-        )
-
-        self.assertIsNotNone(inset)
-        self.assertIn("padding-left:16px", inset.group(1) if inset else "")
         for state, color in (
             ("needs_input", "var(--warn)"),
             ("working", "var(--accent)"),
@@ -510,11 +505,11 @@ class NextPageAssetContractTest(unittest.TestCase):
             with self.subTest(state=state):
                 rule = re.search(
                     rf'\.next-session-detail\[data-next-session-state="{state}"\] '
-                    r"\.next-session-detail-header\{([^}]*)\}",
+                    r"\.next-session-current\{([^}]*)\}",
                     styles,
                 )
                 self.assertIsNotNone(rule)
-                self.assertIn(f"box-shadow:inset 3px 0 {color}", rule.group(1) if rule else "")
+                self.assertIn(f"border-left-color:{color}", rule.group(1) if rule else "")
 
     def test_load_next_page_preserves_its_byte_oracles(self) -> None:
         # Per-part first, deliberately. Every part feeds the assembled page, so a
@@ -522,36 +517,40 @@ class NextPageAssetContractTest(unittest.TestCase):
         # is the more useful failure of the two.
         expected_parts = {
             "next-boot.js": (
-                7_727,
-                "74498e03f2790d6e288666a2cffd60d419e6d248382b3f51c47f164f37f69b4c",
+                10_734,
+                "eb9571b96a984c1c0b28ad4fdab534a9384efa8f2f219608749a7381fe95bdb3",
+            ),
+            "next-attention.js": (
+                42_051,
+                "9ce3a282a6b002ab9d10b2d373a223c7fb23e048e09ba4f883e4e085e07bb5bf",
             ),
             "next-chrome.js": (
-                6_990,
-                "a1937f422d61aba21c0f96d11731649705d1b5aac1889220759d0f61c2f9010a",
+                15_401,
+                "74563a98b0ccf6738cdd35f6326f160a9412b678600aee283304a6640fe50ad9",
             ),
             "next-sessions.js": (
-                5_346,
-                "996aede0109a9023cf913866f1869b7566d7389a76f83c22b475280c3ce68448",
+                11_566,
+                "f0a4c655e10ab356011faae99537e792b3eec160705dfce37c245a7d3e03488c",
             ),
             "next-projects.js": (
-                5_788,
-                "82e41b3d2e606c86ac5f65aee1429988a861c74f39c07e9041cb50afadca2089",
+                10_277,
+                "031c077b56a4115b59b064967d6e751bc3f8a475e4633f1b7ffebe5d24e76174",
             ),
             "next-project.js": (
-                8_057,
-                "6896fd91fe77c9a239ae4282c530697aac7b9281855ccb50d9f41c1e14f8c62c",
+                8_512,
+                "439021748213a21ed311dd1ce931dd500b538ad9cd0317e11d0fc716c1699903",
             ),
             "next-activity.js": (
-                5_272,
-                "73e9a1cb6f02f818a0bd51ef5832a7766c092d88da564f6ebede654ef430da7b",
+                5_281,
+                "2a74e8ebcd5374ec6b585aceaeaa38818108531edc4bdbe21240e5c45f415858",
             ),
             "next-session.js": (
-                11_823,
-                "444fe7eeff712f2fb5e767d39be8d3fcfc9ea28b907c951e0447259fa2375661",
+                15_800,
+                "55f5fe8d1582f212981df916ccf225aa2b22348a2977d809fbb506dce20ae0de",
             ),
             "next-workstream.js": (
-                11_858,
-                "b5d0237f999777630bddd877f7b37eb35b8df995aefb862e58816adca3b32787",
+                11_703,
+                "09a077bdbe24d302fe8494e9a3b050b1ff26a0f3a22c31147f81c7592ca4f3dd",
             ),
             "next-delegation.js": (
                 7_544,
@@ -562,8 +561,8 @@ class NextPageAssetContractTest(unittest.TestCase):
                 "4da6527bbf6401db716ab5807748ac01a64aecce996e993ff9e0b42c22fdc811",
             ),
             "next-render.js": (
-                802,
-                "fc842fa72b4c12e25ee34c6aa0403e12689653985be5e198677e3cfb831234b3",
+                2_163,
+                "2a9edf6943322da17f5d2bd891fd67c90cfa52db783995615e5f3260fcea3461",
             ),
             "next-live.js": (
                 3_470,
@@ -578,16 +577,16 @@ class NextPageAssetContractTest(unittest.TestCase):
                 self.assertEqual(digest, hashlib.sha256(data).hexdigest())
 
         styles = frontend_page.next_asset_path("styles.css").read_bytes()
-        self.assertEqual(24_753, len(styles))
+        self.assertEqual(39_216, len(styles))
         self.assertEqual(
-            "d50aa0b059e00a6335dbf6c07c822faafd1e247f8920f5083d1ba3bc4e4c5e0e",
+            "13c9366fdc967de108aa15ee17be956dc2a9532b78e56c52576f8fb2131cd2b7",
             hashlib.sha256(styles).hexdigest(),
         )
 
         assembled = frontend_page.load_next_page()
-        self.assertEqual(232_651, len(assembled))
+        self.assertEqual(316_939, len(assembled))
         self.assertEqual(
-            "3aa7ef1b34df305ef17fcf1328a8099f71da24049aeb4b4a70e4d8a535531185",
+            "da859c807b7c0e5d15201e1e8ee5afce081c38e1aee19b52a568b51e847df8c6",
             hashlib.sha256(assembled).hexdigest(),
         )
 
@@ -644,17 +643,19 @@ console.log(JSON.stringify({
         )
         self.assertEqual([None, None, "0s", "5m"], out["since"])
 
-    def test_the_next_bundle_mounts_the_overview_breadcrumb(self) -> None:
+    def test_the_default_bundle_mounts_primary_session_navigation(self) -> None:
         out = self._run_page_js(
             "console.log(JSON.stringify(__els.app.innerHTML));",
             '__els.app = {innerHTML: ""};\n',
         )
 
         self.assertIn(
-            '<nav class="next-breadcrumb" aria-label="Breadcrumb">'
-            "<span>Cargento | overview</span></nav>",
+            '<nav aria-label="Primary"><a href="#n=projects">Projects</a>'
+            '<a href="#n=sessions" aria-current="page">Sessions</a></nav>',
             out,
         )
+        self.assertNotIn('class="next-breadcrumb" aria-label="Breadcrumb"', out)
+        self.assertNotIn("overview", out)
 
 
 if __name__ == "__main__":

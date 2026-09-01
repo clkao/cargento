@@ -104,13 +104,141 @@ console.log(JSON.stringify(__els.app.innerHTML));
 
         self.assertIn(f'data-next-session-detail="{self.SID}"', html)
         self.assertIn(">Compile the release</h1>", html)
-        self.assertIn("Claude Code · session- · running tests · started 5m ago", html)
-        self.assertNotIn("started 30m ago", html)
+        self.assertIn("Claude Code · running tests · turn started 5m ago", html)
+        self.assertNotIn("session started 30m ago", html)
         self.assertNotIn("blocked ", html)
         self.assertNotIn("AGENT IS ASKING", html)
         self.assertNotIn("TASKS ·", html)
         self.assertNotIn("SUBAGENTS", html)
         self.assertNotIn("output tokens", html)
+        self.assertIn('data-next-session-command="activity"', html)
+        self.assertIn("CURRENT ACTIVITY", html)
+        self.assertIn("working · running tests", html)
+        self.assertNotIn('data-next-session-command-fact="assignment"', html)
+        self.assertNotIn('data-next-session-command-fact="next"', html)
+        self.assertNotIn('data-next-session-command-fact="request"', html)
+        self.assertIn("SOURCE COVERAGE", html)
+        self.assertIn("Claude transcript did not publish a next action", html)
+        self.assertNotIn("did not publish an assignment", html)
+        self.assertNotIn('<details class="next-session-source-coverage" open', html)
+
+    def test_current_activity_leads_identity_without_a_redundant_session_label(self) -> None:
+        html = self.render()
+        assert isinstance(html, str)
+
+        activity = html.index('data-next-session-command="activity"')
+        identity = html.index("<h1>Resolve the gate</h1>")
+        self.assertLess(activity, identity)
+        self.assertIn('<span class="next-session-current-label">CURRENT ACTIVITY</span>', html)
+        self.assertNotIn("<h2>CURRENT ACTIVITY</h2>", html)
+        self.assertNotIn('<span class="next-session-detail-label">SESSION</span>', html)
+
+    def test_running_subagents_are_integrated_into_the_current_activity_lede(self) -> None:
+        html = self.render()
+        assert isinstance(html, str)
+        current = re.search(r'<section class="next-session-current"[^>]*>[\s\S]*?</section>', html)
+        self.assertIsNotNone(current)
+        lede = current.group(0) if current else ""
+
+        self.assertIn("2 RUNNING SUBAGENTS", lede)
+        self.assertIn("worker-a", lede)
+        self.assertIn("worker-b", lede)
+        self.assertIn("5m", lede)
+        self.assertNotIn('data-next-session-section="subagents"', html)
+
+    def test_plain_exact_ask_is_one_needs_you_fact_and_not_a_next_action(self) -> None:
+        html = self.render()
+        assert isinstance(html, str)
+
+        self.assertIn('data-next-session-command-fact="request"', html)
+        self.assertIn("NEEDS YOU", html)
+        self.assertNotIn("CAPTAIN</h2>", html)
+        self.assertNotIn('data-next-session-command-fact="next"', html)
+        self.assertIn("Choose &lt;img src=x onerror=&#39;1&#39;&gt;", html)
+
+    def test_spacedock_evidence_changes_only_the_exact_request_authority_label(self) -> None:
+        html = self.render(
+            """
+nextData.sessions[0].spacedock = {role: "first-officer", workflows: []};
+renderNext();
+console.log(JSON.stringify(__els.app.innerHTML));
+"""
+        )
+        assert isinstance(html, str)
+
+        self.assertIn('data-next-session-command-fact="request"', html)
+        self.assertIn("CAPTAIN</h2>", html)
+        self.assertNotIn("NEEDS YOU</h2>", html)
+
+    def test_published_assignment_is_progressively_disclosed_and_escaped(self) -> None:
+        html = self.render(
+            """
+nextData.sessions[0].instruction = {
+  label: "asked", text: "Ship <script>the full instruction</script>", at: 9900
+};
+renderNext();
+console.log(JSON.stringify(__els.app.innerHTML));
+"""
+        )
+        assert isinstance(html, str)
+
+        self.assertIn('data-next-session-command-fact="assignment"', html)
+        self.assertIn("ASSIGNMENT", html)
+        self.assertLess(
+            html.index('data-next-session-command="activity"'),
+            html.index('data-next-session-command-fact="assignment"'),
+        )
+        self.assertIn("Ship &lt;script&gt;the full instruction&lt;/script&gt;", html)
+        self.assertNotIn("Ship <script>", html)
+
+    def test_missing_next_action_names_its_source_without_assignment_placeholder(self) -> None:
+        out = self.render(
+            """
+nextData.asks = [];
+const session = nextData.sessions[0];
+session.tasks = [];
+const variants = {};
+for(const harness of ["codex", "antigravity"]){
+  session.harness = harness;
+  renderNext();
+  variants[harness] = __els.app.innerHTML;
+}
+console.log(JSON.stringify(variants));
+"""
+        )
+        assert isinstance(out, dict)
+
+        self.assertIn("Codex transcript did not publish a next action", out["codex"])
+        self.assertIn("AGY CLI log did not publish a next action", out["antigravity"])
+        for html in out.values():
+            self.assertNotIn("Assignment unavailable", html)
+            self.assertNotIn("did not publish an assignment", html)
+            self.assertNotIn("Not published", html)
+            self.assertNotRegex(html, r"(?i)source coverage[^<]*(?:field|schema|instruction)")
+
+    def test_in_progress_task_is_now_and_only_pending_task_is_next(self) -> None:
+        html = self.render(
+            """
+nextData.asks = [];
+renderNext();
+console.log(JSON.stringify(__els.app.innerHTML));
+"""
+        )
+        assert isinstance(html, str)
+
+        current = re.search(r'<section class="next-session-current"[^>]*>[\s\S]*?</section>', html)
+        self.assertIsNotNone(current)
+        current_html = current.group(0) if current else ""
+        self.assertIn("Review response", current_html)
+        self.assertNotIn("Prepare payload", current_html)
+        self.assertIn('data-next-session-command-fact="next"', html)
+        next_fact = re.search(
+            r'<section data-next-session-command-fact="next">[\s\S]*?</section>', html
+        )
+        self.assertIsNotNone(next_fact)
+        fact_html = next_fact.group(0) if next_fact else ""
+        self.assertIn("Prepare payload", fact_html)
+        self.assertNotIn("Review response", fact_html)
 
     def test_header_rail_names_only_known_states_and_keeps_the_blocked_alert(self) -> None:
         out = self.render(
@@ -178,11 +306,11 @@ console.log(JSON.stringify(variants));
         )
         assert isinstance(out, dict)
 
-        self.assertIn("started 5m ago", out["working"])
-        self.assertNotIn("started 30m ago", out["working"])
+        self.assertIn("turn started 5m ago", out["working"])
+        self.assertNotIn("session started 30m ago", out["working"])
         for variant in ("noTurn", "missingElapsed", "emptyElapsed", "malformedElapsed"):
             with self.subTest(variant=variant):
-                self.assertNotIn("started ", out[variant])
+                self.assertNotIn("turn started ", out[variant])
         self.assertIn("session started 30m ago", out["idle"])
         self.assertNotIn("session started", out["idleWithoutStart"])
         self.assertIn("blocked 10m", out["waiting"])
@@ -210,7 +338,7 @@ console.log(JSON.stringify(variants));
         )
         assert isinstance(out, dict)
 
-        self.assertIn("started 5h 40m ago", out["working"])
+        self.assertIn("turn started 5h 40m ago", out["working"])
         self.assertIn("2h 9m", self.subagent_row(out["working"], 0))
         self.assertIn("session started 2h 9m ago", out["idle"])
         self.assertIn("blocked 2h 9m", out["waiting"])
@@ -318,9 +446,7 @@ console.log(JSON.stringify(variants));
         assert isinstance(html, str)
 
         self.assertIn("next-session-detail--blocked", html)
-        self.assertIn(
-            "Claude Code · session- · open question · AskUserQuestion · blocked 10m", html
-        )
+        self.assertIn("Claude Code · open question · AskUserQuestion · blocked 10m", html)
         self.assertIn(asking_title("Claude Code"), html)
         self.assertEqual(1, html.count("AGENT IS ASKING"))
         self.assertEqual(2, html.count("data-next-session-ask="))
@@ -550,6 +676,7 @@ console.log(JSON.stringify(__els.app.innerHTML));
         html = self.render(
             """
 nextData.sessions[0].harness = "unregistered";
+for(const ask of nextData.asks) ask.harness = "unregistered";
 renderNext();
 console.log(JSON.stringify(__els.app.innerHTML));
 """
@@ -559,7 +686,7 @@ console.log(JSON.stringify(__els.app.innerHTML));
         self.assertIn(asking_title(""), html)
         self.assertNotIn("unregistered is asking you", html)
 
-    def test_a_missing_sid_or_wrong_project_has_an_explicit_outside_payload_state(self) -> None:
+    def test_a_missing_sid_or_wrong_project_is_bounded_and_links_to_sessions(self) -> None:
         out = self.render(
             """
 nextRoute = {view: "session", project: "alpha/repo", session: "missing"};
@@ -574,7 +701,10 @@ console.log(JSON.stringify({missing, wrongProject: __els.app.innerHTML}));
 
         for html in out.values():
             self.assertIn('data-next-session-state="outside-payload"', html)
-            self.assertIn("This session is outside the current payload.", html)
+            self.assertIn("Not present in the current payload", html)
+            self.assertIn('href="#n=sessions"', html)
+            self.assertNotIn("deleted", html.lower())
+            self.assertNotIn("completed", html.lower())
 
 
 @unittest.skipUnless(shutil.which("node"), "node not available")
@@ -638,7 +768,7 @@ __fetchImpl = async () => ({{ok: true, json: async () => __nextPayload}});
         # recency the payload does not make, and an age without a label reads as
         # the newest instruction when it is not.
         line = '{label: "earlier", text: "Reconcile the registry", at: 9400}'
-        for html in (self.rows(line), self.detail(line)):
+        for html in (self.detail(line),):
             self.assertIn('<span class="next-instruction-label">earlier</span>, 10m:', html)
             self.assertIn("Reconcile the registry", html)
             self.assertIn('data-next-instruction="earlier"', html)
@@ -648,7 +778,7 @@ __fetchImpl = async () => ({{ok: true, json: async () => __nextPayload}});
         # inside it rendered "ASKED, 4M:" — the unit of a duration as a capital
         # letter, which reads as an initialism and folds the age into the label.
         line = '{label: "asked", text: "Reconcile the registry", at: 9400}'
-        for html in (self.rows(line), self.detail(line)):
+        for html in (self.detail(line),):
             self.assertIn('<span class="next-instruction-label">asked</span>', html)
             self.assertNotIn('class="next-instruction-label">asked, 10m', html)
 
@@ -664,16 +794,18 @@ __fetchImpl = async () => ({{ok: true, json: async () => __nextPayload}});
                 html = self.detail(f'{{label: "{label}", text: "Real work", at: 9400}}')
                 self.assertNotIn("Real work", html)
 
-    def test_the_table_labels_line_one_only_where_line_two_stands_under_it(self) -> None:
-        # An unlabelled line 1 above a labelled line 2 reads as though the label
-        # captions the row. On a row with nothing beneath it there is nothing to
-        # tell apart, and the column heading already says SESSION.
+    def test_the_board_identity_keeps_title_and_assignment_roles_distinct(self) -> None:
+        # The correction makes assignment coverage visible at fleet level, but
+        # it must not replace or relabel the session title.
         labelled = self.rows('{label: "asked", text: "Reconcile the registry", at: 9400}')
-        self.assertIn('<span class="next-instruction-label">title</span>: ', labelled)
         self.assertIn("Resolve the gate", labelled)
+        self.assertIn(self.SID, labelled)
+        self.assertIn("ASSIGNMENT · Reconcile the registry", labelled)
+        self.assertNotIn("next-instruction-label", labelled)
 
         alone = self.rows("null")
         self.assertIn("Resolve the gate", alone)
+        self.assertNotIn("ASSIGNMENT", alone)
         self.assertNotIn("next-instruction-label", alone)
 
     def test_the_title_label_never_names_something_that_is_not_the_title(self) -> None:
@@ -690,14 +822,14 @@ __fetchImpl = async () => ({{ok: true, json: async () => __nextPayload}});
         # called one.
         fallback = self.rows(asked, title="null", last_prompt='"Deploy the staging store"')
         self.assertIn("Deploy the staging store", fallback)
-        self.assertIn("Reconcile the registry", fallback)
+        self.assertIn("ASSIGNMENT · Reconcile the registry", fallback)
         self.assertNotIn('<span class="next-instruction-label">title</span>', fallback)
 
-        # Neither field is there. The caption has nothing to caption, and line 2
-        # still has to render: `nextInstructionEchoes` returns false on an empty
-        # head, so nothing else suppresses it.
+        # Neither identity field is there. The board says the title was not
+        # published while naming the assignment separately.
         empty = self.rows(asked, title="null", last_prompt='""')
-        self.assertIn("Reconcile the registry", empty)
+        self.assertIn("Title not published", empty)
+        self.assertIn("ASSIGNMENT · Reconcile the registry", empty)
         self.assertNotIn('<span class="next-instruction-label">title</span>', empty)
         # The dangling-colon signature specifically: a caption whose subject was
         # cut off. `<strong></strong>` would pass here for free, because the live
@@ -713,17 +845,20 @@ __fetchImpl = async () => ({{ok: true, json: async () => __nextPayload}});
                 self.assertIn("Resolve the gate", html)
                 self.assertNotIn("next-instruction-label", html)
 
-    def test_the_line_is_dropped_when_it_would_only_repeat_the_title(self) -> None:
+    def test_detail_assignment_survives_a_title_echo_while_the_table_stays_compact(self) -> None:
         # `calm.js` already computes both fields and would show the same string
         # twice on a session whose first prompt is still its newest.
         same = '{label: "asked", text: "Resolve the gate", at: 9400}'
-        self.assertNotIn("next-instruction-label", self.detail(same))
+        self.assertNotIn("next-instruction-label", self.rows(same))
+        self.assertIn("Resolve the gate", self.detail(same))
+        self.assertIn("ASSIGNMENT", self.detail(same))
         # And once more across the two caps: line 1 clips at 80 and line 2 at
         # 140, so one prompt reaches them as two strings, the shorter ellipsed.
         clipped = '{label: "asked", text: "Resolve the gate and ship it", at: 9400}'
-        self.assertNotIn(
-            "next-instruction-label", self.detail(clipped, title='"Resolve the gate…"')
-        )
+        self.assertNotIn("next-instruction-label", self.rows(clipped, title='"Resolve the gate…"'))
+        detail = self.detail(clipped, title='"Resolve the gate…"')
+        self.assertIn("Resolve the gate and ship it", detail)
+        self.assertIn("ASSIGNMENT", detail)
 
     def test_a_title_that_merely_opens_a_longer_instruction_is_not_a_duplicate(self) -> None:
         # The reason the rule is not a plain prefix test. A generated title is a

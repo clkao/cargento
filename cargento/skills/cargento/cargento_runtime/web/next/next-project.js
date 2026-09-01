@@ -111,12 +111,18 @@ function nextProjectEmptyState(sessions){
   if(spacedock.some(value => value.role === "ensign")){
     return "This worker's plan lives with its first officer.";
   }
-  return "This project declares no workflow.";
+  return "";
 }
 
 function nextProjectPlanBlock(context){
+  const hasSpacedock = context.group.sessions.some(session => {
+    const spacedock = session && session.spacedock;
+    return spacedock && typeof spacedock === "object" && !Array.isArray(spacedock);
+  });
+  if(!hasSpacedock) return "";
   if(!context.plans.length){
-    return `<div class="next-project-detail-empty">${esc(nextProjectEmptyState(context.group.sessions))}</div>`;
+    const empty = nextProjectEmptyState(context.group.sessions);
+    return empty ? `<div class="next-project-detail-empty">${esc(empty)}</div>` : "";
   }
   return context.plans.map(plan => nextProjectPlan(plan, context.harnesses)).join("");
 }
@@ -134,7 +140,8 @@ function nextProjectDetailHeader(context){
   ).join("");
   const instruction = nextProjectInstruction(context.group.sessions);
   const last = instruction
-    ? `<p class="next-project-detail-instruction">last instruction · ${esc(instruction)}</p>`
+    ? `<p class="next-project-detail-instruction">${instruction.kind === "assignment" ?
+      "latest assignment" : "latest session context"} · ${esc(instruction.text)}</p>`
     : "";
   const collision = context.group.sessions.length >= 2
     ? `<p class="next-project-detail-collision" title="${esc(NEXT_DUPLICATE_LABEL_LIMIT)}">` +
@@ -160,17 +167,20 @@ function nextProjectDetailHeader(context){
 function nextProjectView(project){
   const group = nextProjectGroups().find(candidate => candidate.label === project);
   if(!group){
-    return `<div class="next-project-detail-empty">Project ${esc(project)} is outside this payload window.</div>`;
+    return '<div class="next-project-detail-empty"><p>Not present in the current payload.</p>' +
+      '<a href="#n=projects" data-next-route="projects">View all projects</a></div>';
   }
   const context = {group, plans: nextProjectPlans(group.sessions), harnesses: nextHarnessLabels()};
+  const plan = nextProjectPlanBlock(context);
+  const planSection = plan ? `<div data-next-project-section="plan">${plan}</div>` : "";
   return `<article class="next-project-detail" data-next-project-detail="${esc(group.label)}">` +
     nextProjectDetailHeader(context) +
     '<div class="next-project-detail-layout">' +
-    '<main class="next-project-detail-main" data-next-project-main>' +
-    `<div data-next-project-section="plan">${nextProjectPlanBlock(context)}</div>` +
+    '<div class="next-project-detail-main" data-next-project-main>' +
+    planSection +
     `<div data-next-project-section="going-on">${nextProjectGoingOn(context)}</div>` +
     `<div data-next-project-section="done">${nextProjectDone(context)}</div>` +
-    `<div data-next-project-section="workstream">${nextProjectWorkstream(context)}</div></main>` +
+    `<div data-next-project-section="workstream">${nextProjectWorkstream(context)}</div></div>` +
     '<aside class="next-project-detail-rail" data-next-project-rail>' +
     `${nextProjectDelegation(context)}${nextProjectControls(context)}</aside>` +
     '</div></article>';
